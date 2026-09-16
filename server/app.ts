@@ -2,10 +2,20 @@
  * HTTP API for test sends. Two routes:
  *
  *   GET  /api/send-test/status  -> is sending possible, from where, to whom
- *   POST /api/send-test         -> send one test email (allow-listed recipient only)
+ *   POST /api/send-test         -> send one test email to up to 10 recipients
  *
  * The browser never sees credentials; it only sees this API. Guards, in order:
- * enabled flag, body validation, recipient allow-list, HTML size cap, rate limit.
+ * enabled flag, body validation, recipient policy, HTML size cap, rate limit.
+ *
+ * Who may receive is `config.recipientPolicy`: an allow-list, or any valid
+ * address when SES_ALLOWED_RECIPIENTS is "*" (see server/config.ts). The
+ * recipient guards run before the rate limiter so a refused send costs no
+ * token, and they are all-or-nothing: one bad address refuses the request.
+ *
+ * The rate limit stays per REQUEST, not per recipient: 5 sends per minute, so
+ * up to 50 recipients a minute. Counting per recipient would refuse a normal
+ * ten-address send outright, which is the wrong trade for a proof of concept
+ * behind a password gate (ADR-17).
  */
 import { Hono } from 'hono'
 import { z } from 'zod'
@@ -21,23 +31,41 @@ import type { SendServerConfig } from './config.ts'
 import type { EmailSender, SenderPreflight } from './emailSender.ts'
 
 export const MAX_HTML_BYTES = 500 * 1024
+/** Friendly cap, applied after de-duplication, so one send is one readable To header. */
+export const MAX_RECIPIENTS_PER_SEND = 10
 export const TEST_SUBJECT_PREFIX = '[TEST] '
 /** Custom header the browser must send; browsers only allow it after a CORS preflight, which this server never grants. */
 export const STUDIO_REQUEST_HEADER = 'x-studio-send'
 const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]', '::1'])
 
+/** Trimmed first: a pasted address often arrives with spaces around it. */
+const recipient = z.string().trim().pipe(z.email())
+
+/**
+ * Control characters are refused in the two fields that are echoed elsewhere:
+ * in the subject a CR/LF would be a header injection in raw MIME, and in the
+ * template id it would forge a second line in the audit log below.
+ */
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/
+
 const sendRequestSchema = z.object({
-  to: z.email(),
+  // A single string is still accepted so a stale browser tab, and the curl
+  // example in docs/SENDING.md, keep working. 50 is only an absurd-input
+  // bound; MAX_RECIPIENTS_PER_SEND is the friendly cap, applied after dedupe.
+  to: z.union([recipient, z.array(recipient).min(1).max(50)]),
   subject: z
     .string()
     .trim()
     .min(1)
     .max(200)
-    // Header-safe: no control characters (CR/LF would be a header injection in raw MIME).
-    // eslint-disable-next-line no-control-regex
-    .refine((value) => !/[\u0000-\u001f\u007f]/.test(value), 'Subject must not contain control characters'),
+    .refine((value) => !CONTROL_CHARACTERS.test(value), 'Subject must not contain control characters'),
   html: z.string().min(1),
-  templateId: z.string().min(1).max(100),
+  templateId: z
+    .string()
+    .min(1)
+    .max(100)
+    .refine((value) => !CONTROL_CHARACTERS.test(value), 'templateId must not contain control characters'),
 })
 
 export type SendRequest = z.infer<typeof sendRequestSchema>
@@ -196,6 +224,10 @@ export function createApp({
       user,
       mode: sender?.mode ?? 'dry-run',
       from: config.from,
+      recipientPolicy: config.recipientPolicy,
+      maxRecipientsPerSend: MAX_RECIPIENTS_PER_SEND,
+      // Kept even when the policy is 'any' (then empty), so a browser tab
+      // loaded before this field existed still parses the response.
       allowedRecipients: config.allowedRecipients,
       region: config.region,
       rateLimitPerMinute: config.rateLimitPerMinute,
@@ -248,14 +280,45 @@ export function createApp({
     }
     const request = parsed.data
 
-    // Compare case-insensitively but send to the exact spelling from the allow-list.
-    const to = config.allowedRecipients.find((address) => address.toLowerCase() === request.to.toLowerCase())
-    if (to === undefined) {
+    const { to, refused } = resolveRecipients(request.to, config)
+    // Every refusal is logged like the success line below, so one `wrangler
+    // tail` grep for [send-test] shows both what was sent and what was tried.
+    const refuse = (reason: string, addresses: readonly string[]) => {
+      console.warn(`[send-test] refused by ${c.get('identity').email}: ${reason} (${addresses.join(', ')})`)
+    }
+
+    if (to.length > MAX_RECIPIENTS_PER_SEND) {
+      refuse('too many recipients', to)
+      return c.json(
+        {
+          status: 'error',
+          code: 'too-many-recipients',
+          message: `Up to ${MAX_RECIPIENTS_PER_SEND} recipients per test send; this request had ${to.length}.`,
+        },
+        400,
+      )
+    }
+
+    // The studio mailing itself would look like a loop to SES and to a reader.
+    if (to.some((address) => address.toLowerCase() === config.from.toLowerCase())) {
+      refuse("the studio's own sender address", to)
       return c.json(
         {
           status: 'error',
           code: 'recipient-not-allowed',
-          message: `${request.to} is not in SES_ALLOWED_RECIPIENTS.`,
+          message: "The studio's own sender address cannot be a test recipient.",
+        },
+        403,
+      )
+    }
+
+    if (refused.length > 0) {
+      refuse('not in SES_ALLOWED_RECIPIENTS', refused)
+      return c.json(
+        {
+          status: 'error',
+          code: 'recipient-not-allowed',
+          message: `These addresses are not in SES_ALLOWED_RECIPIENTS: ${refused.join(', ')}.`,
         },
         403,
       )
@@ -289,8 +352,9 @@ export function createApp({
     try {
       const receipt = await sender.send({ from: config.from, to, subject, html: request.html })
       // The requester is logged so a surprising send can be traced to a person.
+      const who = to.length === 1 ? to[0] : `${to.length} recipients: ${to.join(', ')}`
       console.log(
-        `[send-test] ${sender.mode} "${subject}" -> ${to} by ${c.get('identity').email} (template ${request.templateId}) message ${receipt.messageId}`,
+        `[send-test] ${sender.mode} "${subject}" -> ${who} by ${c.get('identity').email} (template ${request.templateId}) message ${receipt.messageId}`,
       )
       return c.json({
         status: 'sent',
@@ -316,6 +380,36 @@ export function createApp({
   })
 
   return app
+}
+
+/**
+ * Turns the request's `to` into the addresses to send to, plus the ones the
+ * policy refuses. Duplicates are removed case-insensitively, keeping the first
+ * spelling. In 'allow-list' mode the allow-list's own spelling wins (so the
+ * server, not the caller, decides what the To header says); in 'any' mode the
+ * caller's spelling is kept and nothing is ever refused here.
+ */
+export function resolveRecipients(
+  requested: string | string[],
+  config: Extract<SendServerConfig, { enabled: true }>,
+): { to: string[]; refused: string[] } {
+  const seen = new Set<string>()
+  const to: string[] = []
+  const refused: string[] = []
+  for (const raw of Array.isArray(requested) ? requested : [requested]) {
+    const address = raw.trim()
+    const key = address.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    if (config.recipientPolicy === 'any') {
+      to.push(address)
+      continue
+    }
+    const allowed = config.allowedRecipients.find((candidate) => candidate.toLowerCase() === key)
+    if (allowed === undefined) refused.push(address)
+    else to.push(allowed)
+  }
+  return { to, refused }
 }
 
 /** Sliding one-minute window. `limit` 0 means nothing is ever allowed. */

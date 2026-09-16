@@ -237,16 +237,23 @@ test('send test email goes through the API in dry-run mode and publish stays sim
   await expect(sendDialog.getByText('Connected')).toBeVisible()
   await expect(sendDialog.getByText('Dry run', { exact: true })).toBeVisible()
   await expect(sendDialog.getByText('studio@example.test')).toBeVisible()
-  await expect(sendDialog.getByRole('combobox')).toContainText('qa@example.test')
+  // Recipients are typed, not chosen: the field starts empty and both of these
+  // are in the e2e allow-list (wrangler.jsonc env.e2e).
+  const recipients = sendDialog.getByLabel('To')
+  await expect(recipients).toHaveValue('')
+  await recipients.fill('qa@example.test, second@example.test')
 
   await sendDialog.getByRole('button', { name: /^Send test$/ }).click()
   await expect(sendDialog.getByText('Dry run complete')).toBeVisible()
   await expect(sendDialog.getByText(/dry-run-\d+-[0-9a-f]{52}/)).toBeVisible()
+  // Both addresses are named in the outcome alert, not just the field they were typed into.
+  const sentAlert = sendDialog.getByRole('status').filter({ hasText: 'Message id' })
+  await expect(sentAlert).toContainText('qa@example.test, second@example.test')
   await expect(
     page.getByText(/Dry run complete \(dry-run-\d+-[0-9a-f]{52}\)\. Nothing was sent\./),
   ).toBeVisible()
 
-  // Regression: the long message id and the full-width recipient select must
+  // Regression: the long message id and the full-width recipient field must
   // stay inside the dialog instead of widening its grid column.
   const dialogBox = await sendDialog.boundingBox()
   expect(dialogBox).not.toBeNull()
@@ -255,9 +262,9 @@ test('send test email goes through the API in dry-run mode and publish stays sim
     clientWidth: el.clientWidth,
   }))
   expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth)
-  const comboboxBox = await sendDialog.getByRole('combobox').boundingBox()
-  expect(comboboxBox).not.toBeNull()
-  expect(comboboxBox!.x + comboboxBox!.width).toBeLessThanOrEqual(dialogBox!.x + dialogBox!.width - 8)
+  const recipientsBox = await recipients.boundingBox()
+  expect(recipientsBox).not.toBeNull()
+  expect(recipientsBox!.x + recipientsBox!.width).toBeLessThanOrEqual(dialogBox!.x + dialogBox!.width - 8)
   // The dialog has two buttons named Close: the icon in the corner and the footer button.
   await sendDialog.getByRole('button', { name: 'Close' }).last().click()
 

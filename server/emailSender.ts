@@ -9,7 +9,8 @@
 
 export interface TestEmail {
   readonly from: string
-  readonly to: string
+  /** One or more recipients, all in the To header of a single message. */
+  readonly to: readonly string[]
   readonly subject: string
   readonly html: string
 }
@@ -49,7 +50,7 @@ export function createDryRunSender(log: (line: string) => void = console.log): E
       // The UI must cope with that shape, so the rehearsal produces it too.
       const messageId = `dry-run-${counter}-${randomHex(26)}`
       log(
-        `[dry-run] would send "${email.subject}" from ${email.from} to ${email.to} (${email.html.length} chars html) -> ${messageId}`,
+        `[dry-run] would send "${email.subject}" from ${email.from} to ${email.to.join(', ')} (${email.html.length} chars html) -> ${messageId}`,
       )
       return { messageId }
     },
