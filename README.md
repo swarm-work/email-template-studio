@@ -51,7 +51,7 @@ Deploy: `npm run deploy` (needs `npx wrangler login`; see `docs/DEPLOYMENT.md`).
 | `npm run typecheck`  | Type-check without emitting files.                                                                        |
 | `npm run lint`       | Lint with oxlint (the linter the Vite template ships with).                                               |
 | `npm run format`     | Format with Prettier.                                                                                     |
-| `npm run check`      | Typecheck, lint and unit tests in one go.                                                                 |
+| `npm run check`      | Typecheck, lint, format check and unit tests in one go (the same gate CI runs).                           |
 
 ## How it is put together
 

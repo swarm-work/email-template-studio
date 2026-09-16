@@ -70,12 +70,12 @@ the team's published keys is what turns that header into proof.
 
 Four modes, chosen by environment variables. The first one that matches wins:
 
-| Variables set                       | Mode                | Use                                                    |
-| ----------------------------------- | ------------------- | ------------------------------------------------------ |
-| `ACCESS_TEAM_DOMAIN` + `ACCESS_AUD` | `cloudflare-access` | Production. Verifies a real Access JWT.                |
+| Variables set                       | Mode                | Use                                                      |
+| ----------------------------------- | ------------------- | -------------------------------------------------------- |
+| `ACCESS_TEAM_DOMAIN` + `ACCESS_AUD` | `cloudflare-access` | Production. Verifies a real Access JWT.                  |
 | `STUDIO_PASSWORD`                   | `password`          | A shared password, for a test deployment without Access. |
-| `STUDIO_DEV_IDENTITY`               | `developer`         | Local and Playwright only. Trusts a fixed email.       |
-| none of them                        | `disabled`          | Every `/api/*` request gets 401.                       |
+| `STUDIO_DEV_IDENTITY`               | `developer`         | Local and Playwright only. Trusts a fixed email.         |
+| none of them                        | `disabled`          | Every `/api/*` request gets 401.                         |
 
 The order is what makes this safe to leave configured: a forgotten `STUDIO_DEV_IDENTITY`
 or `STUDIO_PASSWORD` can never downgrade a deployment that has real Access set up.
@@ -84,7 +84,7 @@ falling back to something weaker.
 
 ### The shared password gate
 
-A stop-gap for a test deployment that needs *something* in front of it before Access
+A stop-gap for a test deployment that needs _something_ in front of it before Access
 exists. Be clear about what it is: it proves the caller knew a secret. It does **not**
 say who they are, it cannot be revoked for one person without changing it for everyone,
 and anyone told the password can pass it on. Move to Access before the recipient

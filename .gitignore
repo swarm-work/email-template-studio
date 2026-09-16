@@ -41,3 +41,8 @@ worker-configuration.d.ts
 .dev.vars
 .dev.vars.*
 !.dev.vars.example
+
+# Claude Code worktrees, Vite's dependency cache and stray downloads
+.claude/worktrees/
+.vite/
+*.tgz

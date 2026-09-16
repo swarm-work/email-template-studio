@@ -28,20 +28,20 @@ The only difference between the runtimes is where the variables come from: `.env
 
 ## Guards
 
-| Guard                 | Where                      | Effect                                                                                                |
-| --------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `STUDIO_SEND_ENABLED` | `server/config.ts`         | Anything but `true` keeps the server in disabled mode; the UI says so.                                |
-| Allow-list            | `server/app.ts`            | `SES_ALLOWED_RECIPIENTS` is the only set of addresses that can receive.                               |
-| Subject prefix        | `server/app.ts`            | Every test subject starts with `[TEST]`.                                                              |
-| Rate limit            | `server/app.ts`            | `STUDIO_SEND_RATE_LIMIT_PER_MINUTE` (default 5), sliding window.                                      |
-| HTML size cap         | `server/app.ts`            | 500 KB.                                                                                               |
+| Guard                 | Where                      | Effect                                                                                                                        |
+| --------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `STUDIO_SEND_ENABLED` | `server/config.ts`         | Anything but `true` keeps the server in disabled mode; the UI says so.                                                        |
+| Allow-list            | `server/app.ts`            | `SES_ALLOWED_RECIPIENTS` is the only set of addresses that can receive.                                                       |
+| Subject prefix        | `server/app.ts`            | Every test subject starts with `[TEST]`.                                                                                      |
+| Rate limit            | `server/app.ts`            | `STUDIO_SEND_RATE_LIMIT_PER_MINUTE` (default 5), sliding window.                                                              |
+| HTML size cap         | `server/app.ts`            | 500 KB.                                                                                                                       |
 | Authentication        | `server/auth.ts`           | Every `/api/*` route needs a verified Access JWT, a shared-password session cookie, or a fixed local identity. 401 otherwise. |
-| Login throttle        | `server/app.ts`            | 10 password attempts per minute on `POST /api/session`.                                               |
-| Host policy           | `server/app.ts`            | Node: Host and Origin must be localhost (`loopback`). Worker: Origin must equal Host (`same-origin`). |
-| Loopback only         | `server/node.ts`           | The Node adapter binds to 127.0.0.1.                                                                  |
-| Dry run               | `STUDIO_SEND_DRY_RUN=true` | Full path, no AWS call, `dry-run-N` message ids. Needs no credentials at all.                         |
-| Credentials           | `server/config.ts`         | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`, required only for a live (non-dry-run) sender.         |
-| IAM policy            | AWS, not this code         | The real backstop: scope the key to `ses:SendEmail` from one identity (`docs/DEPLOYMENT.md`).         |
+| Login throttle        | `server/app.ts`            | 10 password attempts per minute on `POST /api/session`.                                                                       |
+| Host policy           | `server/app.ts`            | Node: Host and Origin must be localhost (`loopback`). Worker: Origin must equal Host (`same-origin`).                         |
+| Loopback only         | `server/node.ts`           | The Node adapter binds to 127.0.0.1.                                                                                          |
+| Dry run               | `STUDIO_SEND_DRY_RUN=true` | Full path, no AWS call, `dry-run-N` message ids. Needs no credentials at all.                                                 |
+| Credentials           | `server/config.ts`         | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`, required only for a live (non-dry-run) sender.                                 |
+| IAM policy            | AWS, not this code         | The real backstop: scope the key to `ses:SendEmail` from one identity (`docs/DEPLOYMENT.md`).                                 |
 
 ## Notes
 

@@ -10,7 +10,11 @@ import {
   TEST_SUBJECT_PREFIX,
 } from './app.ts'
 import type { SendServerConfig } from './config.ts'
-import { createDeveloperAuthenticator, createDisabledAuthenticator, createPasswordAuthenticator } from './auth.ts'
+import {
+  createDeveloperAuthenticator,
+  createDisabledAuthenticator,
+  createPasswordAuthenticator,
+} from './auth.ts'
 import { createDryRunSender, type EmailSender } from './emailSender.ts'
 
 /** Every existing test predates authentication; they all run as one known developer. */
@@ -53,16 +57,29 @@ function post(
 
 describe('send server API', () => {
   it('reports a disabled server and refuses to send', async () => {
-    const app = createApp({ authenticator: testAuth, config: { enabled: false, port: 8787, reason: 'off' }, sender: null })
+    const app = createApp({
+      authenticator: testAuth,
+      config: { enabled: false, port: 8787, reason: 'off' },
+      sender: null,
+    })
     const status = await app.request('/api/send-test/status', { headers: { host: 'localhost:8787' } })
-    expect(await status.json()).toEqual({ enabled: false, provider: 'amazon-ses', reason: 'off', user: 'tester@example.test' })
+    expect(await status.json()).toEqual({
+      enabled: false,
+      provider: 'amazon-ses',
+      reason: 'off',
+      user: 'tester@example.test',
+    })
     const response = await post(app, validBody)
     expect(response.status).toBe(503)
     expect(await response.json()).toMatchObject({ status: 'error', code: 'sending-disabled' })
   })
 
   it('reports an enabled server without leaking anything but from/recipients/region', async () => {
-    const app = createApp({ authenticator: testAuth, config: enabledConfig, sender: createDryRunSender(() => {}) })
+    const app = createApp({
+      authenticator: testAuth,
+      config: enabledConfig,
+      sender: createDryRunSender(() => {}),
+    })
     const body = await (
       await app.request('/api/send-test/status', { headers: { host: 'localhost:8787' } })
     ).json()
@@ -80,7 +97,11 @@ describe('send server API', () => {
   })
 
   it('validates the body', async () => {
-    const app = createApp({ authenticator: testAuth, config: enabledConfig, sender: createDryRunSender(() => {}) })
+    const app = createApp({
+      authenticator: testAuth,
+      config: enabledConfig,
+      sender: createDryRunSender(() => {}),
+    })
     expect((await post(app, '{not json')).status).toBe(400)
     const response = await post(app, { ...validBody, to: 'nope' })
     expect(response.status).toBe(400)
@@ -92,7 +113,11 @@ describe('send server API', () => {
   })
 
   it('refuses recipients outside the allow-list, case-insensitively', async () => {
-    const app = createApp({ authenticator: testAuth, config: enabledConfig, sender: createDryRunSender(() => {}) })
+    const app = createApp({
+      authenticator: testAuth,
+      config: enabledConfig,
+      sender: createDryRunSender(() => {}),
+    })
     const refused = await post(app, { ...validBody, to: 'someone-else@example.com' })
     expect(refused.status).toBe(403)
     expect(await refused.json()).toMatchObject({ code: 'recipient-not-allowed' })
@@ -103,7 +128,11 @@ describe('send server API', () => {
   })
 
   it('caps the HTML size', async () => {
-    const app = createApp({ authenticator: testAuth, config: enabledConfig, sender: createDryRunSender(() => {}) })
+    const app = createApp({
+      authenticator: testAuth,
+      config: enabledConfig,
+      sender: createDryRunSender(() => {}),
+    })
     const response = await post(app, { ...validBody, html: 'x'.repeat(MAX_HTML_BYTES + 1) })
     expect(response.status).toBe(400)
   })
@@ -120,7 +149,12 @@ describe('send server API', () => {
         return { ok: true, message: 'fake' }
       },
     }
-    const app = createApp({ authenticator: testAuth, config: enabledConfig, sender, now: () => 1_700_000_000_000 })
+    const app = createApp({
+      authenticator: testAuth,
+      config: enabledConfig,
+      sender,
+      now: () => 1_700_000_000_000,
+    })
     const response = await post(app, { ...validBody, subject: 'Verify your email' })
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual({
@@ -164,7 +198,12 @@ describe('send server API', () => {
 
   it('rate limits per minute', async () => {
     let clock = 0
-    const app = createApp({ authenticator: testAuth, config: enabledConfig, sender: createDryRunSender(() => {}), now: () => clock })
+    const app = createApp({
+      authenticator: testAuth,
+      config: enabledConfig,
+      sender: createDryRunSender(() => {}),
+      now: () => clock,
+    })
     expect((await post(app, validBody)).status).toBe(200)
     expect((await post(app, validBody)).status).toBe(200)
     expect((await post(app, validBody)).status).toBe(429)
@@ -174,7 +213,8 @@ describe('send server API', () => {
 })
 
 describe('same-machine guards', () => {
-  const app = () => createApp({ authenticator: testAuth, config: enabledConfig, sender: createDryRunSender(() => {}) })
+  const app = () =>
+    createApp({ authenticator: testAuth, config: enabledConfig, sender: createDryRunSender(() => {}) })
 
   it('rejects foreign Host headers (DNS rebinding) on every route', async () => {
     const status = await app().request('/api/send-test/status', { headers: { host: 'evil.example:8787' } })
