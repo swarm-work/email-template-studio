@@ -27,7 +27,12 @@ const envSchema = z.object({
   AWS_REGION: z.string().min(1).optional(),
   /** A verified SES identity (email or an address on a verified domain). */
   SES_FROM_ADDRESS: z.email().optional(),
-  /** Comma-separated allow-list. Sending to anyone else is refused. */
+  /**
+   * Either a comma-separated allow-list ("a@x.io, b@y.io"), or the single
+   * character "*" to accept any valid address the caller types. Unset or empty
+   * is still a boot error, so forgetting the variable never opens sending up.
+   * The IAM policy on the AWS key is the real backstop (docs/DEPLOYMENT.md).
+   */
   SES_ALLOWED_RECIPIENTS: z.string().optional(),
   SES_CONFIGURATION_SET: z.string().min(1).optional(),
   /** Long-lived IAM user keys, or short-lived STS keys plus AWS_SESSION_TOKEN. */
@@ -44,6 +49,13 @@ export interface AwsCredentials {
   readonly sessionToken?: string
 }
 
+/**
+ * How the server decides who may receive a test send.
+ * - 'allow-list': only the addresses in `allowedRecipients`
+ * - 'any': any valid address, chosen by the caller (SES_ALLOWED_RECIPIENTS="*")
+ */
+export type RecipientPolicy = 'any' | 'allow-list'
+
 export type SendServerConfig =
   | { readonly enabled: false; readonly port: number; readonly reason: string }
   | {
@@ -52,6 +64,11 @@ export type SendServerConfig =
       readonly dryRun: boolean
       readonly region: string
       readonly from: string
+      readonly recipientPolicy: RecipientPolicy
+      /**
+       * `loadConfig` guarantees the invariant: non-empty when the policy is
+       * 'allow-list', and always `[]` when the policy is 'any'.
+       */
       readonly allowedRecipients: readonly string[]
       readonly configurationSet?: string
       readonly rateLimitPerMinute: number
@@ -84,8 +101,9 @@ export function loadConfig(env: Record<string, string | undefined>): SendServerC
   const missing: string[] = []
   if (!values.AWS_REGION) missing.push('AWS_REGION')
   if (!values.SES_FROM_ADDRESS) missing.push('SES_FROM_ADDRESS')
-  const allowedRecipients = parseRecipients(values.SES_ALLOWED_RECIPIENTS)
-  if (allowedRecipients.length === 0) missing.push('SES_ALLOWED_RECIPIENTS')
+  const recipients = parseRecipientPolicy(values.SES_ALLOWED_RECIPIENTS)
+  if (recipients.policy === 'allow-list' && recipients.addresses.length === 0)
+    missing.push('SES_ALLOWED_RECIPIENTS')
   // A dry run never reaches AWS, so it must not demand credentials: that is what
   // makes STUDIO_SEND_DRY_RUN=true a safe rehearsal mode for CI and a first deploy.
   if (!dryRun) {
@@ -104,7 +122,8 @@ export function loadConfig(env: Record<string, string | undefined>): SendServerC
     dryRun,
     region: values.AWS_REGION as string,
     from: values.SES_FROM_ADDRESS as string,
-    allowedRecipients,
+    recipientPolicy: recipients.policy,
+    allowedRecipients: recipients.addresses,
     configurationSet: values.SES_CONFIGURATION_SET,
     rateLimitPerMinute: values.STUDIO_SEND_RATE_LIMIT_PER_MINUTE,
     credentials: dryRun
@@ -115,6 +134,25 @@ export function loadConfig(env: Record<string, string | undefined>): SendServerC
           sessionToken: values.AWS_SESSION_TOKEN,
         },
   }
+}
+
+/**
+ * Reads SES_ALLOWED_RECIPIENTS as either the wildcard or a list.
+ *
+ * Exactly "*" (after trimming) means any address is acceptable; the returned
+ * list is then empty, because there is nothing to compare against. A "*" mixed
+ * into a list is a typo we refuse loudly rather than guess at.
+ */
+export function parseRecipientPolicy(raw: string | undefined): {
+  policy: RecipientPolicy
+  addresses: string[]
+} {
+  const trimmed = (raw ?? '').trim()
+  if (trimmed === '*') return { policy: 'any', addresses: [] }
+  if (trimmed.includes('*')) {
+    throw new ConfigError('SES_ALLOWED_RECIPIENTS must be either "*" or a comma-separated list, not both.')
+  }
+  return { policy: 'allow-list', addresses: parseRecipients(raw) }
 }
 
 /** Splits the comma list, keeps original spelling, dedupes case-insensitively, rejects invalid entries loudly. */

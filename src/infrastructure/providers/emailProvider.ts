@@ -12,7 +12,8 @@
 import { z } from 'zod'
 
 export interface OutgoingTestEmail {
-  readonly to: string
+  /** One or more addresses; the server sends a single email to all of them. */
+  readonly to: readonly string[]
   readonly subject: string
   readonly html: string
   readonly templateId: string
@@ -32,7 +33,11 @@ export type ProviderStatus =
       readonly provider: string
       readonly mode: 'live' | 'dry-run'
       readonly from: string
+      /** 'any' = the server accepts any valid address the user types. */
+      readonly recipientPolicy: 'any' | 'allow-list'
+      /** Empty when the policy is 'any'; there is nothing to list. */
       readonly allowedRecipients: readonly string[]
+      readonly maxRecipientsPerSend: number
       readonly region: string
       readonly preflight?: ProviderPreflight
     }
@@ -42,7 +47,7 @@ export type SendOutcome =
       readonly status: 'sent'
       readonly mode: 'live' | 'dry-run'
       readonly messageId: string
-      readonly to: string
+      readonly to: readonly string[]
       readonly from: string
       readonly subject: string
       readonly sentAt: string
@@ -82,7 +87,11 @@ const statusSchema = z.union([
     provider: z.string(),
     mode: z.enum(['live', 'dry-run']),
     from: z.string(),
+    // Defaults keep an older server (which sends neither field) working, and
+    // both defaults are the safe reading: a closed list of at most ten.
+    recipientPolicy: z.enum(['any', 'allow-list']).default('allow-list'),
     allowedRecipients: z.array(z.string()),
+    maxRecipientsPerSend: z.number().int().positive().default(10),
     region: z.string(),
     preflight: z
       .object({
@@ -100,7 +109,7 @@ const sendResponseSchema = z.union([
     status: z.literal('sent'),
     mode: z.enum(['live', 'dry-run']),
     messageId: z.string(),
-    to: z.string(),
+    to: z.array(z.string()),
     from: z.string(),
     subject: z.string(),
     sentAt: z.string(),
@@ -136,8 +145,27 @@ export class HttpTestEmailProvider implements EmailProvider {
     if (!parsed.success)
       return { connected: false, reason: 'The send server returned an unexpected status response.' }
     if (!parsed.data.enabled) return { connected: false, reason: parsed.data.reason }
-    const { provider, mode, from, allowedRecipients, region, preflight } = parsed.data
-    return { connected: true, provider, mode, from, allowedRecipients, region, preflight }
+    const {
+      provider,
+      mode,
+      from,
+      recipientPolicy,
+      allowedRecipients,
+      maxRecipientsPerSend,
+      region,
+      preflight,
+    } = parsed.data
+    return {
+      connected: true,
+      provider,
+      mode,
+      from,
+      recipientPolicy,
+      allowedRecipients,
+      maxRecipientsPerSend,
+      region,
+      preflight,
+    }
   }
 
   async send(email: OutgoingTestEmail): Promise<SendOutcome> {

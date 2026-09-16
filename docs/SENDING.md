@@ -31,9 +31,10 @@ The only difference between the runtimes is where the variables come from: `.env
 | Guard                 | Where                      | Effect                                                                                                                        |
 | --------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | `STUDIO_SEND_ENABLED` | `server/config.ts`         | Anything but `true` keeps the server in disabled mode; the UI says so.                                                        |
-| Allow-list            | `server/app.ts`            | `SES_ALLOWED_RECIPIENTS` is the only set of addresses that can receive.                                                       |
+| Recipient policy      | `server/config.ts`         | `SES_ALLOWED_RECIPIENTS` is either a comma-separated allow-list or `*` (any valid address).                                   |
+| Recipients per send   | `server/app.ts`            | At most 10 addresses per request, after duplicates are removed. One request, one email, one message id.                       |
 | Subject prefix        | `server/app.ts`            | Every test subject starts with `[TEST]`.                                                                                      |
-| Rate limit            | `server/app.ts`            | `STUDIO_SEND_RATE_LIMIT_PER_MINUTE` (default 5), sliding window.                                                              |
+| Rate limit            | `server/app.ts`            | `STUDIO_SEND_RATE_LIMIT_PER_MINUTE` (default 5) sends per minute, so up to 50 recipients per minute. Sliding window.          |
 | HTML size cap         | `server/app.ts`            | 500 KB.                                                                                                                       |
 | Authentication        | `server/auth.ts`           | Every `/api/*` route needs a verified Access JWT, a shared-password session cookie, or a fixed local identity. 401 otherwise. |
 | Login throttle        | `server/app.ts`            | 10 password attempts per minute on `POST /api/session`.                                                                       |
@@ -56,7 +57,7 @@ The only difference between the runtimes is where the variables come from: `.env
 3. Copy `.env.example` to `.env` and fill in:
    - `AWS_REGION` (the region that holds your identities)
    - `SES_FROM_ADDRESS` (a verified identity)
-   - `SES_ALLOWED_RECIPIENTS` (comma separated)
+   - `SES_ALLOWED_RECIPIENTS` (comma separated, or `*` for any address — see "Free-form recipients")
    - `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`, once you set `STUDIO_SEND_DRY_RUN=false`
 
    Keys live in an AWS profile? Turn the profile into those variables:
@@ -75,7 +76,7 @@ npm run server      # send server, reads .env; prints mode/from/recipients on st
 npm run dev:node    # the studio, proxying /api to the send server
 ```
 
-5. In the studio: select a template, open **Send test email**, check the preflight line (sender verified, sandbox or not), pick a recipient, press **Send test**. The dialog shows the SES message id.
+5. In the studio: select a template, open **Send test email**, check the preflight line (sender verified, sandbox or not), type one or more recipients, adjust the subject if you want, press **Send test**. The dialog shows the SES message id.
 
 Rehearse without sending: `npm run server:dry-run`.
 
@@ -87,8 +88,23 @@ To exercise the exact code path that runs on Cloudflare, put the same values in 
 curl -s http://127.0.0.1:8787/api/send-test/status
 curl -s -X POST http://127.0.0.1:8787/api/send-test \
   -H 'content-type: application/json' -H 'x-studio-send: 1' \
-  -d '{"to":"you@example.com","subject":"Hello","html":"<p>Hi</p>","templateId":"manual"}'
+  -d '{"to":["you@example.com"],"subject":"Hello","html":"<p>Hi</p>","templateId":"manual"}'
 ```
+
+`to` also accepts a single string, so an older script keeps working.
+
+## Free-form recipients
+
+`SES_ALLOWED_RECIPIENTS=*` turns the To field into free text: anyone who is signed in can type any valid address. It is what the deployed proof-of-concept Worker is meant to run once the steps below are done (ADR-17); the value in `wrangler.jsonc` is still a one-address list until then. What still holds:
+
+- **Ten addresses per send.** They are de-duplicated case-insensitively, then sent as one email with everyone in the To header — so every recipient can see the others. The dialog says so.
+- **The `[TEST]` prefix stays**, added by the server whatever the dialog sends. These are test sends to real mailboxes; the prefix is what tells the reader that in the first second.
+- **Live sends ask twice.** The dialog shows the addresses and waits for **Confirm send**.
+- **Turn the SES account suppression list on first** (`aws sesv2 put-account-suppression-attributes --suppressed-reasons BOUNCE COMPLAINT`). Once strangers can be typed, bounces and complaints are what protect the domain's reputation, and nothing in this code can do that job.
+- **IAM is the real gate.** `infra/ses-policy.json` allows `ses:SendEmail` only as the studio's own identity and from-address; it no longer lists recipients. A stolen key still cannot send as anyone else. Apply it **before** setting `SES_ALLOWED_RECIPIENTS=*`: if the attached policy still pins `ses:Recipients`, sends to new addresses come back as a 502 `AccessDeniedException` even though the app allowed them.
+- **The audit line names the gate, not a person.** Under the shared password the log reads `by shared-password`, because that is all the server knows until Cloudflare Access lands.
+
+Rolling back is one variable: set `SES_ALLOWED_RECIPIENTS` back to a list and deploy. Anything not on the list is then refused with `recipient-not-allowed`.
 
 ## Common SES errors
 
@@ -106,4 +122,4 @@ Errors are reported with the AWS error type as the name, so the message reads li
 ## What this is not
 
 - Not a production sending path. No queue, retries, templates-as-a-service or tracking.
-- Not authenticated yet. The Node adapter relies on binding to loopback; the deployed Worker relies on Host and Origin only, until Cloudflare Access lands (`docs/PLAN.md` phase 1, TECH_DEBT #19). Do not put a live SES key on a Worker that anyone can reach until then, unless the recipient allow-list is people you are happy for a stranger to email.
+- Not fully authenticated yet. The Node adapter relies on binding to loopback; the deployed Worker is behind a shared password gate until Cloudflare Access lands (`docs/PLAN.md` phase 1, TECH_DEBT #19), so its audit line names `shared-password` rather than a person.

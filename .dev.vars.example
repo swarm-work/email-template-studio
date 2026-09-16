@@ -8,6 +8,8 @@
 # AWS_REGION=us-east-1
 # SES_FROM_ADDRESS=studio@example.test
 # SES_ALLOWED_RECIPIENTS=you@example.test
+# Or "*" for any address typed in the studio (see the caveat below):
+# SES_ALLOWED_RECIPIENTS=*
 
 # Send for real from the local Worker (workerd). Same code path as production.
 # STUDIO_SEND_ENABLED=true
@@ -17,6 +19,9 @@
 # AWS_SECRET_ACCESS_KEY=...
 # SES_FROM_ADDRESS=verified-sender@example.com
 # SES_ALLOWED_RECIPIENTS=you@example.com
+# "*" accepts any valid address instead of a list. Only with production access and
+# the SES suppression list on: a typo then reaches a real stranger, for real.
+# SES_ALLOWED_RECIPIENTS=*
 # SES_CONFIGURATION_SET=
 
 # Who the API runs as locally. Without this (or ACCESS_* below) every /api/* call is 401.

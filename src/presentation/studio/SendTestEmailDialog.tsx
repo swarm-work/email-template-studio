@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Lock, Send } from 'lucide-react'
 import { toast } from 'sonner'
+import { parseRecipientList, recipientProblem } from '@/application/parseRecipientList'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
@@ -12,7 +13,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import type { EmailTemplate } from '@/domain'
 import type { EmailProvider, ProviderStatus, SendOutcome } from '@/infrastructure/providers/emailProvider'
 import { StatusBadge } from '@/presentation/shared/StatusBadge'
@@ -27,9 +27,27 @@ export interface SendTestEmailDialogProps {
 }
 
 /**
+ * Plain field styling, copied from PasswordGate rather than added as a new
+ * shadcn component: the send canvas redesign will bring its own inputs, and
+ * two small fields do not justify a dependency in the meantime.
+ */
+const FIELD_CLASS =
+  'border-input focus-visible:ring-ring/50 w-full rounded-md border bg-transparent px-2 py-1 text-xs shadow-xs outline-none focus-visible:ring-[3px]'
+
+/** 12.5px helper/reason line from the design brief (disabled-with-reason). */
+const HINT_CLASS = 'text-[12.5px] leading-[18px]'
+
+/** Helper line under the To field. The cap is the server's, so it and the refusal reason always agree. */
+const recipientHint = (max: number) =>
+  `Separate multiple addresses with commas or line breaks. Up to ${max} per send; everyone listed can see the other addresses.`
+
+const NO_SUBJECT_REASON = 'Add a subject line to send a test.'
+
+/**
  * Sends one test email through the provider. The action is only enabled when
  * the provider reports it is connected AND there is rendered HTML to send.
- * Every send goes to an allow-listed recipient chosen from the server's list.
+ * Recipients are typed by hand; the server decides whether they are acceptable
+ * (an allow-list, or any address when SES_ALLOWED_RECIPIENTS is "*").
  *
  * The form lives in its own component so that Radix unmounting the content on
  * close resets all state; every open starts with a fresh status check.
@@ -47,8 +65,8 @@ export function SendTestEmailDialog({
         <DialogHeader>
           <DialogTitle>Send test email</DialogTitle>
           <DialogDescription>
-            Sends the current preview to one allow-listed address through the local send server. The browser
-            never holds credentials.
+            Sends the current preview to the addresses you enter, through the send server. The browser never
+            holds credentials.
           </DialogDescription>
         </DialogHeader>
         <SendTestEmailForm template={template} provider={provider} html={html} />
@@ -68,15 +86,28 @@ function SendTestEmailForm({
   html,
 }: Pick<SendTestEmailDialogProps, 'template' | 'provider' | 'html'>) {
   const [phase, setPhase] = useState<Phase>({ kind: 'loading' })
-  const [recipient, setRecipient] = useState('')
+  const [recipientsText, setRecipientsText] = useState('')
+  const [subjectText, setSubjectText] = useState(template.metadata.subject)
+  /** Which template the subject above was seeded from, so a switch can re-seed it. */
+  const [seededFrom, setSeededFrom] = useState(template.metadata.id)
+  /** True once a live send has been asked for and is waiting for a second click. */
+  const [confirming, setConfirming] = useState(false)
   const [outcome, setOutcome] = useState<SendOutcome | null>(null)
+
+  // Selecting another template while the dialog is open re-seeds the subject.
+  // Adjusting state during render (rather than in an effect) is React's own
+  // recommendation for "a prop changed, reset some state".
+  if (seededFrom !== template.metadata.id) {
+    setSeededFrom(template.metadata.id)
+    setSubjectText(template.metadata.subject)
+    setConfirming(false)
+  }
 
   useEffect(() => {
     let cancelled = false
     void provider.getStatus().then((status) => {
       if (cancelled) return
       setPhase({ kind: 'ready', status })
-      if (status.connected) setRecipient(status.allowedRecipients[0] ?? '')
     })
     return () => {
       cancelled = true
@@ -85,16 +116,37 @@ function SendTestEmailForm({
 
   const status = phase.kind === 'loading' ? null : phase.status
   const connected = status?.connected === true
-  const subject = template.metadata.subject
   const senderKnownUnverified = status?.connected === true && status.preflight?.identityVerified === false
+
+  // Only compare against the allow-list when the server actually has one.
+  const list = parseRecipientList(
+    recipientsText,
+    status?.connected === true && status.recipientPolicy === 'allow-list'
+      ? status.allowedRecipients
+      : undefined,
+  )
+  // 10 only stands in until the status arrives; the field is disabled until then anyway.
+  const maxRecipients = status?.connected === true ? status.maxRecipientsPerSend : 10
+  const recipientReason = recipientProblem(list, maxRecipients)
+  const subjectReason = subjectText.trim() === '' ? NO_SUBJECT_REASON : null
+  const problem = recipientReason ?? subjectReason
+
   const canSend =
-    connected && !senderKnownUnverified && html !== null && recipient !== '' && phase.kind === 'ready'
+    connected && !senderKnownUnverified && html !== null && problem === null && phase.kind === 'ready'
   const htmlKilobytes = html === null ? null : (new TextEncoder().encode(html).length / 1024).toFixed(1)
+  // A live send costs real deliverability, so it takes a second, explicit click.
+  const needsConfirmation = status?.connected === true && status.mode === 'live'
 
   async function send() {
     if (!canSend || !status?.connected || html === null) return
+    setConfirming(false)
     setPhase({ kind: 'sending', status })
-    const result = await provider.send({ to: recipient, subject, html, templateId: template.metadata.id })
+    const result = await provider.send({
+      to: [...list.addresses],
+      subject: subjectText.trim(),
+      html,
+      templateId: template.metadata.id,
+    })
     setOutcome(result)
     setPhase({ kind: 'ready', status })
     // Toasts survive closing the dialog, so a failure is never silently lost.
@@ -102,7 +154,9 @@ function SendTestEmailForm({
       toast.success(
         result.mode === 'dry-run'
           ? `Dry run complete (${result.messageId}). Nothing was sent.`
-          : `Test email sent to ${result.to}.`,
+          : result.to.length === 1
+            ? `Test email sent to ${result.to[0]}.`
+            : `Test email sent to ${result.to.length} addresses.`,
       )
     } else {
       toast.error(result.message)
@@ -125,25 +179,36 @@ function SendTestEmailForm({
 
       {/* `minmax(0,1fr)` lets the value column shrink below its content's
           min-content width; a plain `1fr` (= minmax(auto,1fr)) would let a
-          long email or the full-width select widen the track past the dialog. */}
+          long email or the full-width field widen the track past the dialog. */}
       <dl className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-4 gap-y-2 text-xs">
-        <dt className="meta-label">
+        <dt className="meta-label self-start pt-1.5">
           <label htmlFor="send-test-recipient">To</label>
         </dt>
         <dd>
           {status?.connected ? (
-            <Select value={recipient} onValueChange={setRecipient} disabled={phase.kind === 'sending'}>
-              <SelectTrigger id="send-test-recipient" size="sm" className="w-full font-mono text-xs">
-                <SelectValue placeholder="Choose a recipient" />
-              </SelectTrigger>
-              <SelectContent>
-                {status.allowedRecipients.map((address) => (
-                  <SelectItem key={address} value={address} className="font-mono text-xs">
-                    {address}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <>
+              <textarea
+                id="send-test-recipient"
+                rows={2}
+                spellCheck={false}
+                autoComplete="off"
+                placeholder="ada@example.com, grace@example.com"
+                aria-describedby="send-test-recipient-hint"
+                className={`${FIELD_CLASS} font-mono`}
+                value={recipientsText}
+                onChange={(event) => {
+                  setRecipientsText(event.target.value)
+                  setConfirming(false)
+                }}
+                disabled={phase.kind === 'sending'}
+              />
+              <p
+                id="send-test-recipient-hint"
+                className={`${HINT_CLASS} ${recipientReason ? 'text-warning-foreground' : 'text-muted-foreground'} mt-1.5`}
+              >
+                {recipientReason ?? recipientHint(maxRecipients)}
+              </p>
+            </>
           ) : (
             <span className="text-muted-foreground font-mono break-all">{template.metadata.to.address}</span>
           )}
@@ -152,9 +217,33 @@ function SendTestEmailForm({
         <dd className="font-mono break-all">
           {status?.connected ? status.from : template.metadata.from.address}
         </dd>
-        <dt className="meta-label">Subject</dt>
+        <dt className="meta-label self-start pt-1.5">
+          <label htmlFor="send-test-subject">Subject</label>
+        </dt>
         <dd>
-          <span className="text-muted-foreground font-mono">[TEST]</span> {subject}
+          <div className="flex items-center gap-2">
+            {/* The server adds this prefix whatever is typed here. */}
+            <span className="text-muted-foreground font-mono">[TEST]</span>
+            <input
+              id="send-test-subject"
+              type="text"
+              maxLength={200}
+              autoComplete="off"
+              aria-describedby={subjectReason ? 'send-test-subject-hint' : undefined}
+              className={FIELD_CLASS}
+              value={subjectText}
+              onChange={(event) => {
+                setSubjectText(event.target.value)
+                setConfirming(false)
+              }}
+              disabled={phase.kind === 'sending'}
+            />
+          </div>
+          {subjectReason ? (
+            <p id="send-test-subject-hint" className={`${HINT_CLASS} text-warning-foreground mt-1.5`}>
+              {subjectReason}
+            </p>
+          ) : null}
         </dd>
         <dt className="meta-label">Body</dt>
         <dd className={html === null ? 'text-danger-foreground' : ''}>
@@ -192,6 +281,13 @@ function SendTestEmailForm({
         </p>
       ) : null}
 
+      {confirming ? (
+        <p role="alert" className="text-warning-foreground text-xs">
+          This sends a real email to {list.addresses.length}{' '}
+          {list.addresses.length === 1 ? 'address' : 'addresses'}: {list.addresses.join(', ')}.
+        </p>
+      ) : null}
+
       {outcome ? (
         outcome.status === 'sent' ? (
           <Alert role="status">
@@ -201,7 +297,7 @@ function SendTestEmailForm({
                 them, and `min-w-0` stops them widening the dialog's grid column. */}
             <AlertDescription className="min-w-0">
               Message id <span className="font-mono break-all">{outcome.messageId}</span> · to{' '}
-              <span className="font-mono break-all">{outcome.to}</span>
+              <span className="font-mono break-all">{outcome.to.join(', ')}</span>
               {outcome.mode === 'dry-run' ? '. Nothing left the server.' : '.'}
             </AlertDescription>
           </Alert>
@@ -215,17 +311,33 @@ function SendTestEmailForm({
 
       <DialogFooter className="items-center">
         <span className="text-muted-foreground mr-auto text-[11px]">
-          {connected
-            ? 'Allow-listed recipients only, rate limited by the server.'
-            : 'See docs/SENDING.md to enable.'}
+          {!connected
+            ? 'See docs/SENDING.md to enable.'
+            : status?.connected && status.mode === 'live'
+              ? 'Live sending, rate limited to 5 sends per minute.'
+              : 'Dry run. Nothing leaves the server.'}
         </span>
-        <DialogClose asChild>
-          <Button variant="outline" size="sm">
-            Close
+        {confirming ? (
+          <Button variant="outline" size="sm" onClick={() => setConfirming(false)}>
+            Cancel
           </Button>
-        </DialogClose>
-        <Button size="sm" disabled={!canSend} aria-disabled={!canSend} onClick={() => void send()}>
-          {phase.kind === 'sending' ? 'Sending…' : 'Send test'}
+        ) : (
+          <DialogClose asChild>
+            <Button variant="outline" size="sm">
+              Close
+            </Button>
+          </DialogClose>
+        )}
+        <Button
+          size="sm"
+          disabled={!canSend}
+          aria-disabled={!canSend}
+          onClick={() => {
+            if (needsConfirmation && !confirming) setConfirming(true)
+            else void send()
+          }}
+        >
+          {phase.kind === 'sending' ? 'Sending…' : confirming ? 'Confirm send' : 'Send test'}
           {!connected && phase.kind !== 'loading' ? (
             <StatusBadge tone="neutral" dot={false} className="ml-1 h-4">
               Unavailable
