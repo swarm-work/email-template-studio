@@ -4,6 +4,7 @@ import {
   createRateLimiter,
   LOGIN_ATTEMPTS_PER_MINUTE,
   MAX_HTML_BYTES,
+  MAX_RECIPIENTS_PER_SEND,
   PREFLIGHT_CACHE_MS,
   rejectForeignRequest,
   STUDIO_REQUEST_HEADER,
@@ -26,10 +27,20 @@ const enabledConfig: SendServerConfig = {
   dryRun: true,
   region: 'us-east-1',
   from: 'sender@example.com',
-  allowedRecipients: ['qa@example.com'],
+  recipientPolicy: 'allow-list',
+  allowedRecipients: ['qa@example.com', 'second@example.com'],
   rateLimitPerMinute: 2,
 }
 
+/** The same server with SES_ALLOWED_RECIPIENTS="*": any valid address is acceptable. */
+const anyPolicyConfig: SendServerConfig = {
+  ...enabledConfig,
+  recipientPolicy: 'any',
+  allowedRecipients: [],
+}
+
+// `to` stays a plain string here on purpose: the API must keep accepting the
+// shape an older browser tab (and the curl example in docs/SENDING.md) sends.
 const validBody = {
   to: 'qa@example.com',
   subject: 'Hello',
@@ -41,6 +52,20 @@ const LOCAL_HEADERS = {
   'content-type': 'application/json',
   host: '127.0.0.1:8787',
   [STUDIO_REQUEST_HEADER]: '1',
+}
+
+/** A live sender that records what it was asked to send. */
+function recordingSender(sent: unknown[]): EmailSender {
+  return {
+    mode: 'live',
+    async send(email) {
+      sent.push(email)
+      return { messageId: 'ses-123' }
+    },
+    async preflight() {
+      return { ok: true, message: 'fake' }
+    },
+  }
 }
 
 function post(
@@ -89,7 +114,9 @@ describe('send server API', () => {
       provider: 'amazon-ses',
       mode: 'dry-run',
       from: 'sender@example.com',
-      allowedRecipients: ['qa@example.com'],
+      recipientPolicy: 'allow-list',
+      maxRecipientsPerSend: MAX_RECIPIENTS_PER_SEND,
+      allowedRecipients: ['qa@example.com', 'second@example.com'],
       region: 'us-east-1',
       rateLimitPerMinute: 2,
       preflight: { ok: true, message: 'Dry run: no AWS calls are made.' },
@@ -110,6 +137,8 @@ describe('send server API', () => {
       code: 'invalid-request',
       issues: [{ path: 'to' }],
     })
+    // A newline in the template id would forge a second line in the audit log.
+    expect((await post(app, { ...validBody, templateId: 'welcome\nforged' })).status).toBe(400)
   })
 
   it('refuses recipients outside the allow-list, case-insensitively', async () => {
@@ -124,7 +153,105 @@ describe('send server API', () => {
     const accepted = await post(app, { ...validBody, to: 'QA@example.com' })
     expect(accepted.status).toBe(200)
     // Sent to the allow-list's spelling, not the caller's.
-    expect(await accepted.json()).toMatchObject({ to: 'qa@example.com' })
+    expect(await accepted.json()).toMatchObject({ to: ['qa@example.com'] })
+  })
+
+  it('refuses the whole request when one address in the list is not allowed', async () => {
+    const sent: unknown[] = []
+    const app = createApp({
+      authenticator: testAuth,
+      config: enabledConfig,
+      sender: recordingSender(sent),
+    })
+    const response = await post(app, { ...validBody, to: ['qa@example.com', 'stranger@example.com'] })
+    expect(response.status).toBe(403)
+    expect(await response.json()).toMatchObject({
+      code: 'recipient-not-allowed',
+      // Only the refused address is named, and nothing was sent to the allowed one.
+      message: 'These addresses are not in SES_ALLOWED_RECIPIENTS: stranger@example.com.',
+    })
+    expect(sent).toEqual([])
+  })
+
+  it('sends one email to a de-duplicated list of recipients', async () => {
+    const sent: { to: readonly string[] }[] = []
+    const app = createApp({
+      authenticator: testAuth,
+      config: enabledConfig,
+      sender: recordingSender(sent),
+    })
+    const response = await post(app, {
+      ...validBody,
+      to: ['qa@example.com', 'SECOND@example.com', 'qa@example.com'],
+    })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      to: ['qa@example.com', 'second@example.com'],
+      messageId: 'ses-123',
+    })
+    expect(sent).toHaveLength(1)
+    expect(sent[0].to).toEqual(['qa@example.com', 'second@example.com'])
+  })
+
+  it('refuses more than the per-send cap before anything is sent', async () => {
+    const sent: unknown[] = []
+    const app = createApp({
+      authenticator: testAuth,
+      config: anyPolicyConfig,
+      sender: recordingSender(sent),
+    })
+    const eleven = Array.from({ length: MAX_RECIPIENTS_PER_SEND + 1 }, (_, i) => `p${i}@example.com`)
+    const response = await post(app, { ...validBody, to: eleven })
+    expect(response.status).toBe(400)
+    expect(await response.json()).toMatchObject({
+      code: 'too-many-recipients',
+      message: 'Up to 10 recipients per test send; this request had 11.',
+    })
+    expect(sent).toEqual([])
+  })
+
+  it("refuses the studio's own sender address as a recipient", async () => {
+    const app = createApp({
+      authenticator: testAuth,
+      config: anyPolicyConfig,
+      sender: createDryRunSender(() => {}),
+    })
+    const response = await post(app, { ...validBody, to: ['SENDER@example.com'] })
+    expect(response.status).toBe(403)
+    expect(await response.json()).toMatchObject({
+      code: 'recipient-not-allowed',
+      message: "The studio's own sender address cannot be a test recipient.",
+    })
+  })
+
+  it('accepts a stranger, in their own spelling, when the policy is "any"', async () => {
+    const sent: { to: readonly string[] }[] = []
+    const app = createApp({
+      authenticator: testAuth,
+      config: anyPolicyConfig,
+      sender: recordingSender(sent),
+    })
+    const response = await post(app, { ...validBody, to: ' Stranger@Example.com ' })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ to: ['Stranger@Example.com'] })
+    expect(sent[0].to).toEqual(['Stranger@Example.com'])
+  })
+
+  it('logs every recipient and the caller on one line', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      const app = createApp({
+        authenticator: testAuth,
+        config: enabledConfig,
+        sender: recordingSender([]),
+      })
+      await post(app, { ...validBody, to: ['qa@example.com', 'second@example.com'] })
+      const line = log.mock.calls.map((call) => String(call[0])).find((text) => text.includes('[send-test]'))
+      expect(line).toContain('2 recipients: qa@example.com, second@example.com')
+      expect(line).toContain('by tester@example.test')
+    } finally {
+      log.mockRestore()
+    }
   })
 
   it('caps the HTML size', async () => {
@@ -139,29 +266,19 @@ describe('send server API', () => {
 
   it('sends through the sender with the [TEST] prefix and the configured from address', async () => {
     const sent: unknown[] = []
-    const sender: EmailSender = {
-      mode: 'live',
-      async send(email) {
-        sent.push(email)
-        return { messageId: 'ses-123' }
-      },
-      async preflight() {
-        return { ok: true, message: 'fake' }
-      },
-    }
     const app = createApp({
       authenticator: testAuth,
       config: enabledConfig,
-      sender,
+      sender: recordingSender(sent),
       now: () => 1_700_000_000_000,
     })
-    const response = await post(app, { ...validBody, subject: 'Verify your email' })
+    const response = await post(app, { ...validBody, to: ['qa@example.com'], subject: 'Verify your email' })
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual({
       status: 'sent',
       mode: 'live',
       messageId: 'ses-123',
-      to: 'qa@example.com',
+      to: ['qa@example.com'],
       from: 'sender@example.com',
       subject: `${TEST_SUBJECT_PREFIX}Verify your email`,
       templateId: 'welcome-verification',
@@ -170,7 +287,7 @@ describe('send server API', () => {
     expect(sent).toEqual([
       {
         from: 'sender@example.com',
-        to: 'qa@example.com',
+        to: ['qa@example.com'],
         subject: '[TEST] Verify your email',
         html: '<p>hi</p>',
       },
@@ -196,6 +313,8 @@ describe('send server API', () => {
     })
   })
 
+  // The limiter counts requests, not recipients: a ten-address send costs one
+  // token, so the real ceiling is 5 sends (up to 50 recipients) per minute.
   it('rate limits per minute', async () => {
     let clock = 0
     const app = createApp({
@@ -209,6 +328,23 @@ describe('send server API', () => {
     expect((await post(app, validBody)).status).toBe(429)
     clock += 61_000
     expect((await post(app, validBody)).status).toBe(200)
+  })
+
+  // The recipient guards run before the limiter on purpose, so a typo costs no
+  // token. Move the limiter above them and this test fails: three refusals
+  // would otherwise use up the whole minute's budget and lock sending out.
+  it('spends no rate-limit token on a refused send', async () => {
+    const sent: unknown[] = []
+    const app = createApp({
+      authenticator: testAuth,
+      config: enabledConfig,
+      sender: recordingSender(sent),
+    })
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      expect((await post(app, { ...validBody, to: 'stranger@example.com' })).status).toBe(403)
+    }
+    expect((await post(app, validBody)).status).toBe(200)
+    expect(sent).toHaveLength(1)
   })
 })
 

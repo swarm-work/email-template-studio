@@ -30,8 +30,8 @@ export function PageHeader({
           <StatusBadge tone="warning">MVP · local development</StatusBadge>
         </div>
         <p className="text-muted-foreground max-w-lg text-sm">
-          Edit React Email templates, validate their preview data and check the rendered result. Everything
-          runs in this browser; no email is sent.
+          Edit React Email templates, validate their preview data and check the rendered result. Editing and
+          preview run in this browser; test sends go through the send server.
         </p>
       </div>
 
@@ -53,7 +53,7 @@ export function PageHeader({
             </Button>
           </TooltipTrigger>
           <TooltipContent id="send-test-hint">
-            Unavailable in this milestone. Opens an explanation.
+            Sends the current preview through the send server.
           </TooltipContent>
         </Tooltip>
         <Tooltip>

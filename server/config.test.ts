@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ConfigError, loadConfig, parseRecipients } from './config.ts'
+import { ConfigError, loadConfig, parseRecipientPolicy, parseRecipients } from './config.ts'
 
 describe('loadConfig', () => {
   it('is disabled by default and never throws for a disabled setup', () => {
@@ -31,10 +31,22 @@ describe('loadConfig', () => {
       dryRun: true,
       region: 'us-east-1',
       from: 'sender@example.com',
+      recipientPolicy: 'allow-list',
       allowedRecipients: ['One@Example.com', 'two@example.com'],
       configurationSet: undefined,
       rateLimitPerMinute: 2,
     })
+  })
+
+  it('reads "*" as the any-recipient policy, with nothing to list', () => {
+    const config = loadConfig({
+      STUDIO_SEND_ENABLED: 'true',
+      STUDIO_SEND_DRY_RUN: 'true',
+      AWS_REGION: 'us-east-1',
+      SES_FROM_ADDRESS: 'sender@example.com',
+      SES_ALLOWED_RECIPIENTS: ' * ',
+    })
+    expect(config).toMatchObject({ recipientPolicy: 'any', allowedRecipients: [] })
   })
 
   it('rejects an invalid from address', () => {
@@ -54,6 +66,20 @@ describe('parseRecipients', () => {
     expect(parseRecipients(' A@x.io ,a@x.io,, b@y.io ')).toEqual(['A@x.io', 'b@y.io'])
     expect(parseRecipients(undefined)).toEqual([])
     expect(() => parseRecipients('a@x.io, junk')).toThrow(/invalid addresses: junk/)
+  })
+})
+
+describe('parseRecipientPolicy', () => {
+  it('accepts either the wildcard or a list, and refuses a mix of the two', () => {
+    expect(parseRecipientPolicy('*')).toEqual({ policy: 'any', addresses: [] })
+    expect(parseRecipientPolicy(' * ')).toEqual({ policy: 'any', addresses: [] })
+    expect(parseRecipientPolicy('a@b.co')).toEqual({ policy: 'allow-list', addresses: ['a@b.co'] })
+    // ConfigError specifically: worker/index.ts only turns that class into the
+    // "server-misconfigured" 500; any other Error escapes as a bare crash.
+    expect(() => parseRecipientPolicy('*, a@b.co')).toThrow(ConfigError)
+    expect(() => parseRecipientPolicy('*, a@b.co')).toThrow(/either "\*" or a comma-separated list/)
+    expect(() => parseRecipientPolicy('a@b.co,*')).toThrow(ConfigError)
+    expect(() => parseRecipientPolicy('a@b.co,*')).toThrow(/either "\*" or a comma-separated list/)
   })
 })
 

@@ -87,8 +87,9 @@ falling back to something weaker.
 A stop-gap for a test deployment that needs _something_ in front of it before Access
 exists. Be clear about what it is: it proves the caller knew a secret. It does **not**
 say who they are, it cannot be revoked for one person without changing it for everyone,
-and anyone told the password can pass it on. Move to Access before the recipient
-allow-list contains anyone outside the team.
+and anyone told the password can pass it on. Move to Access before opening the recipient
+policy (`SES_ALLOWED_RECIPIENTS=*`), and before anyone outside the team is told the
+password.
 
 What it does do properly: the password is exchanged once at `POST /api/session` for an
 HttpOnly, `SameSite=Strict` cookie holding an HMAC of the session expiry — the password
@@ -151,24 +152,21 @@ in `.dev.vars` (see `.dev.vars.example`). Without it, the local API answers 401 
 
 The Worker can reach Amazon SES (ADR-16). Whether it _does_ is one variable plus two secrets, per environment.
 
-> **Read this first.** Do the Access setup above before turning sending on. A live SES key on a public Worker means anyone with the URL can trigger a send. Three further guards contain the damage: sends go only to `SES_ALLOWED_RECIPIENTS`, every subject is prefixed `[TEST]`, and the rate limit is 5 per minute. Those are a backstop, not a substitute for authentication.
+> **Read this first.** Do the Access setup above before turning sending on. A live SES key on a public Worker means anyone with the URL can trigger a send. Four further guards contain the damage: `SES_ALLOWED_RECIPIENTS` decides who may receive (a list, or `*` for any typed address), at most 10 recipients go out per send, every subject is prefixed `[TEST]`, and the rate limit is 5 sends per minute. Those are a backstop, not a substitute for authentication. Before using `*`, do two things in this order: turn the SES account suppression list on (`docs/SENDING.md`, "Free-form recipients"), and apply the widened IAM policy from step 1 below. A key whose attached policy still pins `ses:Recipients` refuses every new address with a 502 `AccessDeniedException`, which reads like a code regression rather than a policy one.
 
-**1. Make the IAM user.** One user, no console access, one inline policy. The policy is the real backstop: our own code checks the allow-list, but the policy is what stops a mistake or a stolen key from mailing the world.
+**1. Make the IAM user.** One user, no console access, one inline policy. The tracked copy is `infra/ses-policy.json`; apply it with `aws iam put-user-policy --user-name <user> --policy-name <name> --policy-document file://infra/ses-policy.json` after replacing `<account-id>` (and the region, identity and from-address if yours differ from this studio's). The policy is the real backstop: it is what stops a mistake or a stolen key from sending as anyone but the studio.
 
 ```json
 {
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "SendOnlyAsTheStudioIdentityToKnownPeople",
+      "Sid": "SendOnlyAsTheStudioIdentity",
       "Effect": "Allow",
       "Action": "ses:SendEmail",
-      "Resource": "arn:aws:ses:us-east-1:<account-id>:identity/swarm.camp",
+      "Resource": "arn:aws:ses:ap-southeast-2:<account-id>:identity/swarm.camp",
       "Condition": {
-        "StringEquals": { "ses:FromAddress": "studio@swarm.camp" },
-        "ForAllValues:StringEquals": {
-          "ses:Recipients": ["you@swarm.camp", "teammate@swarm.camp"]
-        }
+        "StringEquals": { "ses:FromAddress": "testing@swarm.camp" }
       }
     },
     {
@@ -181,7 +179,7 @@ The Worker can reach Amazon SES (ADR-16). Whether it _does_ is one variable plus
 }
 ```
 
-Replace the region, account id, identity and addresses. `ses:Recipients` must list every address in `SES_ALLOWED_RECIPIENTS`; when you add one, change both. If the company uses a configuration set, add `"ses:FeedbackAddress"` or a `ses:ConfigurationSetName` condition to match its policy.
+Replace the region, account id, identity and from-address. There is deliberately no `ses:Recipients` condition: recipients are typed in the studio (ADR-17), so what the policy pins down is the sender. If you do want to pin recipients as well, add `"ForAllValues:StringEquals": { "ses:Recipients": [...] }` back to the first statement — and remember that it must then list every address in `SES_ALLOWED_RECIPIENTS`. When a configuration set is in use, add a `ses:ConfigurationSetName` (or `ses:FeedbackAddress`) condition to the same `StringEquals` block.
 
 **2. Set the non-secret variables** in `wrangler.jsonc` for that environment:
 
@@ -189,8 +187,10 @@ Replace the region, account id, identity and addresses. `ses:Recipients` must li
 "vars": {
   "STUDIO_SEND_ENABLED": "true",
   "STUDIO_SEND_DRY_RUN": "false",
-  "AWS_REGION": "us-east-1",
-  "SES_FROM_ADDRESS": "studio@swarm.camp",
+  // the same region and address the policy above pins, or SES denies every send
+  "AWS_REGION": "ap-southeast-2",
+  "SES_FROM_ADDRESS": "testing@swarm.camp",
+  // a comma-separated list, or "*" for any address typed in the studio
   "SES_ALLOWED_RECIPIENTS": "you@swarm.camp,teammate@swarm.camp",
   "SES_CONFIGURATION_SET": "studio-events"
 }
@@ -215,6 +215,15 @@ curl -s https://<hostname>/api/send-test/status
 Expect `"mode":"live"` and a `preflight.ok` of `true`. If `identityVerified` is false the sender is not verified in that region; if `sandbox` is true you can still only reach verified addresses.
 
 **Rehearsal.** Setting `STUDIO_SEND_DRY_RUN=true` exercises the whole path, returns `dry-run-N` message ids and needs no credentials at all. Deploy that way first: it proves the config plumbing without any AWS risk.
+
+### Rolling back the recipient policy
+
+Opening sending up is one variable, and so is closing it again. In increasing severity:
+
+1. Set `SES_ALLOWED_RECIPIENTS` back to a comma-separated list in `wrangler.jsonc` and `npm run deploy`. Anything off the list is refused again with `recipient-not-allowed`, and open tabs pick it up on their next status check.
+2. `npx wrangler rollback <deployment-id>` to go back to the previous Worker version entirely.
+3. `STUDIO_SEND_ENABLED: "false"` and deploy: the API answers `sending-disabled` and the dialog says so.
+4. On the AWS side, `aws iam delete-access-key` for the Worker's key. Nothing can send until a new key is put in as a secret.
 
 **Rotation.** Long-lived IAM keys should be rotated on a schedule. `wrangler secret put` with the same name overwrites in place, and the next request picks it up. There is no downtime and no code change.
 

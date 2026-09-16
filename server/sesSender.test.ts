@@ -35,7 +35,12 @@ function fakeFetch(
   return { calls, impl }
 }
 
-const email = { from: 'studio@example.com', to: 'qa@example.com', subject: '[TEST] Hi', html: '<p>Hi</p>' }
+const email = {
+  from: 'studio@example.com',
+  to: ['qa@example.com', 'second@example.com'],
+  subject: '[TEST] Hi',
+  html: '<p>Hi</p>',
+}
 
 describe('createSesSender.send', () => {
   it('posts a signed SendEmail request to the regional endpoint and returns the message id', async () => {
@@ -56,7 +61,8 @@ describe('createSesSender.send', () => {
     )
     expect(JSON.parse(calls[0].body)).toEqual({
       FromEmailAddress: 'studio@example.com',
-      Destination: { ToAddresses: ['qa@example.com'] },
+      // Every recipient travels in the To header of a single SendEmail call.
+      Destination: { ToAddresses: ['qa@example.com', 'second@example.com'] },
       Content: {
         Simple: {
           Subject: { Data: '[TEST] Hi', Charset: 'UTF-8' },

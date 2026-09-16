@@ -4,7 +4,7 @@ An internal studio for editing [React Email](https://react.email) templates, val
 
 ![Email Template Studio: editor and payload on the left, isolated preview and diagnostics on the right, template library below](docs/screenshots/studio-desktop.png)
 
-**Status:** MVP plus test sending in both runtimes, deployed to Cloudflare at https://email-template-studio.jerichodelrosario35.workers.dev. Sending is switched off there because that account is a personal one and must never hold AWS credentials; see `docs/DEPLOYMENT.md` and, for the move to the company accounts, `docs/HANDOVER.md`. The browser never holds credentials: test emails go through the API in `server/`, which talks to Amazon SES only when you enable it, and only to allow-listed recipients. The same sender runs in the local Node server and in the Cloudflare Worker. See `docs/SENDING.md`.
+**Status:** MVP plus test sending in both runtimes, deployed to Cloudflare at https://email-template-studio.jerichodelrosario35.workers.dev. Live sending is on there for this test deployment, behind the shared-password gate, with the AWS keys as Worker secrets (a deliberate exception, while it is a test sender, to the rule that this personal account holds no AWS credentials); see "Turning live sending on" in `docs/DEPLOYMENT.md` and, for the move to the company accounts, `docs/HANDOVER.md`. The browser never holds credentials: test emails go through the API in `server/`, which talks to Amazon SES only when you enable it, and only to the recipients `SES_ALLOWED_RECIPIENTS` permits (a list, or any typed address when it is `*`). The same sender runs in the local Node server and in the Cloudflare Worker. See `docs/SENDING.md`.
 
 ## What you can do
 
@@ -17,7 +17,7 @@ An internal studio for editing [React Email](https://react.email) templates, val
 - Read a diagnostics panel that only claims what it actually checks.
 - Keep edits per template for the current browser session (survives refresh, not tab close).
 - Reset source and payload back to the originals, with a confirmation.
-- Send a test email of the current preview to an allow-listed address through Amazon SES, or see exactly why sending is unavailable.
+- Send a test email of the current preview to up to 10 addresses through Amazon SES, with an editable subject, or see exactly why sending is unavailable.
 - Open Publish changes and see that it is a local simulation.
 
 ## Quick start
@@ -96,5 +96,5 @@ Your TSX is compiled in the browser by [sucrase](https://github.com/alangpierce/
 
 - No AWS keys exist in the codebase. They are read from the environment (`.env`, `.dev.vars`) or from Cloudflare Worker secrets, and are needed only for a live, non-dry-run send.
 - The browser never talks to SES; it only talks to the `/api` routes in `server/app.ts`.
-- Sending is off unless `STUDIO_SEND_ENABLED=true`, only reaches `SES_ALLOWED_RECIPIENTS`, prefixes subjects with `[TEST]`, and is rate limited. The Node adapter also binds to loopback only.
+- Sending is off unless `STUDIO_SEND_ENABLED=true`. When on, `SES_ALLOWED_RECIPIENTS` decides who may receive (a list, or `*` for any typed address), at most 10 addresses go out per send, subjects are prefixed with `[TEST]`, and sends are rate limited. The Node adapter also binds to loopback only.
 - "Publish changes" only records a timestamp in your browser session and says so.
