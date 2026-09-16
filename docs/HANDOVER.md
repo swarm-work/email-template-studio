@@ -22,7 +22,7 @@ flowchart TD
   F -.-> D
 ```
 
-GitHub first, because the deploy credentials live on the repository and you only want to create them once. Cloudflare second. **Access before live sending**, because the deployed studio has no authentication of its own: a live Amazon SES key on a public URL is a stranger's send button, bounded only by the recipient allow-list and a 5-per-minute limit.
+GitHub first, because the deploy credentials live on the repository and you only want to create them once. Cloudflare second. **Access before live sending**, because the deployed studio has no authentication of its own: a live Amazon SES key on a public URL is a stranger's send button. Once `SES_ALLOWED_RECIPIENTS` is `*` (ADR-17) there is no allow-list left to bound it: what remains is the password gate, at most 10 recipients per send, the forced `[TEST]` subject, 5 sends a minute and the SES account suppression list.
 
 ## Before you start: what you need from other people
 

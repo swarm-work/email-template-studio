@@ -96,7 +96,8 @@ export function createSesSender(options: SesSenderOptions): EmailSender {
     async send(email) {
       const payload = await call('POST', '/v2/email/outbound-emails', {
         FromEmailAddress: email.from,
-        Destination: { ToAddresses: [email.to] },
+        // One SES call for the whole list: everyone in To can see the others.
+        Destination: { ToAddresses: [...email.to] },
         // Omitted entirely when unset: SES rejects an explicit null.
         ...(options.configurationSet ? { ConfigurationSetName: options.configurationSet } : {}),
         Content: {

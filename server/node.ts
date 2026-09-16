@@ -6,6 +6,7 @@ import { serve } from '@hono/node-server'
 import { createApp } from './app.ts'
 import type { AuthConfig } from './auth.ts'
 import { createAuthenticator, loadAuthConfig } from './auth.ts'
+import type { SendServerConfig } from './config.ts'
 import { ConfigError, loadConfig } from './config.ts'
 import { createSender } from './createSender.ts'
 
@@ -49,7 +50,7 @@ function main(): void {
     const base = `http://127.0.0.1:${info.port}`
     if (config.enabled && sender) {
       console.log(
-        `Send server listening on ${base}\n  mode: ${sender.mode}\n  identity: ${describeAuth(authConfig)}\n  region: ${config.region}\n  from: ${config.from}\n  allowed recipients: ${config.allowedRecipients.join(', ')}\n  rate limit: ${config.rateLimitPerMinute}/min`,
+        `Send server listening on ${base}\n  mode: ${sender.mode}\n  identity: ${describeAuth(authConfig)}\n  region: ${config.region}\n  from: ${config.from}\n  recipients: ${describeRecipientPolicy(config)}\n  rate limit: ${config.rateLimitPerMinute}/min`,
       )
       void sender.preflight(config.from).then((result) => {
         console.log(`  preflight: ${result.ok ? 'OK' : 'PROBLEM'} - ${result.message}`)
@@ -68,6 +69,13 @@ function main(): void {
     }
     throw error
   })
+}
+
+/** One line for the banner, so it is obvious at a glance how open sending is. */
+function describeRecipientPolicy(config: Extract<SendServerConfig, { enabled: true }>): string {
+  return config.recipientPolicy === 'any'
+    ? 'any address (SES_ALLOWED_RECIPIENTS=*)'
+    : config.allowedRecipients.join(', ')
 }
 
 /** One line for the startup banner, so it is obvious who requests will act as. */

@@ -8,7 +8,7 @@ function fetchReturning(status: number, body: unknown): typeof fetch {
   ) as unknown as typeof fetch
 }
 
-const email = { to: 'qa@example.com', subject: 'Hi', html: '<p>x</p>', templateId: 't' }
+const email = { to: ['qa@example.com'], subject: 'Hi', html: '<p>x</p>', templateId: 't' }
 
 describe('NoSendEmailProvider', () => {
   it('is never connected and never sends', async () => {
@@ -36,7 +36,9 @@ describe('HttpTestEmailProvider', () => {
     expect(await provider.getStatus()).toEqual({ connected: false, reason: 'off' })
   })
 
-  it('parses a connected status and ignores unknown fields', async () => {
+  it('parses a connected status, ignores unknown fields and fills in safe defaults', async () => {
+    // A server that predates the recipient policy sends neither new field; the
+    // defaults must be the closed reading, not the open one.
     const provider = new HttpTestEmailProvider(
       '/api/send-test',
       fetchReturning(200, {
@@ -54,8 +56,31 @@ describe('HttpTestEmailProvider', () => {
       provider: 'amazon-ses',
       mode: 'live',
       from: 'a@b.co',
+      recipientPolicy: 'allow-list',
       allowedRecipients: ['q@b.co'],
+      maxRecipientsPerSend: 10,
       region: 'us-east-1',
+    })
+  })
+
+  it('passes the "any" recipient policy and the cap through', async () => {
+    const provider = new HttpTestEmailProvider(
+      '/api/send-test',
+      fetchReturning(200, {
+        enabled: true,
+        provider: 'amazon-ses',
+        mode: 'live',
+        from: 'a@b.co',
+        recipientPolicy: 'any',
+        allowedRecipients: [],
+        maxRecipientsPerSend: 10,
+        region: 'us-east-1',
+      }),
+    )
+    expect(await provider.getStatus()).toMatchObject({
+      recipientPolicy: 'any',
+      allowedRecipients: [],
+      maxRecipientsPerSend: 10,
     })
   })
 
@@ -81,13 +106,17 @@ describe('HttpTestEmailProvider', () => {
         status: 'sent',
         mode: 'dry-run',
         messageId: 'dry-run-1',
-        to: 'q@b.co',
+        to: ['q@b.co', 'second@b.co'],
         from: 'a@b.co',
         subject: '[TEST] Hi',
         sentAt: 'now',
       }),
     )
-    expect(await ok.send(email)).toMatchObject({ status: 'sent', messageId: 'dry-run-1' })
+    expect(await ok.send(email)).toMatchObject({
+      status: 'sent',
+      messageId: 'dry-run-1',
+      to: ['q@b.co', 'second@b.co'],
+    })
     const [, init] = (ok as unknown as { fetchImpl: ReturnType<typeof vi.fn> }).fetchImpl.mock.calls[0] as [
       string,
       RequestInit,
