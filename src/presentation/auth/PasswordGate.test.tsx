@@ -31,9 +31,7 @@ describe('PasswordGate', () => {
 
   it('shows the password form when the API reports the password mode', async () => {
     render(
-      <PasswordGate
-        fetchImpl={fetchStub([() => json({ code: 'unauthenticated', mode: 'password' }, 401)])}
-      >
+      <PasswordGate fetchImpl={fetchStub([() => json({ code: 'unauthenticated', mode: 'password' }, 401)])}>
         <p>studio</p>
       </PasswordGate>,
     )

@@ -1,6 +1,6 @@
 # Continuous integration and deployment. See docs/DEPLOYMENT.md.
 #
-# check:  every push and pull request; typecheck, lint, unit tests, production build, Playwright E2E.
+# check:  every push and pull request; typecheck, lint, format check, unit tests, production build, Playwright E2E.
 # deploy: pushes to main only, after check, and only when the CLOUDFLARE_API_TOKEN secret exists.
 #         Without the secret the job is skipped and deploys happen by hand with `npm run deploy`.
 name: CI
@@ -26,7 +26,6 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
-      - run: npm run format:check
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
       - uses: actions/upload-artifact@v4

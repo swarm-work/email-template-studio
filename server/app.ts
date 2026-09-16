@@ -140,7 +140,11 @@ export function createApp({
       // convenient oracle to guess against.
       if (!loginLimiter.tryAcquire()) {
         return c.json(
-          { status: 'error', code: 'rate-limited', message: 'Too many attempts. Wait a minute and try again.' },
+          {
+            status: 'error',
+            code: 'rate-limited',
+            message: 'Too many attempts. Wait a minute and try again.',
+          },
           429,
         )
       }
@@ -149,7 +153,10 @@ export function createApp({
       try {
         body = await c.req.json()
       } catch {
-        return c.json({ status: 'error', code: 'invalid-request', message: 'Request body must be JSON.' }, 400)
+        return c.json(
+          { status: 'error', code: 'invalid-request', message: 'Request body must be JSON.' },
+          400,
+        )
       }
       const parsed = z.object({ password: z.string().min(1).max(200) }).safeParse(body)
       if (!parsed.success) {
@@ -159,7 +166,10 @@ export function createApp({
       if (!(await checkPassword(parsed.data.password, passwordGate.password))) {
         // Deliberately vague, and deliberately the same shape and timing as a
         // success: nothing here should help someone narrow down the password.
-        return c.json({ status: 'error', code: 'invalid-password', message: 'That password is not correct.' }, 401)
+        return c.json(
+          { status: 'error', code: 'invalid-password', message: 'That password is not correct.' },
+          401,
+        )
       }
 
       const token = await createSessionToken(passwordGate.password, Math.floor(now() / 1000))

@@ -37,7 +37,8 @@ export interface Identity {
  * The result of trying to identify a caller. A failure carries a sentence the
  * API can return, so a 401 explains itself instead of being a bare status code.
  */
-export type AuthResult = { readonly ok: true; readonly identity: Identity } | { readonly ok: false; readonly reason: string }
+export type AuthResult =
+  { readonly ok: true; readonly identity: Identity } | { readonly ok: false; readonly reason: string }
 
 /** What the API calls on every `/api/*` request. */
 export interface Authenticator {

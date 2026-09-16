@@ -100,7 +100,7 @@ export function PasswordGate({ children, fetchImpl = (...args) => fetch(...args)
   if (state.kind === 'checking') {
     return (
       <main className="flex min-h-dvh items-center justify-center p-6">
-        <p className="text-sm text-muted-foreground">Checking access…</p>
+        <p className="text-muted-foreground text-sm">Checking access…</p>
       </main>
     )
   }
@@ -110,7 +110,7 @@ export function PasswordGate({ children, fetchImpl = (...args) => fetch(...args)
       <div className="w-full max-w-sm space-y-6">
         <div className="space-y-2">
           <h1 className="text-xl font-semibold tracking-tight">Email Template Studio</h1>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-muted-foreground text-sm">
             {state.kind === 'locked'
               ? 'This studio is password protected.'
               : 'This studio is not available right now.'}
@@ -130,7 +130,7 @@ export function PasswordGate({ children, fetchImpl = (...args) => fetch(...args)
                 autoFocus
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
-                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                className="border-input focus-visible:ring-ring/50 flex h-9 w-full rounded-md border bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:ring-[3px]"
               />
             </div>
             {state.message ? (

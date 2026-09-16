@@ -37,7 +37,12 @@ let publicJwk: TestJwk
 
 beforeAll(async () => {
   keyPair = (await crypto.subtle.generateKey(
-    { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
+    {
+      name: 'RSASSA-PKCS1-v1_5',
+      modulusLength: 2048,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: 'SHA-256',
+    },
     true,
     ['sign', 'verify'],
   )) as TestKeyPair
@@ -45,8 +50,7 @@ beforeAll(async () => {
 })
 
 function base64Url(bytes: Uint8Array | string): string {
-  const raw =
-    typeof bytes === 'string' ? bytes : String.fromCharCode(...Array.from(bytes))
+  const raw = typeof bytes === 'string' ? bytes : String.fromCharCode(...Array.from(bytes))
   return btoa(raw).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 }
 
@@ -100,7 +104,10 @@ describe('loadAuthConfig', () => {
   })
 
   it('refuses a half configured Access setup rather than falling back', () => {
-    const config = loadAuthConfig({ ACCESS_TEAM_DOMAIN: TEAM_DOMAIN, STUDIO_DEV_IDENTITY: 'dev@example.test' })
+    const config = loadAuthConfig({
+      ACCESS_TEAM_DOMAIN: TEAM_DOMAIN,
+      STUDIO_DEV_IDENTITY: 'dev@example.test',
+    })
     expect(config.mode).toBe('none')
   })
 
@@ -173,7 +180,12 @@ describe('createAccessAuthenticator', () => {
 
   it('refuses a token signed by a different key', async () => {
     const other = (await crypto.subtle.generateKey(
-      { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
+      {
+        name: 'RSASSA-PKCS1-v1_5',
+        modulusLength: 2048,
+        publicExponent: new Uint8Array([1, 0, 1]),
+        hash: 'SHA-256',
+      },
       true,
       ['sign', 'verify'],
     )) as TestKeyPair
@@ -184,8 +196,17 @@ describe('createAccessAuthenticator', () => {
 
   it('refuses "alg: none", which carries no signature at all', async () => {
     const headerPart = base64Url(JSON.stringify({ alg: 'none', kid: KID }))
-    const payloadPart = base64Url(JSON.stringify({ iss: `https://${TEAM_DOMAIN}`, aud: [AUD], email: 'attacker@evil.test', exp: NOW_SECONDS + 600 }))
-    const result = await authenticatorWith(certsFetch()).authenticate(headersWith(`${headerPart}.${payloadPart}.`))
+    const payloadPart = base64Url(
+      JSON.stringify({
+        iss: `https://${TEAM_DOMAIN}`,
+        aud: [AUD],
+        email: 'attacker@evil.test',
+        exp: NOW_SECONDS + 600,
+      }),
+    )
+    const result = await authenticatorWith(certsFetch()).authenticate(
+      headersWith(`${headerPart}.${payloadPart}.`),
+    )
     expect(result).toMatchObject({ ok: false })
     expect(result.ok === false && result.reason).toMatch(/algorithm/i)
   })
@@ -270,7 +291,9 @@ describe('createAuthenticator', () => {
     expect(createAuthenticator({ mode: 'cloudflare-access', teamDomain: TEAM_DOMAIN, aud: AUD }).mode).toBe(
       'cloudflare-access',
     )
-    expect(createAuthenticator({ mode: 'password', password: 'a-long-enough-password' }).mode).toBe('password')
+    expect(createAuthenticator({ mode: 'password', password: 'a-long-enough-password' }).mode).toBe(
+      'password',
+    )
   })
 })
 
