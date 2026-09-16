@@ -2,7 +2,7 @@
 
 Deferred on purpose. Nothing here is implemented, simulated, or wired in this MVP.
 
-The step-by-step build and Cloudflare migration plan for M2 onwards is `docs/PLAN.md` (phases 0 to 5, decisions, risks). This file stays the short list of what is in and out of scope.
+The step-by-step build and Cloudflare migration plan for M2 onwards is `docs/PLAN.md` (phases 0 to 5, decisions, risks). The current, verified order of work is `docs/PRIORITIES.md` (2026-09-15); when it and this file disagree, PRIORITIES wins. This file stays the short list of what is in and out of scope.
 The revised order (2026-09-09): deploy the foundation on Cloudflare first (PLAN.md phase 0 and 1), then build each feature as a vertical slice. The detailed, feature-by-feature plan for the dashboard screens (Overview and Logs, Domains and DNS, API keys and webhooks, Projects Hub) and the multi-project hierarchy is `docs/FEATURE_PLAN.md`. Its phases map onto the milestones below: phase 0 to 5 are the UI over seeded data, phase 6 is M2 to M6.
 
 ## Milestones

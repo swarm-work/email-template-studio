@@ -84,6 +84,7 @@ Your TSX is compiled in the browser by [sucrase](https://github.com/alangpierce/
 - `docs/TECH_DEBT.md` — known shortcuts and how to pay them down
 - `docs/ROADMAP.md` — milestones and the backlog of deliberately deferred work
 - `docs/PLAN.md` — build plan for the full application and the move to Cloudflare (phases, decisions, risks)
+- `docs/PRIORITIES.md` — verified, prioritised backlog: what to do now, next and later, and the decisions still open (2026-09-15)
 - `docs/FEATURE_PLAN.md` — phased plan for the dashboard screens and the multi-project hierarchy
 - `docs/LEARNING.md` — concepts to learn, mapped to the files that use them
 - `docs/DESIGN.md` — visual system, tokens, microcopy and motion rules
