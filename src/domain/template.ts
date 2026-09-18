@@ -161,3 +161,19 @@ export function templateSource(record: TemplateRecord): string {
 export function templateDocument(record: TemplateRecord): EmailDocument | null {
   return record.kind === 'visual' ? record.document : null
 }
+
+/**
+ * RFC 5322 recommends subject lines of at most 78 characters and most mail
+ * clients truncate around there. It is a recommendation, not a hard limit, so
+ * the studio warns instead of blocking.
+ */
+export const SUBJECT_LENGTH_LIMIT = 78
+
+/** Where a subject sits against the recommended length. */
+export type SubjectLengthState = 'empty' | 'ok' | 'too-long'
+
+/** Pure rule behind the subject counter and its check / warning icon. */
+export function subjectLengthState(subject: string): SubjectLengthState {
+  if (subject.length === 0) return 'empty'
+  return subject.length > SUBJECT_LENGTH_LIMIT ? 'too-long' : 'ok'
+}

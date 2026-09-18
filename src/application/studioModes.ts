@@ -12,7 +12,15 @@ const MODES_BY_KIND: Readonly<Record<TemplateKind, readonly StudioMode[]>> = {
   code: ['code', 'preview'],
 }
 
-/** The modes offered for this kind, in the order the mode toggle shows them. */
+/**
+ * Every mode, in the order the toggle draws them. The toggle shows all three so
+ * the shape of the studio is visible; each button carries its own reason when
+ * it cannot be pressed, and the reducer clamps whatever is chosen through
+ * `clampMode`, so a kind can never end up in a mode it does not offer.
+ */
+export const ALL_STUDIO_MODES: readonly StudioMode[] = ['visual', 'code', 'preview']
+
+/** The modes this kind offers, its own editor first. Used by `clampMode`, below. */
 export function availableModes(kind: TemplateKind): readonly StudioMode[] {
   return MODES_BY_KIND[kind]
 }

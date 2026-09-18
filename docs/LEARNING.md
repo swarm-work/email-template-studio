@@ -62,7 +62,7 @@ return statement and return type does not include 'undefined'"_ (error TS2366). 
 on `noFallthroughCasesInSwitch`, which is a different guard: it catches a `case` that accidentally
 runs into the next one.
 The compiler hands you the list of places to update, which is exactly what a picklist cannot do. You
-can see this in `stageLabel()` in `SourceWorkspace.tsx`: adding `'compose'` and `'editor-load'` to
+can see this in `stageLabel()` in `studio/code/RenderErrorBanner.tsx`: adding `'compose'` and `'editor-load'` to
 `RenderErrorKind` broke it immediately, on purpose.
 
 `studioReducer` uses the same trick on `action.type`: every action shape carries its own fields, so
@@ -202,6 +202,66 @@ saves of a 200 KB template is 600 KB of rows, and nothing prunes them yet (`docs
 `server/templateStoreContract.ts` is the suite both store implementations pass — read the case named
 _"refuses a stale expectedRevision, writes nothing, and hands back the current template"_ and you
 have the whole idea in twenty lines.
+
+## Controlled inputs and a single reducer: the envelope panel
+
+Coming from Salesforce, the closest thing to `EnvelopePanel` is a Lightning form bound to a record in
+a wire adapter: fields show the record, edits go somewhere central, and the form itself owns nothing.
+React has no framework doing that for you, so it is worth seeing exactly how little code it takes.
+
+**A controlled input has no memory.** In plain HTML an `<input>` remembers what you typed. A
+_controlled_ input does not: it is told what to show, and it reports what you did.
+
+```tsx
+<Input
+  value={envelope.subject}
+  onChange={(event) => onChange({ ...envelope, subject: event.target.value })}
+/>
+```
+
+`value` comes down, `onChange` goes up. The field cannot get out of step with the draft, because it
+has no state to get out of step _with_. Two rules follow, and breaking either is the usual React bug:
+
+1. **Never copy a prop into `useState` "so it can be edited".** You then have two answers to "what is
+   the subject?" and they drift the moment anything else changes it (a reset, a template switch, a
+   draft restored from session storage).
+2. **Always send a whole new object.** `{ ...envelope, subject: next }` builds a new envelope rather
+   than assigning `envelope.subject = next`. React decides what to re-render by comparing object
+   identity, so mutating in place changes the data and tells no one.
+
+**One reducer, not six `useState`s.** Every edit — subject, preheader, reply-to, the TSX source, the
+props JSON — becomes one action dispatched into `application/studioState.ts`:
+
+```ts
+onChange={actions.updateEnvelope}      // → { type: 'edit-envelope', id, template, envelope }
+```
+
+The reducer is a plain function: given the old state and an action, return the new state. It has no
+React in it, so its test is ordinary JavaScript (`studioState.test.ts`). That is where the rules live:
+an envelope equal to the saved one deletes the draft instead of storing a no-op, which is why the
+**· Unsaved changes** half of the sub-header badge turns itself off when you undo your own edit. (The
+other half is the template's stored status — `Draft`, `Ready` or `Deprecated` — read through the same
+`templateStatusLabel` the status bar uses, so the two cannot say different things.) The panel does not
+know that rule exists, and does not need to.
+
+**Validation is derived, never stored.** The subject counter and the reply-to error are computed while
+rendering, from the value that is already on screen:
+
+```ts
+const subjectState = subjectLengthState(envelope.subject) // 'empty' | 'ok' | 'too-long'
+const replyToError = replyToProblem(envelope.replyTo) // string | undefined
+```
+
+There is no `const [error, setError]` and no effect that runs validation after the fact. Anything you
+can calculate from state should be calculated, not stored — stored copies are what go stale. The rule
+itself (78 characters) lives in `src/domain/template.ts`, so it is one testable function rather than a
+number sprinkled through the UI.
+
+**Labels are wiring, not decoration.** Each field is `<Label htmlFor={id}>` over a control with that
+`id`, and hints are linked with `aria-describedby`. That is what lets the tests say
+`screen.getByLabelText('Subject line')` — if a test cannot find a field by its visible label, neither
+can a screen-reader user. Read `EnvelopePanel.test.tsx` next to the component: every assertion in it
+is a sentence about the product, not about the DOM.
 
 ## Suggested reading order through the code
 

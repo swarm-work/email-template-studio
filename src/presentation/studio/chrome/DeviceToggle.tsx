@@ -1,3 +1,10 @@
+/**
+ * Which viewport the preview is drawn at.
+ *
+ * Presentation layer: no rules, the widths are in `domain/preview.ts`. Unlike
+ * the mode toggle this stays a Radix `ToggleGroup` (`role="radio"`): both
+ * options are always available, so there is no reason to explain.
+ */
 import { Monitor, Smartphone } from 'lucide-react'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import type { PreviewDevice } from '@/domain'

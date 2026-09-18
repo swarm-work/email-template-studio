@@ -121,6 +121,20 @@ describe('useStudio session saves', () => {
     expect(store.saves[0].drafts[FIRST].source).toBe('// edited twice')
   })
 
+  it('writes nothing before the first edit, so the autosave note stays quiet', async () => {
+    vi.useFakeTimers()
+    const store = fakeStore()
+    const { result } = renderHook(() => useStudio({ templates: TEMPLATES, store }))
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(600)
+    })
+    // The hydrated state is the state the store already holds; re-persisting it
+    // would make the sub-header say "Autosaved just now" about nothing.
+    expect(store.saves).toHaveLength(0)
+    expect(result.current.lastSavedAt).toBeNull()
+  })
+
   it('saves a pending change when the page goes away', async () => {
     vi.useFakeTimers()
     const store = fakeStore()

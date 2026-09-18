@@ -22,36 +22,60 @@ const FIRST_RENDER_TIMEOUT = 30_000
 function previewBody(page: Page) {
   return page.frameLocator('iframe[title^="Email preview"]').locator('body')
 }
+/** The code editor region, which holds all four tabs' editors. */
 function sourcePanel(page: Page) {
-  return page.getByRole('region', { name: /\.email\.tsx$/ })
+  return page.getByRole('region', { name: 'Code editor' })
 }
 function payloadPanel(page: Page) {
-  return page.getByRole('region', { name: 'Preview payload' })
+  return page.getByRole('region', { name: 'Props payload' })
 }
 function previewPanel(page: Page) {
   return page.getByRole('region', { name: 'Preview', exact: true })
 }
+function envelopePanel(page: Page) {
+  return page.getByRole('region', { name: 'Envelope & dispatch' })
+}
+function statusBar(page: Page) {
+  return page.getByRole('region', { name: 'Studio status' })
+}
+function actionsToolbar(page: Page) {
+  return page.getByRole('toolbar', { name: 'Template actions' })
+}
 function libraryHeading(page: Page) {
   return page.getByRole('heading', { level: 1, name: 'Templates', exact: true })
 }
-function editorHeading(page: Page) {
-  return page.getByRole('heading', { level: 1, name: 'Templates & Studio' })
+/** In the studio the page heading is the template's own name, in the breadcrumb. */
+function editorHeading(page: Page, name: string) {
+  return page.getByRole('heading', { level: 1, name, exact: true })
 }
 function templateCard(page: Page, name: string) {
   return page.getByRole('button', { name: `Open ${name}`, exact: true })
+}
+/** The most recent toast, which is where a disabled control explains itself. */
+function toast(page: Page, text: string) {
+  return page.locator('[data-sonner-toast]').filter({ hasText: text })
 }
 
 /** The app lands on the library; opening a card is how you reach the editor. */
 async function openTemplate(page: Page, name: string) {
   await expect(libraryHeading(page)).toBeVisible()
   await templateCard(page, name).click()
-  await expect(editorHeading(page)).toBeVisible()
+  await expect(editorHeading(page, name)).toBeVisible()
 }
 
-/** The temporary "← Templates" button in the studio header. */
+/** The "Templates /" crumb in the studio sub-header. */
 async function backToLibrary(page: Page) {
   await page.getByRole('button', { name: 'Templates', exact: true }).click()
   await expect(libraryHeading(page)).toBeVisible()
+}
+
+/** Every editor stays mounted; only the chosen tab's is visible. */
+async function openEditorTab(page: Page, name: string) {
+  await sourcePanel(page).getByRole('tab', { name, exact: true }).click()
+  await expect(sourcePanel(page).getByRole('tab', { name, exact: true })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  )
 }
 
 /** Replaces the whole content of a CodeMirror editor. */
@@ -60,6 +84,12 @@ async function replaceEditorText(page: Page, label: string, text: string) {
   await editor.click()
   await page.keyboard.press('ControlOrMeta+A')
   await page.keyboard.insertText(text)
+}
+
+/** Replaces the props JSON, opening its tab first. */
+async function replacePayload(page: Page, text: string) {
+  await openEditorTab(page, 'preview-props.json')
+  await replaceEditorText(page, PAYLOAD_LABEL, text)
 }
 
 type PageWithErrors = Page & { __errors?: string[] }
@@ -86,7 +116,8 @@ test('the library lists the templates and opens one into the editor and back', a
   await expect(templateCard(page, WELCOME)).not.toHaveAttribute('aria-pressed', /.*/)
 
   await openTemplate(page, WELCOME)
-  await expect(page.getByRole('heading', { level: 2, name: 'welcome-verification.email.tsx' })).toBeVisible()
+  // The studio names the file in its tab strip, and the template in its heading.
+  await expect(sourcePanel(page).getByRole('tab', { name: 'template.tsx' })).toBeVisible()
   await expect(libraryHeading(page)).toHaveCount(0)
 
   await backToLibrary(page)
@@ -142,9 +173,8 @@ test('payload edits update the preview and are validated separately from JSON sy
   await openTemplate(page, WELCOME)
   await expect(previewBody(page)).toContainText('Welcome, Ada', { timeout: FIRST_RENDER_TIMEOUT })
 
-  await replaceEditorText(
+  await replacePayload(
     page,
-    PAYLOAD_LABEL,
     JSON.stringify(
       {
         recipientName: 'Zed',
@@ -158,7 +188,7 @@ test('payload edits update the preview and are validated separately from JSON sy
     ),
   )
   await expect(previewBody(page)).toContainText('Welcome, Zed', { timeout: FIRST_RENDER_TIMEOUT })
-  await expect(payloadPanel(page).getByText('Schema valid')).toBeVisible()
+  await expect(payloadPanel(page).getByText('JSON valid')).toBeVisible()
 
   // Schema-invalid: wrong type, reported by field path.
   await replaceEditorText(page, PAYLOAD_LABEL, '{"recipientName": "Zed", "expiresInHours": "soon"}')
@@ -175,7 +205,7 @@ test('payload edits update the preview and are validated separately from JSON sy
   // Reset restores the sample data and the preview recovers.
   await payloadPanel(page).getByRole('button', { name: 'Reset' }).click()
   await page.getByRole('button', { name: 'Reset payload' }).click()
-  await expect(payloadPanel(page).getByText('Schema valid')).toBeVisible()
+  await expect(payloadPanel(page).getByText('JSON valid')).toBeVisible()
   await expect(previewBody(page)).toContainText('Welcome, Ada', { timeout: FIRST_RENDER_TIMEOUT })
 })
 
@@ -202,7 +232,9 @@ test('source errors are reported without crashing and reset restores the origina
   await expect(sourcePanel(page).getByText('Compiled and rendered without errors.')).toBeVisible({
     timeout: FIRST_RENDER_TIMEOUT,
   })
-  await expect(sourcePanel(page).getByText('Original', { exact: true })).toBeVisible()
+  // With the source back to the original the draft is clean again. The welcome
+  // starter ships as "ready", and the badge says the template's own status.
+  await expect(page.getByText('Ready · Saved')).toBeVisible()
 })
 
 test('an infinite loop is stopped by the worker timeout and the studio recovers', async ({ page }) => {
@@ -240,7 +272,7 @@ test('network globals are unavailable inside the render worker', async ({ page }
 test('drafts survive switching templates and reloading the page', async ({ page }) => {
   await openTemplate(page, WELCOME)
   await expect(previewBody(page)).toContainText('Welcome, Ada', { timeout: FIRST_RENDER_TIMEOUT })
-  await replaceEditorText(page, PAYLOAD_LABEL, '{"recipientName": "Draft Person"}')
+  await replacePayload(page, '{"recipientName": "Draft Person"}')
   await expect(payloadPanel(page).getByText('Schema invalid')).toBeVisible()
 
   // The library badges the card of a template with unsaved edits.
@@ -249,11 +281,11 @@ test('drafts survive switching templates and reloading the page', async ({ page 
   await expect(templateCard(page, PASSWORD_RESET)).not.toContainText('Modified')
 
   await openTemplate(page, PASSWORD_RESET)
-  await expect(page.getByRole('heading', { level: 2, name: 'password-reset.email.tsx' })).toBeVisible()
   await expect(previewBody(page)).toContainText('Reset your password', { timeout: FIRST_RENDER_TIMEOUT })
 
   await page.reload()
   await openTemplate(page, WELCOME)
+  await openEditorTab(page, 'preview-props.json')
   await expect(page.getByLabel(PAYLOAD_LABEL)).toContainText('Draft Person')
 })
 
@@ -292,8 +324,141 @@ test('neither the library nor the editor scrolls sideways at any supported width
     const editor = await overflow()
     expect(editor.scrollWidth, `editor at ${width}px`).toBeLessThanOrEqual(editor.clientWidth)
 
+    // The chrome added in phase 3: each band has to end inside the viewport.
+    // The strips themselves may scroll internally; the page never does.
+    for (const [label, region] of [
+      ['sub-header toolbar', actionsToolbar(page)],
+      ['envelope panel', envelopePanel(page)],
+      ['status bar', statusBar(page)],
+    ] as const) {
+      const box = await region.boundingBox()
+      expect(box, `${label} at ${width}px`).not.toBeNull()
+      expect(box!.x + box!.width, `${label} at ${width}px`).toBeLessThanOrEqual(width + 1)
+    }
+
     await backToLibrary(page)
   }
+})
+
+test('the editors keep their undo history and their gutters across a tab switch', async ({ page }) => {
+  await openTemplate(page, WELCOME)
+  const source = page.getByLabel(WELCOME_SOURCE_LABEL)
+  await source.click()
+  await page.keyboard.press('ControlOrMeta+End')
+  await page.keyboard.insertText('\n// scratch note\n')
+  await expect(source).toContainText('// scratch note')
+
+  // Every editor stays mounted, so the round trip must not destroy this one.
+  await openEditorTab(page, 'preview-props.json')
+  await expect(page.getByLabel(PAYLOAD_LABEL)).toBeVisible()
+  await openEditorTab(page, 'template.tsx')
+
+  // A hidden CodeMirror measures itself as zero wide; a re-measure on the way
+  // back is what keeps the line-number gutter from collapsing.
+  const gutterWidth = await sourcePanel(page)
+    .locator('.cm-gutters')
+    .first()
+    .evaluate((element) => element.getBoundingClientRect().width)
+  expect(gutterWidth).toBeGreaterThan(0)
+
+  await source.click()
+  await page.keyboard.press('ControlOrMeta+Z')
+  await expect(source).not.toContainText('// scratch note')
+})
+
+test('a primitive chip inserts a React Email element at the cursor', async ({ page }) => {
+  await openTemplate(page, WELCOME)
+  const source = page.getByLabel(WELCOME_SOURCE_LABEL)
+  await source.click()
+  await page.keyboard.press('ControlOrMeta+End')
+
+  await page.getByRole('button', { name: 'Insert <Row>/<Column>' }).click()
+  await expect(source).toContainText('<Column></Column>')
+})
+
+test('the keyboard shortcuts are registered and explain what is not built yet', async ({ page }) => {
+  // ⌘P is registered as a no-op until preview mode exists, and the point of
+  // registering it now is that the browser's print dialog never opens.
+  await page.addInitScript(() => {
+    const flags = window as unknown as { __printed: number }
+    flags.__printed = 0
+    window.print = () => {
+      flags.__printed += 1
+    }
+  })
+  await page.reload()
+  await openTemplate(page, WELCOME)
+
+  await page.keyboard.press('ControlOrMeta+P')
+  expect(await page.evaluate(() => (window as unknown as { __printed: number }).__printed)).toBe(0)
+
+  // Saving needs somewhere to save to, so ⌘S answers with the button's reason.
+  await page.keyboard.press('ControlOrMeta+S')
+  await expect(toast(page, 'Coming with saved templates.')).toBeVisible()
+
+  await page.keyboard.press('?')
+  const dialog = page.getByRole('dialog', { name: 'Keyboard shortcuts' })
+  await expect(dialog).toBeVisible()
+  await expect(dialog.getByText('Send test email')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
+})
+
+test('the envelope panel counts the subject against the 78 character recommendation', async ({ page }) => {
+  await openTemplate(page, WELCOME)
+  const envelope = envelopePanel(page)
+  const subject = envelope.getByLabel('Subject line')
+
+  await expect(envelope.getByText(/\d+ \/ 78 chars/)).toBeVisible()
+  await subject.fill('x'.repeat(80))
+  await expect(envelope.getByText('80 / 78 chars')).toBeVisible()
+  await expect(envelope.getByText('Most clients truncate subjects past 78 characters.')).toBeVisible()
+  await expect(page.getByText('Ready · Unsaved changes')).toBeVisible()
+
+  await envelope.getByRole('button', { name: 'Reset envelope' }).click()
+  await expect(envelope.getByText('Most clients truncate subjects past 78 characters.')).toBeHidden()
+})
+
+test('the mode toggle shows every mode and says which are not reachable yet', async ({ page }) => {
+  await openTemplate(page, WELCOME)
+  const modes = page.getByRole('group', { name: 'Editing mode' })
+  await expect(modes.getByRole('button')).toHaveCount(3)
+  await expect(modes.getByRole('button', { name: 'Code' })).toHaveAttribute('aria-pressed', 'true')
+
+  const preview = modes.getByRole('button', { name: 'Preview' })
+  await expect(preview).toHaveAttribute('aria-disabled', 'true')
+  // Playwright treats aria-disabled as "not enabled" and would wait forever.
+  // A real pointer is not stopped by it, which is the whole point of the
+  // pattern: the click is answered with the reason instead of being swallowed.
+  await preview.click({ force: true })
+  await expect(toast(page, 'Coming in the next step.')).toBeVisible()
+  // Still in code mode: the editor is where it was.
+  await expect(sourcePanel(page)).toBeVisible()
+})
+
+test('a stored preview mode cannot lock the toggle out of Code', async ({ page }) => {
+  // 'preview' is a legal mode for a code template, so the session schema keeps
+  // it; until phase 4 renders it, the toggle must still press the workspace
+  // that is actually on screen rather than the one that was stored.
+  await page.evaluate(() => {
+    sessionStorage.setItem(
+      'email-template-studio:v1',
+      JSON.stringify({
+        selectedId: 'welcome-verification',
+        device: 'desktop',
+        mode: 'preview',
+        drafts: {},
+      }),
+    )
+  })
+  await page.reload()
+  await openTemplate(page, WELCOME)
+
+  const modes = page.getByRole('group', { name: 'Editing mode' })
+  await expect(modes.getByRole('button', { name: 'Code' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(modes.getByRole('button', { name: 'Code' })).not.toHaveAttribute('aria-disabled', 'true')
+  await expect(modes.getByRole('button', { name: 'Preview' })).toHaveAttribute('aria-disabled', 'true')
+  await expect(sourcePanel(page)).toBeVisible()
 })
 
 test('API keys page generates a mock key and adds a webhook endpoint', async ({ page }) => {
@@ -323,7 +488,7 @@ test('send test email goes through the API in dry-run mode', async ({ page }) =>
   await openTemplate(page, WELCOME)
   await expect(previewBody(page)).toContainText('Welcome, Ada', { timeout: FIRST_RENDER_TIMEOUT })
 
-  await page.getByRole('button', { name: 'Send test email' }).click()
+  await actionsToolbar(page).getByRole('button', { name: 'Send test' }).click()
   const sendDialog = page.getByRole('dialog', { name: 'Send test email' })
   await expect(sendDialog.getByText('Connected')).toBeVisible()
   await expect(sendDialog.getByText('Dry run', { exact: true })).toBeVisible()

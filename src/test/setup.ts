@@ -7,3 +7,16 @@ import { afterEach } from 'vitest'
 afterEach(() => {
   cleanup()
 })
+
+/**
+ * jsdom has no ResizeObserver, and Radix's popper-based components (tooltip,
+ * dropdown menu) observe their trigger the moment they open. Without this stub
+ * opening one throws in a place the test cannot catch.
+ */
+if (typeof globalThis.ResizeObserver === 'undefined') {
+  globalThis.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver
+}

@@ -41,22 +41,22 @@ Dark values exist under `.dark` for a later toggle.
 
 ## Components and states
 
-| Component             | States                                                                                           |
-| --------------------- | ------------------------------------------------------------------------------------------------ |
-| Status badge          | success / warning / danger / info / neutral / planned (dashed)                                   |
-| Animated badge (beUI) | same tones + `loading` (pulse); icon and label roll on change; static under reduced motion       |
-| Buttons               | primary (near-black), outline, ghost; disabled at 50% with a tooltip or dialog giving the reason |
-| Tabs                  | line variant; disabled "Rendered HTML" until HTML exists                                         |
-| Device toggle         | segmented radio group, visible checked state, accessible names                                   |
-| Editor chrome         | file name, type badge, Modified/Original, Reset, status footer, error banner with stage + line   |
-| Payload panel         | Schema valid / Schema invalid / Invalid JSON, Modified, issue list with paths                    |
-| Preview frame         | envelope rows, status badge, refresh, banners (paused / last good), loading, error, empty        |
-| Diagnostics           | real checks vs collapsed "not connected" placeholders                                            |
-| Template card         | kind (Visual/Code), status, category, version chips, Modified badge, "Updated 3 days ago"        |
-| Template library      | skeleton (3 card outlines) / error Alert + Retry / empty / no search results — see below         |
-| Global header         | brand, workspace label, env badge, nav with `aria-current`, render pill, Docs, Feedback, avatar  |
-| Dialogs               | Send test (explanatory, action disabled), Reset confirmations                                    |
-| Toasts                | bottom-right, one sentence, past tense                                                           |
+| Component             | States                                                                                                                                                                |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Status badge          | success / warning / danger / info / neutral / planned (dashed)                                                                                                        |
+| Animated badge (beUI) | same tones + `loading` (pulse); icon and label roll on change; static under reduced motion                                                                            |
+| Buttons               | primary (near-black), outline, ghost; never bare `disabled` — unavailable controls use `ReasonedButton` (aria-disabled, focusable, sr-only reason, toast on click)    |
+| Editor tab bar        | hand-rolled roving-tabindex strip; every panel stays mounted (`hidden` + `inert`); generated tabs carry a `Read only` chip and are never disabled                     |
+| Device toggle         | segmented radio group, visible checked state, accessible names                                                                                                        |
+| Editor chrome         | tab strip (`template.tsx · preview-props.json · Compiled HTML · Plain text`) + Format / Copy / Reset, `CodeStatusStrip` footer, `RenderErrorBanner` with stage + line |
+| Props payload card    | JSON valid / Schema invalid / Invalid JSON, Modified, issue list with paths                                                                                           |
+| Preview frame         | envelope rows, status badge, refresh, banners (paused / last good), loading, error, empty                                                                             |
+| Diagnostics           | real checks vs collapsed "not connected" placeholders                                                                                                                 |
+| Template card         | kind (Visual/Code), status, category, version chips, Modified badge, "Updated 3 days ago"                                                                             |
+| Template library      | skeleton (3 card outlines) / error Alert + Retry / empty / no search results — see below                                                                              |
+| Global header         | brand, workspace label, env badge, nav with `aria-current`, render pill, Docs, Feedback, avatar                                                                       |
+| Dialogs               | Send test (explanatory, action disabled), Reset confirmations                                                                                                         |
+| Toasts                | bottom-right, one sentence, past tense                                                                                                                                |
 
 ## The template library, state by state
 
@@ -98,6 +98,66 @@ between the two screens, so hiding it would leave the app single-screen on a sma
 the header is allowed to push the page into a horizontal scroll, and an e2e sweep at
 1440/1280/1024/768 asserts it.
 
+## The studio, band by band
+
+The editor screen is five horizontal bands. Each one answers a different question, and none of them
+competes with the editor for attention.
+
+**Sub-header** (`chrome/StudioSubHeader`) — `sticky top-0 z-30 flex min-h-[52px] min-w-0 flex-wrap
+items-center gap-2 border-b bg-card/85 px-4 backdrop-blur-sm`. Left: the breadcrumb
+`Templates / <name>` (the crumb is a button, the name is the page's `h1`, truncated
+`max-w-[14ch] sm:max-w-[28ch] lg:max-w-none`) and a rename pencil that is disabled with a reason.
+Then the status badge — `<status> · Unsaved changes` / `<status> · Saved`, where the status word is
+the template's own (`Draft`, `Ready`, `Deprecated`), so the badge cannot contradict the status bar —
+and a quiet `aria-live` autosave note, hidden below `lg` with `max-lg:sr-only` rather than `hidden`,
+because `display: none` would take the live region out of the accessibility tree. Right, inside
+`role="toolbar" aria-label="Template actions"`: the mode group, undo/redo (visual templates only),
+the device toggle, **Send test** as an outline button and **Save template** as the screen's single
+primary. Below `md` the middle cluster steps aside and only Save and **⋯** remain — and the **⋯**
+menu grows a `md:hidden` **Send test** item, so the one action that works never disappears.
+
+**Envelope** (`envelope/EnvelopePanel`) — a `Collapsible` headed `Envelope & dispatch`, with
+**Hide details** / **Show details** and **Reset envelope** on the right. The mock's `RFC-5322` chip is
+a `?` tooltip instead: a chip that explains nothing is decoration. The grid is
+`grid-cols-1 gap-x-4 gap-y-3 md:grid-cols-6 xl:grid-cols-12` (spans 5/4/3 then 4/5/3) and fields are
+`h-9 w-full min-w-0 rounded-md border-0 bg-muted px-2.5 text-sm shadow-none`. Subject, preheader and
+reply-to are edited and go straight into the draft; From identity comes from the send server;
+description and tags are metadata and are read-only until saving exists.
+
+**Code workspace** (`code/CodeWorkspace`) — `CompileInfoStrip`, then the primitives row, then
+`grid xl:grid-cols-[minmax(0,1fr)_300px]` with the editor left and the rail right; below `xl` the rail
+stacks under the editor as `md:grid-cols-2`. The editor panel is one region, `Code editor`, holding
+the tab strip (`template.tsx · preview-props.json · Compiled HTML · Plain text`, mono for the file
+names, a `Read only` chip on the generated two), all four editors, the status strip and the render
+banner. Format / Copy / Reset sit at the right end of the tab strip, not on the editor.
+
+`CompileInfoStrip` also carries the sandbox's one hard rule — `Imports limited to react and
+@react-email/components` — next to the sucrase note, so it is readable before the render error says it.
+
+**Right rail** — Props payload, the render report with its twelve-point sparkline, Diagnostics and the
+shortcuts card. The preview thumbnail's slot is left empty on purpose until phase 4. The card's
+Format and Reset are the same `ReasonedButton`s, with the same sentences, as the tab strip's: the two
+copies of one action are on screen together, so they cannot be allowed to behave differently.
+
+**Status bar** (`chrome/StudioStatusBar`) — `h-8`, `overflow-x-auto` with `shrink-0` segments and
+`tabular-nums`: `Draft · v3`, the kind, `HTML export 14.2 KB`, the plain-text state, the Gmail budget,
+and on the right one `aria-live` sentence `Last saved v3 · 10:22`. The numbers are not live regions;
+a status bar that speaks every byte count is unusable.
+
+Every strip that can run out of room (primitives, tab bar, status bar) scrolls inside itself with
+`overflow-x-auto [scrollbar-width:none]`; the page itself never scrolls sideways, and the e2e sweep at
+1440/1280/1024/768 asserts it for the sub-header, the envelope panel and the status bar too.
+
+### What the mock says that we do not
+
+`Compiler AST` → **Render report**, every row measured from the render on screen. `TS errors: 0` →
+`Type checking: Planned`, because sucrase strips types without checking them and the tooltip says to
+run `npm run typecheck` for real diagnostics. `Edge Compiler 18ms` → `Worker render 18 ms`.
+`Render Ready` → `Last render OK`. `UTF-8 CRLF` → `UTF-8 · LF`. `Tailwind CSS` tab → `Plain text`.
+Coloured tab dots, the tab close ×, the gear and the `ReadOnly: OFF` switch are gone; read-only is
+shown as a chip only where it is true. Two primaries became one: the simulated **Publish Template** is
+deleted.
+
 ## Microcopy rules
 
 Short, direct, sentence case. Say what happened and what to do next. Examples used:
@@ -107,6 +167,15 @@ Short, direct, sentence case. Say what happened and what to do next. Examples us
 - "The latest change failed to render. Showing the last successful preview."
 - "Rendering was stopped after 5s. Check the template for infinite loops or very large output."
 - "Import "x" is not available in the studio. Templates may only import: react, react/jsx-runtime, @react-email/components."
+- "Most clients truncate subjects past 78 characters." (subject counter, past 78)
+- "Shown after the subject in the inbox list. Leave empty to use the first line of the email." (preheader)
+- "Set by the send server." (From identity) · "Enter a valid email address." (reply-to)
+- "Editable once templates can be saved." (description and tags, until phase 7b)
+- "Values used by the preview and by test sends. They are never sent to real recipients." (props payload)
+- "Put the cursor in template.tsx to insert a primitive." (primitives row on another tab)
+- "Compiled with Sucrase — types are stripped, not checked." (compile strip)
+- "Gmail hides everything past about 102 KB behind a 'View entire message' link." (status bar tooltip)
+- "Coming with saved templates." (Save, rename, mark as ready) · "Coming in the next step." (modes, downloads)
 
 ## Motion rules
 

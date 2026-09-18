@@ -3,7 +3,7 @@
  * All state transitions live in application/studioState.ts; this hook only
  * connects them to React and to the browser session store.
  */
-import { useEffect, useMemo, useReducer, useRef } from 'react'
+import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import type {
   EmailDocument,
   EmailTemplate,
@@ -69,13 +69,15 @@ export interface UseStudioResult {
   readonly envelopeDirty: boolean
   /** Ids of every template that currently has local edits. */
   readonly dirtyTemplateIds: ReadonlySet<TemplateId>
+  /** When the draft was last written to session storage; null before the first write. */
+  readonly lastSavedAt: Date | null
   readonly actions: StudioActions
 }
 
 export function useStudio({ templates, store, selectedId = null }: UseStudioOptions): UseStudioResult {
   const [state, dispatch] = useReducer(studioReducer, undefined, () => hydrate(store.load(), templates))
 
-  useDebouncedSave(state, store)
+  const lastSavedAt = useDebouncedSave(state, store)
 
   // Render against the route's choice straight away, then tell the reducer, so
   // the stored selection and the mode clamp catch up without a blank frame.
@@ -131,6 +133,7 @@ export function useStudio({ templates, store, selectedId = null }: UseStudioOpti
     documentDirty: isDocumentDirty(state, template),
     envelopeDirty: isEnvelopeDirty(state, template),
     dirtyTemplateIds,
+    lastSavedAt,
     actions,
   }
 }
@@ -139,10 +142,23 @@ export function useStudio({ templates, store, selectedId = null }: UseStudioOpti
  * Saves `state` half a second after the last change, and immediately when the
  * page goes away (`pagehide` covers closing the tab and the bfcache) or this
  * hook unmounts, so no edit is lost inside the debounce window.
+ *
+ * Returns when the last write happened, which is what the sub-header's
+ * "Autosaved just now" note reports. It is state rather than a ref because the
+ * note has to re-render when it changes.
  */
-function useDebouncedSave(state: StudioState, store: StudioSessionStore): void {
+function useDebouncedSave(state: StudioState, store: StudioSessionStore): Date | null {
   /** The state that is waiting to be written, or null when nothing is pending. */
   const pending = useRef<StudioState | null>(null)
+  /**
+   * The state the store already holds. It starts as the state this hook was
+   * hydrated FROM, so opening a template and touching nothing writes nothing
+   * and — more importantly — reports nothing: "Autosaved just now" half a
+   * second after opening a template no one has edited is a claim about an
+   * event that did not happen.
+   */
+  const saved = useRef<StudioState>(state)
+  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null)
 
   useEffect(() => {
     pending.current = state
@@ -150,7 +166,10 @@ function useDebouncedSave(state: StudioState, store: StudioSessionStore): void {
       // A `pagehide` in the meantime already wrote this state.
       if (pending.current === null) return
       pending.current = null
+      if (state === saved.current) return
+      saved.current = state
       store.save(state)
+      setLastSavedAt(new Date())
     }, SAVE_DEBOUNCE_MS)
     return () => clearTimeout(timer)
   }, [state, store])
@@ -160,7 +179,10 @@ function useDebouncedSave(state: StudioState, store: StudioSessionStore): void {
       if (pending.current === null) return
       const snapshot = pending.current
       pending.current = null
+      if (snapshot === saved.current) return
+      saved.current = snapshot
       store.save(snapshot)
+      setLastSavedAt(new Date())
     }
     if (typeof window === 'undefined') return flush
     window.addEventListener('pagehide', flush)
@@ -169,6 +191,8 @@ function useDebouncedSave(state: StudioState, store: StudioSessionStore): void {
       flush()
     }
   }, [store])
+
+  return lastSavedAt
 }
 
 /** Rebuilds state from storage, dropping anything that refers to unknown templates. */

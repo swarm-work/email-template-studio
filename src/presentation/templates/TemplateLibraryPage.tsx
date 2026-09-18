@@ -8,9 +8,9 @@
 import { useMemo, useState } from 'react'
 import { Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { filterTemplates } from '@/application/filterTemplates'
 import type { EmailTemplate, TemplateId } from '@/domain'
+import { ReasonedButton } from '@/presentation/shared/ReasonedButton'
 import { EmptyLibrary } from './EmptyLibrary'
 import { TemplateGrid } from './TemplateGrid'
 import { TemplateSearch } from './TemplateSearch'
@@ -41,20 +41,10 @@ export function TemplateLibraryPage({ templates, dirtyIds, onOpenTemplate }: Tem
         </span>
         <div className="ml-auto flex min-w-0 flex-wrap items-center gap-2">
           <TemplateSearch value={query} onChange={setQuery} />
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button size="sm" aria-disabled="true" aria-describedby="new-template-reason">
-                <Plus aria-hidden="true" />
-                New template
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>{NEW_TEMPLATE_REASON}</TooltipContent>
-          </Tooltip>
-          {/* The tooltip is only in the DOM while it is open, so the reason also
-              lives here where a screen reader can always reach it. */}
-          <span id="new-template-reason" className="sr-only">
-            {NEW_TEMPLATE_REASON}
-          </span>
+          <ReasonedButton size="sm" reason={NEW_TEMPLATE_REASON}>
+            <Plus aria-hidden="true" />
+            New template
+          </ReasonedButton>
         </div>
       </div>
 
