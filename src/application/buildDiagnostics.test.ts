@@ -9,7 +9,7 @@ describe('buildDiagnostics', () => {
     const items = buildDiagnostics({
       validation: ok,
       renderStatus: 'success',
-      renderResult: { ok: true, html: '<html></html>', durationMs: 42 },
+      renderResult: { ok: true, html: '<html></html>', text: '', durationMs: 42 },
       sourceDirty: false,
       payloadDirty: false,
     })
@@ -68,7 +68,7 @@ describe('buildDiagnostics', () => {
     const items = buildDiagnostics({
       validation: ok,
       renderStatus: 'success',
-      renderResult: { ok: true, html: 'x'.repeat(120 * 1024), durationMs: 1 },
+      renderResult: { ok: true, html: 'x'.repeat(120 * 1024), text: '', durationMs: 1 },
       sourceDirty: false,
       payloadDirty: false,
     })

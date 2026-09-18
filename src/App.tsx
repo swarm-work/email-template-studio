@@ -5,7 +5,8 @@ import { ApiKeysPage } from '@/presentation/api/ApiKeysPage'
 import { emailProvider } from '@/infrastructure/providers/emailProvider'
 import { WorkerTemplateRenderer } from '@/infrastructure/render/renderClient'
 import { createSessionStore, getBrowserSessionStorage } from '@/infrastructure/session/sessionStore'
-import { TEMPLATES } from '@/infrastructure/templates/registry'
+import { STARTER_TEMPLATES } from '@/infrastructure/templates/registry'
+import { toEmailTemplate } from '@/infrastructure/templates/templateMapper'
 import { PasswordGate } from '@/presentation/auth/PasswordGate'
 import { StudioPage } from '@/presentation/studio/StudioPage'
 import type { ProductPage } from '@/presentation/layout/GlobalHeader'
@@ -13,6 +14,8 @@ import type { ProductPage } from '@/presentation/layout/GlobalHeader'
 /** Composition root: builds the infrastructure once and hands it to the page. */
 export default function App() {
   const renderer = useMemo(() => new WorkerTemplateRenderer(), [])
+  // Records are plain data; the mapper gives each one its props validator.
+  const templates = useMemo(() => STARTER_TEMPLATES.map(toEmailTemplate), [])
   const store = useMemo(() => createSessionStore(getBrowserSessionStorage()), [])
   const [activePage, setActivePage] = useState<ProductPage>('templates')
 
@@ -34,7 +37,7 @@ export default function App() {
           />
         ) : (
           <StudioPage
-            templates={TEMPLATES}
+            templates={templates}
             renderer={renderer}
             store={store}
             provider={emailProvider}

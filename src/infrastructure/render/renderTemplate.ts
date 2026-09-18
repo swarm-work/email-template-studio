@@ -45,7 +45,8 @@ export async function renderTemplate(source: string, props: PreviewPayload): Pro
     const element = React.createElement(Component, props)
     // `pretty: false` keeps the worker bundle free of the optional formatter.
     const html = await render(element, { pretty: false })
-    return { ok: true, html, durationMs: Math.round(performance.now() - startedAt) }
+    // The plain-text part is rendered by a later milestone; '' until then.
+    return { ok: true, html, text: '', durationMs: Math.round(performance.now() - startedAt) }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     const detail = error instanceof Error ? error.stack : undefined

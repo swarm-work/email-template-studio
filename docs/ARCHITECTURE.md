@@ -1,6 +1,6 @@
 # Architecture
 
-Practical layering, one page, no ceremony. The rule that matters: **dependencies point inwards**. `presentation` may import `application`, `domain` and `infrastructure`; `application` may import `domain` only; `domain` imports nothing; `infrastructure` implements interfaces the inner layers declare (for example `PropsValidator`, `TemplateRenderer`).
+Practical layering, one page, no ceremony. The rule that matters: **dependencies point inwards**. `presentation` may import `application`, `domain` and `infrastructure`; `application` may import `domain` only; `domain` imports nothing; `infrastructure` implements interfaces the inner layers declare (for example `PropsValidator`, `TemplateRenderer`, `TemplateRepository`). `shared/` sits outside the layers: it is the wire contract, imported by the app, the Node server and the Worker alike, and may import only `zod`.
 
 ```mermaid
 flowchart TB
@@ -11,12 +11,13 @@ flowchart TB
   I -. implements .-> A
 ```
 
-| Layer          | Folder               | Contains                                                                                                                                      | Must not contain                          |
-| -------------- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| Domain         | `src/domain`         | `EmailTemplate`, `TemplateMetadata`, `TemplateVersion`, `PreviewPayload`, `ValidationResult`, `RenderResult`, `DiagnosticItem`, status unions | React, Zod, browser APIs, network         |
-| Application    | `src/application`    | `parsePreviewPayload`, `studioReducer` (select, edit, reset, device, simulated publish), `buildDiagnostics`                                   | React, DOM, Zod                           |
-| Infrastructure | `src/infrastructure` | Local template registry + Zod schemas, render pipeline and worker, session storage, no-send provider                                          | UI                                        |
-| Presentation   | `src/presentation`   | `StudioPage`, panels, dialogs, hooks (`useStudio`, `useRenderPreview`)                                                                        | Business rules (they live in application) |
+| Layer          | Folder               | Contains                                                                                                                                                                             | Must not contain                          |
+| -------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------- |
+| Domain         | `src/domain`         | `TemplateRecord` (`code` \| `visual`), `EmailTemplate`, `TemplateMetadata`, `TemplateEnvelope`, `EmailDocument`, `PreviewPayload`, `ValidationResult`, `RenderResult`, status unions | React, Zod, Tiptap, browser APIs, network |
+| Application    | `src/application`    | `parsePreviewPayload`, `studioReducer` (select, edit, reset, device, mode), `studioModes`, `buildDiagnostics`, `repositories/` (ports: `TemplateRepository` and its result types)    | React, DOM, Zod                           |
+| Infrastructure | `src/infrastructure` | Starter registry + Zod schemas, `templateMapper` (record → `EmailTemplate`), props validators, render pipeline and worker, session storage, no-send provider                         | UI                                        |
+| Presentation   | `src/presentation`   | `StudioPage`, panels, dialogs, hooks (`useStudio`, `useRenderPreview`)                                                                                                               | Business rules (they live in application) |
+| Shared         | `shared`             | `templateContracts.ts`: the request/response Zod schemas and size caps the browser, the Node server and the Worker all validate against                                              | Everything but `zod`                      |
 
 ## The preview pipeline
 

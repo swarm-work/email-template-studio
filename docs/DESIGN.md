@@ -52,8 +52,8 @@ Dark values exist under `.dark` for a later toggle.
 | Payload panel         | Schema valid / Schema invalid / Invalid JSON, Modified, issue list with paths                    |
 | Preview frame         | envelope rows, status badge, refresh, banners (paused / last good), loading, error, empty        |
 | Diagnostics           | real checks vs collapsed "not connected" placeholders                                            |
-| Template card         | selected ring, Modified, Local snapshot, category/version/file type chips                        |
-| Dialogs               | Send test (explanatory, action disabled), Publish (simulated), Reset confirmations               |
+| Template card         | selected ring, Modified, category/version/kind chips                                             |
+| Dialogs               | Send test (explanatory, action disabled), Reset confirmations                                    |
 | Toasts                | bottom-right, one sentence, past tense                                                           |
 
 ## Microcopy rules
@@ -64,7 +64,6 @@ Short, direct, sentence case. Say what happened and what to do next. Examples us
 - "Preview paused. Fix the preview payload to continue rendering."
 - "The latest change failed to render. Showing the last successful preview."
 - "Rendering was stopped after 5s. Check the template for infinite loops or very large output."
-- "Local snapshot recorded. Nothing was published."
 - "Import "x" is not available in the studio. Templates may only import: react, react/jsx-runtime, @react-email/components."
 
 ## Motion rules

@@ -229,7 +229,7 @@ test('API keys page generates a mock key and adds a webhook endpoint', async ({ 
   await expect(page.getByText('Product event sink')).toBeVisible()
 })
 
-test('send test email goes through the API in dry-run mode and publish stays simulated', async ({ page }) => {
+test('send test email goes through the API in dry-run mode', async ({ page }) => {
   await expect(previewBody(page)).toContainText('Welcome, Ada', { timeout: 15_000 })
 
   await page.getByRole('button', { name: 'Send test email' }).click()
@@ -267,11 +267,4 @@ test('send test email goes through the API in dry-run mode and publish stays sim
   expect(recipientsBox!.x + recipientsBox!.width).toBeLessThanOrEqual(dialogBox!.x + dialogBox!.width - 8)
   // The dialog has two buttons named Close: the icon in the corner and the footer button.
   await sendDialog.getByRole('button', { name: 'Close' }).last().click()
-
-  await page.getByRole('button', { name: 'Publish changes' }).click()
-  const publishDialog = page.getByRole('alertdialog')
-  await expect(publishDialog.getByText('Simulated')).toBeVisible()
-  await publishDialog.getByRole('button', { name: 'Record local snapshot' }).click()
-  await expect(page.getByText('Local snapshot recorded. Nothing was published.')).toBeVisible()
-  await expect(page.getByRole('button', { name: /Welcome & verification/ })).toContainText('Local snapshot')
 })

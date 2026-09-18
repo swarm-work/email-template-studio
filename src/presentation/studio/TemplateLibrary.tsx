@@ -1,13 +1,13 @@
 import { Check, FileCode2 } from 'lucide-react'
-import type { EmailTemplate, TemplateId, TemplateStatus } from '@/domain'
+import { fileNameFor, type EmailTemplate, type TemplateId, type TemplateStatus } from '@/domain'
 import { StatusBadge, type StatusTone } from '@/presentation/shared/StatusBadge'
+import { templateKindLabel } from '@/presentation/shared/templateKind'
 import { cn } from '@/lib/utils'
 
 export interface TemplateLibraryProps {
   templates: readonly EmailTemplate[]
   selectedId: TemplateId
   dirtyIds: ReadonlySet<TemplateId>
-  localPublishes: Readonly<Record<string, string>>
   onSelect: (id: TemplateId) => void
 }
 
@@ -22,13 +22,7 @@ const statusLabel: Record<TemplateStatus, string> = {
   deprecated: 'Deprecated',
 }
 
-export function TemplateLibrary({
-  templates,
-  selectedId,
-  dirtyIds,
-  localPublishes,
-  onSelect,
-}: TemplateLibraryProps) {
+export function TemplateLibrary({ templates, selectedId, dirtyIds, onSelect }: TemplateLibraryProps) {
   return (
     <section aria-labelledby="library-heading" className="space-y-3">
       <div className="flex items-baseline gap-3">
@@ -44,7 +38,6 @@ export function TemplateLibrary({
           const { metadata } = template
           const selected = metadata.id === selectedId
           const dirty = dirtyIds.has(metadata.id)
-          const publishedAt = localPublishes[metadata.id]
           return (
             <li key={metadata.id}>
               <button
@@ -72,7 +65,7 @@ export function TemplateLibrary({
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium">{metadata.name}</p>
                     <p className="text-muted-foreground truncate font-mono text-[11px]">
-                      {metadata.fileName}
+                      {fileNameFor(template.kind, metadata.slug)}
                     </p>
                   </div>
                   <StatusBadge tone={statusTone[metadata.status]}>{statusLabel[metadata.status]}</StatusBadge>
@@ -88,15 +81,9 @@ export function TemplateLibrary({
                     {metadata.version.label}
                   </StatusBadge>
                   <StatusBadge tone="neutral" dot={false} className="font-mono">
-                    {metadata.fileType.toUpperCase()}
+                    {templateKindLabel(template.kind)}
                   </StatusBadge>
                   {dirty ? <StatusBadge tone="warning">Modified</StatusBadge> : null}
-                  {publishedAt ? (
-                    <StatusBadge tone="planned">
-                      Local snapshot{' '}
-                      {new Date(publishedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </StatusBadge>
-                  ) : null}
                   <span className="text-muted-foreground ml-auto text-[11px]">
                     {selected ? 'Selected' : 'Select'}
                   </span>

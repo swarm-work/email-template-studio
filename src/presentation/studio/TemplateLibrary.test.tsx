@@ -2,8 +2,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { TEMPLATES } from '@/infrastructure/templates/registry'
+import { STARTER_TEMPLATES } from '@/infrastructure/templates/registry'
+import { toEmailTemplate } from '@/infrastructure/templates/templateMapper'
 import { TemplateLibrary } from './TemplateLibrary'
+
+const TEMPLATES = STARTER_TEMPLATES.map(toEmailTemplate)
 
 describe('TemplateLibrary', () => {
   it('lists every template with its metadata and marks the selected one', () => {
@@ -12,7 +15,6 @@ describe('TemplateLibrary', () => {
         templates={TEMPLATES}
         selectedId={TEMPLATES[1].metadata.id}
         dirtyIds={new Set([TEMPLATES[0].metadata.id])}
-        localPublishes={{}}
         onSelect={() => {}}
       />,
     )
@@ -33,7 +35,6 @@ describe('TemplateLibrary', () => {
         templates={TEMPLATES}
         selectedId={TEMPLATES[0].metadata.id}
         dirtyIds={new Set()}
-        localPublishes={{}}
         onSelect={onSelect}
       />,
     )

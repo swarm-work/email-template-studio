@@ -13,9 +13,16 @@ import {
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import type { EmailTemplate, RenderErrorKind, RenderResult, RenderStatus } from '@/domain'
+import {
+  fileNameFor,
+  type EmailTemplate,
+  type RenderErrorKind,
+  type RenderResult,
+  type RenderStatus,
+} from '@/domain'
 import { CodeEditor } from '@/presentation/shared/CodeEditor'
 import { StatusBadge } from '@/presentation/shared/StatusBadge'
+import { templateKindLabel } from '@/presentation/shared/templateKind'
 
 export interface SourceWorkspaceProps {
   template: EmailTemplate
@@ -40,6 +47,7 @@ export function SourceWorkspace({
   html,
 }: SourceWorkspaceProps) {
   const [confirmReset, setConfirmReset] = useState(false)
+  const fileName = fileNameFor(template.kind, template.metadata.slug)
   const error = renderResult && !renderResult.ok ? renderResult.error : null
 
   return (
@@ -51,10 +59,10 @@ export function SourceWorkspace({
         <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
           <div className="flex min-w-0 items-center gap-2">
             <h2 id="source-heading" className="truncate font-mono text-xs font-medium">
-              {template.metadata.fileName}
+              {fileName}
             </h2>
             <StatusBadge tone="neutral" dot={false}>
-              React Email · {template.metadata.fileType.toUpperCase()}
+              React Email · {templateKindLabel(template.kind)}
             </StatusBadge>
             {sourceDirty ? (
               <StatusBadge tone="warning">Modified</StatusBadge>
@@ -83,7 +91,7 @@ export function SourceWorkspace({
             value={source}
             onChange={onSourceChange}
             language="tsx"
-            label={`Template source for ${template.metadata.fileName}`}
+            label={`Template source for ${fileName}`}
             className="h-[520px]"
           />
         </TabsContent>
@@ -148,7 +156,7 @@ export function SourceWorkspace({
       <AlertDialog open={confirmReset} onOpenChange={setConfirmReset}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Discard local changes to {template.metadata.fileName}?</AlertDialogTitle>
+            <AlertDialogTitle>Discard local changes to {fileName}?</AlertDialogTitle>
             <AlertDialogDescription>
               This restores the original source. Your edits exist only in this browser session and cannot be
               recovered afterwards.
@@ -185,5 +193,9 @@ function stageLabel(kind: RenderErrorKind): string {
       return 'Render stopped'
     case 'worker':
       return 'Preview worker'
+    case 'compose':
+      return 'Export error'
+    case 'editor-load':
+      return 'Editor not loaded'
   }
 }

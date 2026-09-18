@@ -13,7 +13,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import type { EmailTemplate } from '@/domain'
+import { PREVIEW_SAMPLE_RECIPIENT, type EmailTemplate } from '@/domain'
 import type { EmailProvider, ProviderStatus, SendOutcome } from '@/infrastructure/providers/emailProvider'
 import { StatusBadge } from '@/presentation/shared/StatusBadge'
 
@@ -87,7 +87,7 @@ function SendTestEmailForm({
 }: Pick<SendTestEmailDialogProps, 'template' | 'provider' | 'html'>) {
   const [phase, setPhase] = useState<Phase>({ kind: 'loading' })
   const [recipientsText, setRecipientsText] = useState('')
-  const [subjectText, setSubjectText] = useState(template.metadata.subject)
+  const [subjectText, setSubjectText] = useState(template.envelope.subject)
   /** Which template the subject above was seeded from, so a switch can re-seed it. */
   const [seededFrom, setSeededFrom] = useState(template.metadata.id)
   /** True once a live send has been asked for and is waiting for a second click. */
@@ -99,7 +99,7 @@ function SendTestEmailForm({
   // recommendation for "a prop changed, reset some state".
   if (seededFrom !== template.metadata.id) {
     setSeededFrom(template.metadata.id)
-    setSubjectText(template.metadata.subject)
+    setSubjectText(template.envelope.subject)
     setConfirming(false)
   }
 
@@ -210,12 +210,18 @@ function SendTestEmailForm({
               </p>
             </>
           ) : (
-            <span className="text-muted-foreground font-mono break-all">{template.metadata.to.address}</span>
+            <span className="text-muted-foreground font-mono break-all">
+              {PREVIEW_SAMPLE_RECIPIENT.address}
+            </span>
           )}
         </dd>
         <dt className="meta-label">From</dt>
         <dd className="font-mono break-all">
-          {status?.connected ? status.from : template.metadata.from.address}
+          {status?.connected ? (
+            status.from
+          ) : (
+            <span className="text-muted-foreground font-sans">Set by the send server.</span>
+          )}
         </dd>
         <dt className="meta-label self-start pt-1.5">
           <label htmlFor="send-test-subject">Subject</label>

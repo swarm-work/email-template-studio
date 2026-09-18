@@ -3,6 +3,7 @@ import { AlertTriangle, Loader2, MailOpen, PauseCircle, RefreshCw } from 'lucide
 import { Button } from '@/components/ui/button'
 import {
   PREVIEW_DEVICE_WIDTHS,
+  PREVIEW_SAMPLE_RECIPIENT,
   type EmailTemplate,
   type PreviewDevice,
   type RenderResult,
@@ -35,7 +36,7 @@ export function PreviewWorkspace({
   const document = useMemo(() => (html === null ? null : buildPreviewDocument(html)), [html])
   const width = PREVIEW_DEVICE_WIDTHS[device]
   const failed = result !== null && !result.ok
-  const { from, to, subject } = template.metadata
+  const { subject } = template.envelope
 
   return (
     <section
@@ -74,12 +75,12 @@ export function PreviewWorkspace({
         <span className="meta-label self-center">Subject</span>
         <span className="text-sm font-medium">{subject}</span>
         <span className="meta-label self-center">From</span>
-        <span className="text-muted-foreground text-xs">
-          {from.name} <span className="font-mono">&lt;{from.address}&gt;</span>
-        </span>
+        {/* The sender belongs to the send server, not to the template. */}
+        <span className="text-muted-foreground text-xs">Set by the send server.</span>
         <span className="meta-label self-center">To</span>
         <span className="text-muted-foreground text-xs">
-          {to.name} <span className="font-mono">&lt;{to.address}&gt;</span>
+          {PREVIEW_SAMPLE_RECIPIENT.name}{' '}
+          <span className="font-mono">&lt;{PREVIEW_SAMPLE_RECIPIENT.address}&gt;</span>
         </span>
       </div>
 

@@ -78,13 +78,15 @@ export default defineConfig(({ mode }) => {
     resolve: {
       alias: {
         '@': path.resolve(import.meta.dirname, './src'),
+        // Wire contracts shared by the app, the Node server and the Worker.
+        '@shared': path.resolve(import.meta.dirname, './shared'),
       },
     },
     test: {
       // Default to Node; component tests opt into jsdom with a `@vitest-environment jsdom` docblock.
       environment: 'node',
       setupFiles: ['./src/test/setup.ts'],
-      include: ['src/**/*.test.{ts,tsx}', 'server/**/*.test.ts'],
+      include: ['src/**/*.test.{ts,tsx}', 'server/**/*.test.ts', 'shared/**/*.test.ts'],
       css: false,
     },
   }

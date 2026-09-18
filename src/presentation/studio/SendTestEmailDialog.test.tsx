@@ -9,8 +9,11 @@ import {
   type ProviderStatus,
   type SendOutcome,
 } from '@/infrastructure/providers/emailProvider'
-import { TEMPLATES } from '@/infrastructure/templates/registry'
+import { STARTER_TEMPLATES } from '@/infrastructure/templates/registry'
+import { toEmailTemplate } from '@/infrastructure/templates/templateMapper'
 import { SendTestEmailDialog } from './SendTestEmailDialog'
+
+const TEMPLATES = STARTER_TEMPLATES.map(toEmailTemplate)
 
 interface FakeOptions {
   readonly messageId?: string

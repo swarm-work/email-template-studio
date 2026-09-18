@@ -17,7 +17,7 @@ function fakeRenderer(results: RenderResult[]): TemplateRenderer & { calls: numb
   return renderer
 }
 
-const ok: RenderResult = { ok: true, html: '<p>ok</p>', durationMs: 5 }
+const ok: RenderResult = { ok: true, html: '<p>ok</p>', text: '', durationMs: 5 }
 const failed: RenderResult = { ok: false, error: { kind: 'render', message: 'boom' } }
 
 describe('useRenderPreview', () => {

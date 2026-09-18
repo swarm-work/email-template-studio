@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { TEMPLATES } from '@/infrastructure/templates/registry'
+import { templateSource } from '@/domain'
+import { STARTER_TEMPLATES } from '@/infrastructure/templates/registry'
 import { renderTemplate } from './renderTemplate'
 
 describe('renderTemplate', () => {
-  it.each(TEMPLATES.map((t) => [t.metadata.name, t] as const))(
+  it.each(STARTER_TEMPLATES.map((t) => [t.metadata.name, t] as const))(
     'renders the "%s" sample template',
     async (_name, template) => {
       const props = JSON.parse(template.samplePayloadText) as Record<string, unknown>
-      const result = await renderTemplate(template.source, props)
+      const result = await renderTemplate(templateSource(template), props)
       expect(result.ok).toBe(true)
       if (!result.ok) return
       expect(result.html).toContain('<!DOCTYPE html')
@@ -17,8 +18,8 @@ describe('renderTemplate', () => {
   )
 
   it('interpolates props into the HTML', async () => {
-    const template = TEMPLATES[0]
-    const result = await renderTemplate(template.source, {
+    const template = STARTER_TEMPLATES[0]
+    const result = await renderTemplate(templateSource(template), {
       recipientName: 'Zed Zephyr',
       verificationUrl: 'https://example.test/verify',
       expiresInHours: 12,

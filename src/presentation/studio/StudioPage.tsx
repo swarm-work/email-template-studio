@@ -19,7 +19,6 @@ import { DiagnosticsPanel } from './DiagnosticsPanel'
 import { PageHeader } from './PageHeader'
 import { PayloadPanel } from './PayloadPanel'
 import { PreviewWorkspace } from './PreviewWorkspace'
-import { PublishDialog } from './PublishDialog'
 import { SendTestEmailDialog } from './SendTestEmailDialog'
 import { SourceWorkspace } from './SourceWorkspace'
 import { TemplateLibrary } from './TemplateLibrary'
@@ -72,7 +71,6 @@ export function StudioPage({
   )
 
   const [sendOpen, setSendOpen] = useState(false)
-  const [publishOpen, setPublishOpen] = useState(false)
 
   const workerHealth: WorkerHealth =
     preview.status === 'rendering'
@@ -101,7 +99,6 @@ export function StudioPage({
           device={state.device}
           onDeviceChange={actions.setDevice}
           onSendTest={() => setSendOpen(true)}
-          onPublish={() => setPublishOpen(true)}
           sourceDirty={sourceDirty}
         />
 
@@ -149,7 +146,6 @@ export function StudioPage({
           templates={templates}
           selectedId={template.metadata.id}
           dirtyIds={studio.dirtyTemplateIds}
-          localPublishes={state.localPublishes}
           onSelect={actions.selectTemplate}
         />
       </main>
@@ -162,17 +158,6 @@ export function StudioPage({
         template={template}
         provider={provider}
         html={preview.html}
-      />
-      <PublishDialog
-        open={publishOpen}
-        onOpenChange={setPublishOpen}
-        template={template}
-        canPublish={preview.status === 'success'}
-        onConfirm={() => {
-          actions.simulatePublish()
-          setPublishOpen(false)
-          toast.info('Local snapshot recorded. Nothing was published.')
-        }}
       />
     </div>
   )
