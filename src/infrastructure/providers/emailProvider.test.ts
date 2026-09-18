@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { DEFAULT_STUDIO_FEATURES } from '@/domain'
 import { HttpTestEmailProvider, NoSendEmailProvider, SERVER_NOT_RUNNING_REASON } from './emailProvider'
 
 function fetchReturning(status: number, body: unknown): typeof fetch {
@@ -24,7 +25,11 @@ describe('HttpTestEmailProvider', () => {
       throw new TypeError('Failed to fetch')
     }) as unknown as typeof fetch
     const provider = new HttpTestEmailProvider('/api/send-test', failing)
-    expect(await provider.getStatus()).toEqual({ connected: false, reason: SERVER_NOT_RUNNING_REASON })
+    expect(await provider.getStatus()).toEqual({
+      connected: false,
+      reason: SERVER_NOT_RUNNING_REASON,
+      features: DEFAULT_STUDIO_FEATURES,
+    })
     expect(await provider.send(email)).toMatchObject({ status: 'not-sent', code: 'server-unreachable' })
   })
 
@@ -33,7 +38,33 @@ describe('HttpTestEmailProvider', () => {
       '/api/send-test',
       fetchReturning(200, { enabled: false, reason: 'off' }),
     )
-    expect(await provider.getStatus()).toEqual({ connected: false, reason: 'off' })
+    expect(await provider.getStatus()).toEqual({
+      connected: false,
+      reason: 'off',
+      features: DEFAULT_STUDIO_FEATURES,
+    })
+  })
+
+  it('reads the feature flags, on both the enabled and the disabled branch', async () => {
+    const off = new HttpTestEmailProvider(
+      '/api/send-test',
+      fetchReturning(200, { enabled: false, reason: 'off', features: { visualEditor: false } }),
+    )
+    expect((await off.getStatus()).features).toEqual({ visualEditor: false })
+
+    const on = new HttpTestEmailProvider(
+      '/api/send-test',
+      fetchReturning(200, {
+        enabled: true,
+        provider: 'amazon-ses',
+        mode: 'live',
+        from: 'a@b.co',
+        allowedRecipients: [],
+        region: 'us-east-1',
+        features: { visualEditor: false },
+      }),
+    )
+    expect((await on.getStatus()).features).toEqual({ visualEditor: false })
   })
 
   it('parses a connected status, ignores unknown fields and fills in safe defaults', async () => {
@@ -53,6 +84,9 @@ describe('HttpTestEmailProvider', () => {
     )
     expect(await provider.getStatus()).toEqual({
       connected: true,
+      // A server that predates the flag sends no `features` at all, and the
+      // safe reading is "everything on": the flag switches something OFF.
+      features: DEFAULT_STUDIO_FEATURES,
       provider: 'amazon-ses',
       mode: 'live',
       from: 'a@b.co',

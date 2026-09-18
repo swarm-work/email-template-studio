@@ -13,13 +13,28 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { buildDiagnostics } from '@/application/buildDiagnostics'
 import { parsePreviewPayload } from '@/application/parsePreviewPayload'
-import { ALL_STUDIO_MODES, defaultMode, nextModeForPreviewToggle } from '@/application/studioModes'
-import type { StudioMode, TemplateKind } from '@/domain'
+import {
+  ALL_STUDIO_MODES,
+  availableModes,
+  defaultMode,
+  nextModeForPreviewToggle,
+} from '@/application/studioModes'
+import {
+  VISUAL_EDITOR_OFF_MESSAGE,
+  type EmailDocument,
+  type StudioFeatures,
+  type StudioMode,
+  type TemplateKind,
+} from '@/domain'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { buildPreviewDocument } from '@/infrastructure/render/previewDocument'
+import { DEFAULT_STUDIO_THEME } from '@/infrastructure/render/studioTheme'
 import type { EmailProvider } from '@/infrastructure/providers/emailProvider'
 import type { TemplateRenderer } from '@/infrastructure/render/renderClient'
-import { useFromIdentity } from '@/presentation/hooks/useFromIdentity'
+import { useSendServerStatus } from '@/presentation/hooks/useSendServerStatus'
 import { useRenderPreview, type RenderPreviewState } from '@/presentation/hooks/useRenderPreview'
+import { SAVED_EXPORT_REASON, useSavedExport } from '@/presentation/hooks/useSavedExport'
+import { useVisualPreview } from '@/presentation/hooks/useVisualPreview'
 import type { UseStudioResult } from '@/presentation/hooks/useStudio'
 import { useStudioShortcuts } from '@/presentation/hooks/useStudioShortcuts'
 import { downloadTextFile } from '@/presentation/shared/downloadFile'
@@ -31,7 +46,13 @@ import { CodeWorkspace } from './code/CodeWorkspace'
 import type { EditorTabId } from './code/editorTabs'
 import { formatJson, formatTsx } from './code/formatSource'
 import { PreviewThumbnail } from './code/PreviewThumbnail'
+import { PropsPayloadCard } from './code/PropsPayloadCard'
+import { ExportedCodeDialog } from './dialogs/ExportedCodeDialog'
 import { ShortcutsDialog } from './dialogs/ShortcutsDialog'
+import { EMPTY_EMAIL_DOCUMENT } from './visual/canvas'
+import { VisualEditorSkeleton } from './visual/VisualEditorSkeleton'
+import type { VisualEditorControls } from './visual/editorControls'
+import { VisualWorkspace } from './visual/VisualWorkspace'
 import { EnvelopePanel } from './envelope/EnvelopePanel'
 import { NOTHING_RENDERED_REASON } from './preview/previewStatus'
 import { PreviewWorkspace } from './preview/PreviewWorkspace'
@@ -58,9 +79,21 @@ export interface StudioPageProps {
 }
 
 export function StudioPage({ studio, renderer, provider, onBackToLibrary, onRenderTime }: StudioPageProps) {
-  const { template, draft, sourceDirty, payloadDirty, envelopeDirty, state, actions } = studio
+  const { template, draft, sourceDirty, documentDirty, payloadDirty, envelopeDirty, state, actions } = studio
   const templateId = template.metadata.id
-  const mode = state.mode
+
+  // What the send server says about itself: the From address the envelope panel
+  // and the preview summary show, and which features are switched on. Asked for
+  // ONCE here, because two callers would be two requests that can answer
+  // differently.
+  const { from: fromIdentity, features, ready: featuresReady } = useSendServerStatus(provider)
+  const isVisual = template.kind === 'visual'
+
+  // The reducer clamps the mode by KIND; the feature flag can take a mode away
+  // after that, so what is actually shown is clamped again here. Nothing is
+  // written back, so switching the flag on again returns you where you were.
+  const kindModes = availableModes(template.kind, features)
+  const mode = kindModes.includes(state.mode) ? state.mode : kindModes[0]
 
   // Validation is memoised on the text so its identity only changes when the text does.
   const validation = useMemo(
@@ -69,12 +102,32 @@ export function StudioPage({ studio, renderer, provider, onBackToLibrary, onRend
   )
   const props = validation.ok ? validation.value : null
 
-  const preview = useRenderPreview(renderer, templateId, draft.source, props)
+  // Counts the canvas transactions a person has made. The document itself is a
+  // fresh object on every keystroke, so it is useless as a trigger; a number is
+  // exactly as expressive and compares in one step.
+  const [documentRevision, setDocumentRevision] = useState(0)
 
-  // Asked for ONCE here rather than in each view: the envelope panel and the
-  // preview's summary both show the sender, and two hooks would mean two
-  // requests that can answer differently.
-  const fromIdentity = useFromIdentity(provider)
+  // BOTH pipelines are wired up on every render - hooks cannot live inside an
+  // `if` - and each one is switched off unless it is the one this template
+  // uses. Everything downstream reads `preview`, so the preview, the status
+  // bar, the diagnostics, the downloads and the send dialog go on working for
+  // either kind without knowing which one they are looking at.
+  // The canvas waits for the server's answer before it is mounted at all. That
+  // is what makes STUDIO_VISUAL_EDITOR a real rollback switch: with it off, the
+  // editor chunk is never even requested.
+  const canvasEnabled = isVisual && featuresReady && features.visualEditor
+  const codePreview = useRenderPreview(renderer, templateId, draft.source, props, { enabled: !isVisual })
+  const visualPreview = useVisualPreview({
+    enabled: canvasEnabled,
+    resetKey: templateId,
+    preheader: draft.envelope.preheader,
+    revision: documentRevision,
+  })
+  // With the canvas switched off there is no editor to compose from - and the
+  // whole point of the flag is that the editor is never even downloaded - so
+  // the preview falls back to the export saved with this version.
+  const savedExport = useSavedExport(template)
+  const preview = isVisual ? (canvasEnabled ? visualPreview : savedExport) : codePreview
 
   /**
    * The one preview document, built once per successful render (ADR-25).
@@ -92,20 +145,41 @@ export function StudioPage({ studio, renderer, provider, onBackToLibrary, onRend
         validation,
         renderStatus: preview.status,
         renderResult: preview.result,
-        sourceDirty,
+        kind: template.kind,
+        // Whichever half of the template this kind is authored in. A visual
+        // template's source is always empty, so `sourceDirty` could only ever
+        // say "Matches the original file" - about a document being typed into.
+        contentDirty: isVisual ? documentDirty : sourceDirty,
         payloadDirty,
       }),
-    [validation, preview.status, preview.result, sourceDirty, payloadDirty],
+    [
+      validation,
+      preview.status,
+      preview.result,
+      template.kind,
+      isVisual,
+      documentDirty,
+      sourceDirty,
+      payloadDirty,
+    ],
   )
 
   const [sendOpen, setSendOpen] = useState(false)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const [exportedCodeOpen, setExportedCodeOpen] = useState(false)
   const [activeTab, setActiveTab] = useState<EditorTabId>('tsx')
+  // Undo/redo and selection state, published by the canvas for the sub-header.
+  // null until the editor chunk has arrived.
+  const [visualControls, setVisualControls] = useState<VisualEditorControls | null>(null)
+  // The inspector rail below xl. At xl and up the rail is always on screen and
+  // this value is simply ignored, which is why it is not stored in the session.
+  const [inspectorOpen, setInspectorOpen] = useState(false)
   const renderHistory = useRenderHistory(templateId, preview)
-  const { returnMode, rememberMode } = useReturnMode(templateId, template.kind)
+  const { returnMode, rememberMode } = useReturnMode(templateId, template.kind, features)
 
   const previewRef = useRef<HTMLElement>(null)
   const editorRef = useRef<HTMLDivElement>(null)
+  const inspectorToggleRef = useRef<HTMLButtonElement>(null)
   // Focus follows the workspace only when the keyboard asked for the switch; a
   // click on the mode toggle leaves focus on the button that was just pressed.
   // A ref rather than state: it is a one-shot instruction for the next commit,
@@ -129,6 +203,24 @@ export function StudioPage({ studio, renderer, provider, onBackToLibrary, onRend
     // editor (docs/DESIGN.md: it is a measurement of what you are looking at).
     return () => onRenderTime(null)
   }, [lastRenderMs, onRenderTime])
+
+  /**
+   * One canvas edit: the draft takes the new document, and the revision counter
+   * tells the preview hook to compose again.
+   */
+  const handleDocumentChange = useCallback(
+    (document: EmailDocument) => {
+      actions.updateDocument(document)
+      setDocumentRevision((revision) => revision + 1)
+    },
+    [actions],
+  )
+
+  /** Closes the off-canvas rail and puts focus back on the button that opened it. */
+  const closeInspector = useCallback(() => {
+    setInspectorOpen(false)
+    inspectorToggleRef.current?.focus({ preventScroll: true })
+  }, [])
 
   /** Pretty-prints one editable tab; the generated tabs have nothing to format. */
   const formatTab = useCallback(
@@ -178,6 +270,9 @@ export function StudioPage({ studio, renderer, provider, onBackToLibrary, onRend
   }, [actions, mode, rememberMode, returnMode])
 
   const downloadReason = preview.html === null ? NOTHING_RENDERED_REASON : undefined
+  // Refresh re-runs a pipeline, and the saved export is not one. Saying so is
+  // better than a button that looks live and does nothing.
+  const refreshReason = preview === savedExport ? SAVED_EXPORT_REASON : undefined
   const downloadHtml = useCallback(() => {
     if (preview.html === null) return
     downloadTextFile(`${template.metadata.slug}.html`, preview.html, 'text/html')
@@ -206,7 +301,7 @@ export function StudioPage({ studio, renderer, provider, onBackToLibrary, onRend
         mode={mode}
         modes={ALL_STUDIO_MODES}
         onModeChange={changeMode}
-        modeReason={(candidate: StudioMode) => unavailableModeReason(template.kind, candidate)}
+        modeReason={(candidate: StudioMode) => unavailableModeReason(template.kind, candidate, features)}
         device={state.device}
         onDeviceChange={actions.setDevice}
         onSendTest={() => setSendOpen(true)}
@@ -215,6 +310,12 @@ export function StudioPage({ studio, renderer, provider, onBackToLibrary, onRend
         onDownloadHtml={downloadHtml}
         onDownloadText={downloadText}
         downloadReason={downloadReason}
+        onViewExportedCode={() => setExportedCodeOpen(true)}
+        visualControls={visualControls}
+        canvasEnabled={canvasEnabled}
+        inspectorOpen={canvasEnabled ? inspectorOpen : undefined}
+        onToggleInspector={canvasEnabled ? () => setInspectorOpen((open) => !open) : undefined}
+        inspectorToggleRef={inspectorToggleRef}
       />
 
       <EnvelopePanel
@@ -234,63 +335,110 @@ export function StudioPage({ studio, renderer, provider, onBackToLibrary, onRend
           fill and the page scrolls instead. */}
       <div className="min-h-0 flex-1 overflow-y-auto max-lg:min-h-[640px]">
         <div className="mx-auto flex w-full max-w-[1440px] min-w-0 flex-col gap-4 px-4 py-4">
-          {/* Both workspaces stay mounted; the one you are not in is `hidden`
-              and `inert` (ADR-24), so its editors keep their undo history and
-              the preview iframe never reloads. */}
-          <div
-            ref={editorRef}
-            tabIndex={-1}
-            hidden={mode !== 'code'}
-            inert={mode !== 'code'}
-            className="flex min-w-0 flex-col focus-visible:outline-none"
-          >
-            <CodeWorkspace
-              active={mode === 'code'}
-              template={template}
-              source={draft.source}
-              onSourceChange={actions.updateSource}
-              sourceDirty={sourceDirty}
-              onResetSource={() => {
-                actions.resetSource()
-                toast.success('Source restored to the original file.')
-              }}
-              payloadText={draft.payloadText}
-              onPayloadChange={actions.updatePayload}
-              validation={validation}
-              payloadDirty={payloadDirty}
-              onResetPayload={() => {
-                actions.resetPayload()
-                toast.success('Preview payload restored to the sample data.')
-              }}
-              html={preview.html}
-              text={preview.text}
-              renderStatus={preview.status}
-              renderResult={preview.result}
-              renderHistory={renderHistory}
-              activeTab={activeTab}
-              onActiveTabChange={setActiveTab}
-              onFormat={formatTab}
-              diagnostics={diagnostics}
-              previewThumbnail={
-                // Not mounted in preview mode: the same document is already on
-                // screen full size, and a second iframe would cost memory for a
-                // picture nobody can see.
-                mode === 'preview' ? null : (
-                  <PreviewThumbnail
-                    document={previewDocument}
-                    status={preview.status}
-                    stale={preview.result !== null && !preview.result.ok && previewDocument !== null}
-                    onOpenPreview={openPreviewFromThumbnail}
-                  />
-                )
-              }
-            />
-          </div>
+          {/* The rollback flag, said out loud. Without this the Visual button
+              would simply be missing and nobody could tell why. */}
+          {isVisual && !features.visualEditor ? (
+            <Alert className="border-warning/30 bg-warning-muted text-warning-foreground">
+              <AlertTitle>Visual editing is switched off</AlertTitle>
+              <AlertDescription>{VISUAL_EDITOR_OFF_MESSAGE}</AlertDescription>
+            </Alert>
+          ) : null}
 
-          {/* `visual` is a mode the state machine can legally hold — a visual
-              template opens straight into it — but its canvas is phase 5. The
-              editor area must never be blank, so it says why instead. */}
-          {mode === 'visual' ? <VisualModePlaceholder /> : null}
+          {/* This template's own editor stays mounted while you are in preview
+              mode - `hidden` and `inert` (ADR-24) - so the canvas keeps its
+              undo history and CodeMirror keeps its measurements. The OTHER
+              kind's workspace is not rendered at all: for a code template that
+              is what keeps the editor chunk off the wire (plan §3.10; its
+              measured size lives in docs/TECH_DEBT.md #33). */}
+          {canvasEnabled ? (
+            <div
+              ref={editorRef}
+              tabIndex={-1}
+              hidden={mode !== 'visual'}
+              inert={mode !== 'visual'}
+              className="flex min-h-0 min-w-0 flex-1 flex-col focus-visible:outline-none"
+            >
+              <VisualWorkspace
+                templateId={templateId}
+                document={draft.document ?? EMPTY_EMAIL_DOCUMENT}
+                theme={template.kind === 'visual' ? template.theme : DEFAULT_STUDIO_THEME}
+                onDocumentChange={handleDocumentChange}
+                onEditorReady={visualPreview.onReady}
+                onEditorDestroy={visualPreview.onDestroy}
+                onControlsChange={setVisualControls}
+                inspectorOpen={inspectorOpen}
+                onCloseInspector={closeInspector}
+                dataPanel={
+                  <PropsPayloadCard
+                    validation={validation}
+                    payloadDirty={payloadDirty}
+                    onFormat={() => formatTab('props')}
+                    onReset={() => {
+                      actions.resetPayload()
+                      toast.success('Preview payload restored to the sample data.')
+                    }}
+                  />
+                }
+              />
+            </div>
+          ) : null}
+
+          {/* Waiting for the server to say whether the canvas is switched on.
+              It is one small same-origin request, and the skeleton is the shape
+              of the screen that is about to appear. */}
+          {isVisual && !featuresReady ? <VisualEditorSkeleton /> : null}
+
+          {isVisual ? null : (
+            <div
+              ref={editorRef}
+              tabIndex={-1}
+              hidden={mode !== 'code'}
+              inert={mode !== 'code'}
+              className="flex min-w-0 flex-col focus-visible:outline-none"
+            >
+              <CodeWorkspace
+                active={mode === 'code'}
+                template={template}
+                source={draft.source}
+                onSourceChange={actions.updateSource}
+                sourceDirty={sourceDirty}
+                onResetSource={() => {
+                  actions.resetSource()
+                  toast.success('Source restored to the original file.')
+                }}
+                payloadText={draft.payloadText}
+                onPayloadChange={actions.updatePayload}
+                validation={validation}
+                payloadDirty={payloadDirty}
+                onResetPayload={() => {
+                  actions.resetPayload()
+                  toast.success('Preview payload restored to the sample data.')
+                }}
+                html={preview.html}
+                text={preview.text}
+                renderStatus={preview.status}
+                renderResult={preview.result}
+                renderHistory={renderHistory}
+                activeTab={activeTab}
+                onActiveTabChange={setActiveTab}
+                onFormat={formatTab}
+                diagnostics={diagnostics}
+                previewThumbnail={
+                  // Not mounted in preview mode: the same document is already on
+                  // screen full size, and a second iframe would cost memory for a
+                  // picture nobody can see.
+                  mode === 'preview' ? null : (
+                    <PreviewThumbnail
+                      document={previewDocument}
+                      status={preview.status}
+                      stale={preview.result !== null && !preview.result.ok && previewDocument !== null}
+                      onOpenPreview={openPreviewFromThumbnail}
+                    />
+                  )
+                }
+              />
+            </div>
+          )}
 
           <div hidden={mode !== 'preview'} inert={mode !== 'preview'} className="flex min-w-0 flex-col">
             <PreviewWorkspace
@@ -305,6 +453,7 @@ export function StudioPage({ studio, renderer, provider, onBackToLibrary, onRend
               text={preview.text}
               renderedAt={preview.renderedAt}
               onRefresh={preview.refresh}
+              refreshReason={refreshReason}
               onDownloadHtml={downloadHtml}
               onDownloadText={downloadText}
               downloadReason={downloadReason}
@@ -331,26 +480,14 @@ export function StudioPage({ studio, renderer, provider, onBackToLibrary, onRend
         html={preview.html}
       />
       <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
+      <ExportedCodeDialog
+        open={exportedCodeOpen}
+        onOpenChange={setExportedCodeOpen}
+        html={preview.html}
+        text={preview.text}
+        document={draft.document}
+      />
     </div>
-  )
-}
-
-/**
- * What stands in for the visual canvas until phase 5 builds it.
- *
- * Not a hidden-but-mounted workspace like the other two: there is nothing to
- * keep alive, so it is simply rendered when the mode asks for it.
- */
-function VisualModePlaceholder() {
-  return (
-    <section aria-labelledby="visual-placeholder-heading" className="bg-card rounded-lg border p-6">
-      <h2 id="visual-placeholder-heading" className="text-sm font-medium">
-        Visual editing
-      </h2>
-      <p className="text-muted-foreground mt-1 max-w-prose text-xs">
-        The visual canvas is not built yet. Preview mode shows what this template renders to.
-      </p>
-    </section>
   )
 }
 
@@ -361,10 +498,10 @@ function VisualModePlaceholder() {
  * canvas and a code template to the editor; it is keyed by template id so that
  * opening another template does not send you back to the previous one's mode.
  */
-function useReturnMode(templateId: string, kind: TemplateKind) {
+function useReturnMode(templateId: string, kind: TemplateKind, features: StudioFeatures) {
   const [remembered, setRemembered] = useState<{ key: string; mode: StudioMode }>(() => ({
     key: templateId,
-    mode: defaultMode(kind),
+    mode: defaultMode(kind, features),
   }))
 
   const rememberMode = useCallback(
@@ -372,7 +509,7 @@ function useReturnMode(templateId: string, kind: TemplateKind) {
     [templateId],
   )
 
-  const returnMode = remembered.key === templateId ? remembered.mode : defaultMode(kind)
+  const returnMode = remembered.key === templateId ? remembered.mode : defaultMode(kind, features)
   return { returnMode, rememberMode }
 }
 

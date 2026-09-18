@@ -3,8 +3,15 @@ import { templateSource } from '@/domain'
 import { STARTER_TEMPLATES } from '@/infrastructure/templates/registry'
 import { renderTemplate } from './renderTemplate'
 
+/**
+ * Only the CODE starters go through this pipeline. A visual starter has no TSX
+ * at all; it is composed in the browser from the editor (see
+ * infrastructure/render/visualEmailRenderer.ts).
+ */
+const CODE_STARTERS = STARTER_TEMPLATES.filter((template) => template.kind === 'code')
+
 describe('renderTemplate', () => {
-  it.each(STARTER_TEMPLATES.map((t) => [t.metadata.name, t] as const))(
+  it.each(CODE_STARTERS.map((t) => [t.metadata.name, t] as const))(
     'renders the "%s" sample template',
     async (_name, template) => {
       const props = JSON.parse(template.samplePayloadText) as Record<string, unknown>

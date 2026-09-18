@@ -7,7 +7,7 @@
  * finished studio is visible from the start.
  */
 import { useId } from 'react'
-import { Download, FileCode2, Keyboard, MoreHorizontal, Send } from 'lucide-react'
+import { Code2, Download, FileCode2, Keyboard, MoreHorizontal, Send } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -19,7 +19,7 @@ import type { TemplateKind, TemplateStatus } from '@/domain'
 import { ReasonedMenuItem } from '@/presentation/shared/ReasonedButton'
 
 const SAVED_TEMPLATES_REASON = 'Coming with saved templates.'
-const CONVERT_REASON = 'Coming with the visual editor.'
+const CONVERT_REASON = 'Coming with the converter.'
 
 export interface StudioOverflowMenuProps {
   kind: TemplateKind
@@ -32,6 +32,8 @@ export interface StudioOverflowMenuProps {
   onDownloadText: () => void
   /** Why the downloads cannot be used; `undefined` means they can. */
   downloadReason?: string
+  /** Opens the read-only export views. The only route to them for a visual template. */
+  onViewExportedCode: () => void
 }
 
 export function StudioOverflowMenu({
@@ -42,6 +44,7 @@ export function StudioOverflowMenu({
   onDownloadHtml,
   onDownloadText,
   downloadReason,
+  onViewExportedCode,
 }: StudioOverflowMenuProps) {
   // The reason sentences live outside the menu: anything inside a menu item
   // becomes part of that item's accessible name.
@@ -82,6 +85,12 @@ export function StudioOverflowMenu({
           {kind === 'visual' ? (
             <>
               <DropdownMenuSeparator />
+              {/* A visual template has no code MODE - its views would all be
+                  exports - so this is how they are reached (ADR-18). */}
+              <ReasonedMenuItem onSelect={onViewExportedCode}>
+                <Code2 aria-hidden="true" />
+                View exported code
+              </ReasonedMenuItem>
               <ReasonedMenuItem reason={CONVERT_REASON} reasonId={convertReasonId}>
                 <FileCode2 aria-hidden="true" />
                 Convert to code template…

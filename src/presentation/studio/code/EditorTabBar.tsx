@@ -1,31 +1,45 @@
 /**
- * The tab strip above the code editors: which file is showing, plus the
- * actions that apply to it.
+ * The tab strip above a set of editors: which view is showing, plus the actions
+ * that apply to it.
  *
  * Presentation layer. Hand-rolled rather than Radix `Tabs` on purpose: every
  * CodeMirror editor has to stay mounted (see EditorPanel), and Radix unmounts
  * the panels it is not showing.
+ *
+ * Generic over the tab id so one strip serves both sets in `editorTabs.ts` and
+ * neither caller has to widen its own union to a bare string.
  */
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
-import { EDITOR_TABS, panelId, tabId, type EditorTabId } from './editorTabs'
+import { EDITOR_TABS, panelId, tabId, type EditorTab, type EditorTabId } from './editorTabs'
 
-export interface EditorTabBarProps {
-  value: EditorTabId
-  onChange: (tab: EditorTabId) => void
+export interface EditorTabBarProps<Id extends string> {
+  value: Id
+  onChange: (tab: Id) => void
   /** Prefix for the tab/panel id pair, so several editors can coexist. */
   baseId: string
   /** Format / Copy / Reset, rendered at the right end of the strip. */
   actions: ReactNode
+  /** The tabs to draw; defaults to a code template's four. */
+  tabs?: readonly EditorTab<Id>[]
+  /** Names the strip for screen readers; two strips on one page need two names. */
+  label?: string
 }
 
-export function EditorTabBar({ value, onChange, baseId, actions }: EditorTabBarProps) {
+export function EditorTabBar<Id extends string = EditorTabId>({
+  value,
+  onChange,
+  baseId,
+  actions,
+  tabs = EDITOR_TABS as readonly EditorTab<Id>[],
+  label = 'Editor files',
+}: EditorTabBarProps<Id>) {
   function onKeyDown(event: React.KeyboardEvent) {
     const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0
     if (step === 0) return
     event.preventDefault()
-    const index = EDITOR_TABS.findIndex((tab) => tab.id === value)
-    const next = EDITOR_TABS[(index + step + EDITOR_TABS.length) % EDITOR_TABS.length]
+    const index = tabs.findIndex((tab) => tab.id === value)
+    const next = tabs[(index + step + tabs.length) % tabs.length]
     onChange(next.id)
     document.getElementById(tabId(baseId, next.id))?.focus()
   }
@@ -34,11 +48,11 @@ export function EditorTabBar({ value, onChange, baseId, actions }: EditorTabBarP
     <div className="flex min-w-0 items-center gap-2 border-b px-2">
       <div
         role="tablist"
-        aria-label="Editor files"
+        aria-label={label}
         onKeyDown={onKeyDown}
         className="flex min-w-0 [scrollbar-width:none] items-center gap-1 overflow-x-auto py-1"
       >
-        {EDITOR_TABS.map((tab) => {
+        {tabs.map((tab) => {
           const active = tab.id === value
           return (
             <button

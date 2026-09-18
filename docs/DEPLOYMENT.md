@@ -315,12 +315,37 @@ The "Edit Cloudflare Workers" template does not include D1 or R2; add both to th
 
 ### Rollback
 
-| What went wrong                          | What to do                                                                                                                                                     |
-| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Bad Worker version                       | `npx wrangler rollback`, or redeploy the previous commit. The schema is left alone — migrations are additive, so the older Worker still reads it               |
-| Bad data (a wrong bulk edit, a deletion) | D1 Time Travel to just before it, or import the last export. Template history is append-only, so a bad **save** is recoverable by reading the previous version |
-| Bad migration                            | Never "roll back" a migration. Write the next one that undoes it, test it locally with `npm run db:migrate`, then apply it                                     |
-| Visual editor misbehaving                | The `STUDIO_VISUAL_EDITOR` flag turns visual mode off without a deploy                                                                                         |
+| What went wrong                          | What to do                                                                                                                                                                 |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Bad Worker version                       | `npx wrangler rollback`, or redeploy the previous commit. The schema is left alone — migrations are additive, so the older Worker still reads it                           |
+| Bad data (a wrong bulk edit, a deletion) | D1 Time Travel to just before it, or import the last export. Template history is append-only, so a bad **save** is recoverable by reading the previous version             |
+| Bad migration                            | Never "roll back" a migration. Write the next one that undoes it, test it locally with `npm run db:migrate`, then apply it                                                 |
+| Visual editor misbehaving                | Set `STUDIO_VISUAL_EDITOR` to `"false"` in `wrangler.jsonc` and `npx wrangler deploy`. See below — it is a variable change, not a rebuild, and it keeps templates readable |
+
+#### Switching the visual editor off
+
+`STUDIO_VISUAL_EDITOR` is a Worker `var`, read by `server/config.ts` and reported to the browser in
+`GET /api/send-test/status` as `features.visualEditor`. Only the literal string `"false"` switches it
+off; anything else, including an absent variable, leaves it on, so a typo can never take the editor
+away by accident.
+
+With it off:
+
+- the **Visual** button in the mode toggle is disabled and says why (it stays on screen and stays
+  focusable, so a keyboard reader can reach the explanation);
+- a visual template opens in **Preview** with the banner _"The visual editor is switched off. This
+  template is read-only until it is switched back on."_;
+- the 2.5 MB editor chunk is **never requested** — the studio waits for the status response before it
+  mounts the canvas, so a broken editor build cannot even be downloaded;
+- the preview shows the HTML and plain text saved with the current version; a template that has
+  never been saved — including the seeded starter, which ships with an empty export because the
+  studio composes it on open — has nothing to show, so the banner is the only thing on screen;
+- code templates are completely unaffected.
+
+Nothing is written while it is off, so switching it back on (`"true"`, or delete the variable) and
+redeploying restores the canvas exactly as it was. A rollback of the whole Worker
+(`npx wrangler rollback`) does the same thing more bluntly; prefer the flag when only the editor is
+the problem.
 
 Pre-deploy checklist: `npm run check` green → `npm run build` green (the Worker-bundle guard runs here) → `npx wrangler whoami` shows the right account → `wrangler d1 export --remote` taken → `npm run db:migrate:prod` → `npm run deploy` → the post-deploy checks below.
 

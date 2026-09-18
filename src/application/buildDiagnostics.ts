@@ -5,13 +5,21 @@
  * Anything the app does not actually check is labelled `planned`,
  * `not-connected` or `simulated` so the UI never over-claims.
  */
-import type { DiagnosticItem, RenderResult, RenderStatus, ValidationResult } from '@/domain'
+import type { DiagnosticItem, RenderResult, RenderStatus, TemplateKind, ValidationResult } from '@/domain'
 
 export interface DiagnosticsInput {
   readonly validation: ValidationResult
   readonly renderStatus: RenderStatus
   readonly renderResult: RenderResult | null
-  readonly sourceDirty: boolean
+  /**
+   * What this template is authored in. A code template has a source that
+   * compiles; a visual one has a canvas document that exports. The first row
+   * says whichever of those is true, because a row that talks about compiling
+   * a source a template does not have is worse than no row at all.
+   */
+  readonly kind: TemplateKind
+  /** Unsaved edits to the source (code) or to the canvas document (visual). */
+  readonly contentDirty: boolean
   readonly payloadDirty: boolean
 }
 
@@ -42,26 +50,45 @@ export function buildDiagnostics(input: DiagnosticsInput): DiagnosticItem[] {
   ]
 }
 
+/** The first row's vocabulary, which is different for each kind of template. */
+const TEMPLATE_ROW = {
+  code: {
+    label: 'Template source',
+    /** Errors that are the template's fault rather than the pipeline's. */
+    ownErrors: ['compile', 'forbidden-import', 'evaluate'],
+    dirty: 'Compiles. Contains unsaved local edits.',
+    clean: 'Compiles. Matches the original file.',
+    pending: 'Waiting for the next successful render.',
+  },
+  visual: {
+    label: 'Canvas document',
+    ownErrors: ['compose'],
+    dirty: 'Exports. Contains unsaved local edits.',
+    clean: 'Exports. Matches the saved version.',
+    pending: 'Waiting for the next successful export.',
+  },
+} as const satisfies Record<TemplateKind, unknown>
+
 function templateDiagnostic(input: DiagnosticsInput): DiagnosticItem {
+  const row = TEMPLATE_ROW[input.kind]
   const error = input.renderResult && !input.renderResult.ok ? input.renderResult.error : null
-  if (error && (error.kind === 'compile' || error.kind === 'forbidden-import' || error.kind === 'evaluate')) {
-    return { id: 'template', label: 'Template source', state: 'error', detail: error.message }
+  const ownErrors: readonly string[] = row.ownErrors
+  if (error && ownErrors.includes(error.kind)) {
+    return { id: 'template', label: row.label, state: 'error', detail: error.message }
   }
   if (input.renderStatus === 'success') {
     return {
       id: 'template',
-      label: 'Template source',
+      label: row.label,
       state: 'pass',
-      detail: input.sourceDirty
-        ? 'Compiles. Contains unsaved local edits.'
-        : 'Compiles. Matches the original file.',
+      detail: input.contentDirty ? row.dirty : row.clean,
     }
   }
   return {
     id: 'template',
-    label: 'Template source',
+    label: row.label,
     state: 'pending',
-    detail: 'Waiting for the next successful render.',
+    detail: row.pending,
   }
 }
 

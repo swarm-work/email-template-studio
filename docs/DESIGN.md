@@ -173,6 +173,111 @@ Every strip that can run out of room (primitives, tab bar, status bar) scrolls i
 `overflow-x-auto [scrollbar-width:none]`; the page itself never scrolls sideways, and the e2e sweep at
 1440/1280/1024/768 asserts it for the sub-header, the envelope panel and the status bar too.
 
+**Visual workspace** (`visual/VisualWorkspace`) — the canvas and its rail, and the only part of the
+studio that is downloaded on demand (ADR-18). `React.lazy` + `Suspense` with `VisualEditorSkeleton` as
+the fallback — the shape of the finished screen, so nothing jumps when the editor arrives — and an
+error boundary that turns a chunk that never loaded into a `RenderError { kind: 'editor-load' }`,
+shown by the SAME `RenderErrorBanner` as a compile or export failure. One vocabulary for "the preview
+pipeline could not finish".
+
+**Email canvas** (`visual/EmailCanvas`) — a non-scrolling wrapper (so `CanvasChip` can stay in its
+corner) holding `.dot-grid absolute inset-0 overflow-auto overscroll-contain`, and inside that a
+column `mx-auto w-full px-6 py-10` capped at 600 + 2 + 48 px: the email, the sheet's hairline border
+and 24 px of dotted ground on each side. The sheet itself is the **editor's own container**, given
+`studio-sheet relative rounded-xl border bg-white` through the package's `className` prop.
+
+That split is load-bearing. The package appends its bubble menu **inside** the editor container, so if
+the container were the scroller, `overflow: auto` would clip the menu. Here the menu is positioned
+against the sheet and the 40 px of gutter above and below it is where the menu goes when the selection
+is on the first or last line; `e2e/visual.spec.ts` selects text at both edges and asserts the menu's
+box stays inside the scroller's.
+
+The chip reads `600 px canvas · 100%` with the tooltip _"Shown at actual size. The studio never scales
+the email."_ Every other visual email builder zooms the canvas to fit; this one does not, and the chip
+is where that promise is made.
+
+**Inspector rail** (`visual/StudioInspector`) — 360 px, `bg-card flex w-[360px] shrink-0 flex-col
+border-l`, and below `xl` an off-canvas drawer: `max-xl:absolute max-xl:inset-y-0 max-xl:right-0
+max-xl:w-[min(360px,88vw)] max-xl:translate-x-full max-xl:transition-transform
+max-xl:data-[open=true]:translate-x-0 motion-reduce:transition-none`, with a sibling backdrop and an
+`InspectorToggle` (`aria-pressed` + `aria-controls`) in the sub-header. CSS, not a dialog: one React
+tree, no focus fight, and the rail keeps its scroll position. Opening moves focus into the rail,
+**Escape** closes it and gives focus back to the toggle. There is no focus trap — it is a panel.
+
+The rail is rendered through a **portal**. The package renders our children as siblings of the editor
+container, which is inside the canvas scroller; the rail belongs beside the canvas. A portal moves the
+DOM without leaving the React tree, so the Inspector still sees the editor's context.
+
+Tabs `Style | Data`. Style is our `Hierarchy` header (`Inspector.Breadcrumb` plus Insert image,
+Duplicate block and Delete block as icon buttons) and then the package's own
+`Inspector.Document` / `.Node` / `.Text` sections, restyled but not forked. Delete and Duplicate act
+on the **block the cursor is in**, not on the text selection: what people mean by "Delete block" in a
+rail is the block the breadcrumb's last crumb names. Then `FontFallbackNote`, which is data-driven
+from `fontFallbackFor()` — a success note for a stack the studio has checked, a warning for anything
+else, so the reassurance cannot outlive the theme that earned it. Data is the props payload card
+(merge fields join it in phase 6). The footer strip repeats `⌘S Save · ⌘P Preview · / Blocks` from the
+one `SHORTCUTS` array and is `aria-hidden`: it is a reminder, not a control.
+
+### Editor hooks inventory (phase-5 step 0)
+
+Recorded by mounting the real `EmailEditor` and `Inspector.*` under jsdom and reading the DOM back, so
+the CSS in `src/index.css` targets attributes that genuinely exist.
+
+**`data-re-*` attributes the Inspector renders**: `data-re-inspector-breadcrumb`, `-breadcrumb-list`,
+`-breadcrumb-item`, `-breadcrumb-button`, `-breadcrumb-separator`, `-breadcrumb-ellipsis`,
+`-section`, `-section-header`, `-section-toggle`, `-section-body`, `-prop-row`, `-label`, `-text`,
+`-field`, `-select`, `-number`, `-input`, `-unit`, `-color-control`, `-color-trigger`, `-color-hex`,
+`-toggle-group`, `-toggle-item`, `-button`, `-icon-button`, `-tooltip`, `-tooltip-content`.
+The bubble menus use `data-re-bubble-menu`, `-bubble-menu-group`, `-bubble-menu-item`,
+`-bubble-menu-separator`, plus `data-re-node-selector*`, `data-re-link-selector*` and the
+`data-re-{btn,link,img}-bm-*` families; the slash menu uses `data-re-slash-command`,
+`-slash-command-scroll`, `-slash-command-item`, `-slash-command-category`, `-slash-command-empty`.
+Content classes: `.tiptap`, `.ProseMirror`, `.node-container`, `.node-heading`, `.node-h1`,
+`.node-paragraph`, `.node-columns`, `.node-column`, `.react-renderer`.
+
+**Mock controls vs what the package's sections give us.**
+
+| Mock control                   | Package section                                                    | Decision                                                                 |
+| ------------------------------ | ------------------------------------------------------------------ | ------------------------------------------------------------------------ |
+| Size, Line height, Text colour | `Inspector.Text` → Typography                                      | kept as-is                                                               |
+| Text alignment                 | `Inspector.Text` → Typography (`Align`)                            | kept as-is                                                               |
+| Background                     | `Inspector.Background` / `.Document`                               | kept as-is                                                               |
+| Padding L/R (and T/B)          | `Inspector.Padding` (`Spacing`, uniform or per side)               | kept as-is                                                               |
+| Width (container constraint)   | `Inspector.Size` / `.Document` → Container                         | kept as-is                                                               |
+| Node delete / duplicate        | none                                                               | **ours**, in the Hierarchy header, via Tiptap commands                   |
+| Font family                    | none (`fontFamily` is not even a supported per-node property)      | **dropped**; the theme owns the stack and `FontFallbackNote` explains it |
+| Font weight, Letter spacing    | none, though `fontWeight`/`letterSpacing` are supported properties | **TECH_DEBT**: our own rows beside the library's sections                |
+| Margin top / bottom            | none                                                               | **TECH_DEBT**, with font weight                                          |
+| Group `Reset` link             | none                                                               | **dropped**                                                              |
+
+**Bubble menu.** The package's default text menu is a node selector, a link selector, then
+bold / italic / underline / strike / code / uppercase, then left / centre / right — eleven controls
+against the mock's eight, with high overlap. **No trimming**: `bubbleMenu.hideWhenActive*` hides the
+WHOLE menu for a node or mark (it is how the button, link and image menus take over), not individual
+items, so it is the wrong instrument, and the package defaults (`['button','horizontalRule']` /
+`['link']`) are already right.
+
+**Slash menu.** 14 items in three categories and **no Image item**: `imageSlashCommand` is exported
+from `/plugins` but is not in `defaultSlashCommands`, and `EmailEditor` renders its own
+`SlashCommand` root internally. A second root throws
+(`RangeError: Adding different instances of a keyed plugin (slash-command$)`), so adding Image would
+mean replacing the package's whole menu. Dropped from the slash menu; the canvas placeholder does not
+promise it, and images go in through the rail's **Insert image** button (the package's own
+`uploadImage` command) or by pasting or dropping a file.
+
+**`@source` check.** `Inspector.Padding` and friends ship bare Tailwind utilities in their JSX
+(`flex flex-col gap-2`, `flex items-center gap-1`, `flex items-center gap-0.5` …), and Tailwind does
+not scan `node_modules`, so `@source '../node_modules/@react-email/editor/dist';` in `src/index.css`
+is what guarantees they are generated. Measured against the built CSS, though, the line is
+INSURANCE rather than the reason the rail looks right today: every utility the package's rows use is
+already generated from the app's own source, and the only two classes `@source` adds to
+`dist/client/assets/index-*.css` are `.italic` and `.list-item`. `Inspector.Padding` lays out as a
+flex column either way — but it would stop doing so the day the package reaches for a utility this
+app happens not to use.
+
+**CSS import.** `import '@react-email/editor/themes/default.css'` type-checks under
+`tsconfig.app.json` because it sets `allowArbitraryExtensions`.
+
 ### What the mock says that we do not
 
 `Compiler AST` → **Render report**, every row measured from the render on screen. `TS errors: 0` →
@@ -182,6 +287,15 @@ run `npm run typecheck` for real diagnostics. `Edge Compiler 18ms` → `Worker r
 Coloured tab dots, the tab close ×, the gear and the `ReadOnly: OFF` switch are gone; read-only is
 shown as a chip only where it is true. Two primaries became one: the simulated **Publish Template** is
 deleted.
+
+From the Visual mock: the slash-hint row's trailing ⊕ button is gone (the placeholder carries the
+hint), and the hint itself does not say **Image**, because the package's slash menu has none — see the
+hooks inventory above. The inspector's **Font Family** and **Font Weight** selectors, the
+**Spacing** (letter-spacing) field, the **Margin Top / Margin Bottom** fields and the
+**SPACING & PADDING** group's `Reset` link are not drawn: the package's sections do not offer them and
+the library's grouping is kept rather than forked. The hero photograph, the `Acme Cloud` branding and
+the `38 POPs SYNCED` overlay are mock furniture; the shipped starter is Meridian's, with no image (a
+picture needs an uploaded URL, so a seeded one would point at nothing).
 
 ## Microcopy rules
 
@@ -200,10 +314,20 @@ Short, direct, sentence case. Say what happened and what to do next. Examples us
 - "Put the cursor in template.tsx to insert a primitive." (primitives row on another tab)
 - "Compiled with Sucrase — types are stripped, not checked." (compile strip)
 - "Gmail hides everything past about 102 KB behind a 'View entire message' link." (status bar tooltip)
-- "Coming with saved templates." (Save, rename, mark as ready) · "Coming with the visual editor." (convert)
+- "Coming with saved templates." (Save, rename, mark as ready) · "Coming with the converter." (convert to code)
 - "This template is written in TSX. Visual editing is only available for visual templates." (mode toggle)
+- "This template is edited visually. Switch to Visual to change it, or convert it to a code template." (the Code button on a visual template, and the banner over the read-only export views)
+- "The visual editor is switched off. This template is read-only until it is switched back on." (the `STUDIO_VISUAL_EDITOR` rollback switch)
+- "Shown at actual size. The studio never scales the email." (canvas chip) · `600 px canvas · 100%`
+- "Type \"/\" for blocks — text, button, section, columns, divider" (the empty-block placeholder; it does not say image, see the hooks inventory)
+- "Select a block on the canvas to edit it." (the inspector's Duplicate and Delete with nothing selected)
+- "Geist Variable will fall back to -apple-system, Segoe UI and Arial on Outlook desktop without layout jitter." (client-safe typography, generated from the theme's own stack — the whole stack, so changing any entry to a face the studio has not checked turns the note into its warning variant)
+- "Couldn't upload <name>." (a failed image upload; the temporary node is removed with it)
+- "The visual editor could not be downloaded. Check your connection and reload the page." (the lazy chunk never arrived)
+- "The visual editor is still loading." / "Nothing to undo yet." / "Nothing to redo." (undo and redo)
 - "Nothing rendered yet." (both downloads, the thumbnail and the plain-text panel before the first render; one exported constant in `studio/preview/previewStatus.ts`)
-- "The visual canvas is not built yet. Preview mode shows what this template renders to." (a visual template's editor area, until phase 5)
+- "This is the export saved with the current version. There is nothing to render again." (Refresh, while the flag-off preview is showing what the record holds)
+- `Template source` · "Compiles. Matches the original file." (a code template's first diagnostic) vs `Canvas document` · "Exports. Contains unsaved local edits." (a visual one's) — the row names what the template actually has
 - "Scaled to 41% of 680 px. ⌘P opens the full preview." (thumbnail caption) · "Open full preview"
 - "Preview mode. Read only." / "Code editor." (the hidden live region that announces a mode change)
 - "Plain text ready" / "Plain text —" (status bar) · "No preheader text." (envelope summary)

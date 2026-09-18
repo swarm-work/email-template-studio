@@ -5,7 +5,7 @@
  * The reducer and the session store both clamp the stored mode through these,
  * so a code template can never end up showing the visual canvas.
  */
-import type { StudioMode, TemplateKind } from '@/domain'
+import { DEFAULT_STUDIO_FEATURES, type StudioFeatures, type StudioMode, type TemplateKind } from '@/domain'
 
 const MODES_BY_KIND: Readonly<Record<TemplateKind, readonly StudioMode[]>> = {
   visual: ['visual', 'preview'],
@@ -20,19 +20,31 @@ const MODES_BY_KIND: Readonly<Record<TemplateKind, readonly StudioMode[]>> = {
  */
 export const ALL_STUDIO_MODES: readonly StudioMode[] = ['visual', 'code', 'preview']
 
-/** The modes this kind offers, its own editor first. Used by `clampMode`, below. */
-export function availableModes(kind: TemplateKind): readonly StudioMode[] {
-  return MODES_BY_KIND[kind]
+/**
+ * The modes this kind offers, its own editor first.
+ *
+ * `features` is how the rollback switch reaches the UI: with the visual editor
+ * turned off a visual template keeps only Preview, so it is readable but not
+ * editable. The default leaves every feature on, which is what a caller that
+ * has not yet heard from the server should assume.
+ */
+export function availableModes(
+  kind: TemplateKind,
+  features: StudioFeatures = DEFAULT_STUDIO_FEATURES,
+): readonly StudioMode[] {
+  const modes = MODES_BY_KIND[kind]
+  if (features.visualEditor) return modes
+  return modes.filter((mode) => mode !== 'visual')
 }
 
-/** The mode a template of this kind opens in: its own editor. */
-export function defaultMode(kind: TemplateKind): StudioMode {
-  return MODES_BY_KIND[kind][0]
+/** The mode a template of this kind opens in: its own editor, or Preview when it has none. */
+export function defaultMode(kind: TemplateKind, features?: StudioFeatures): StudioMode {
+  return availableModes(kind, features)[0]
 }
 
 /** Keeps `mode` if this kind offers it, otherwise falls back to the default mode. */
-export function clampMode(kind: TemplateKind, mode: StudioMode): StudioMode {
-  return availableModes(kind).includes(mode) ? mode : defaultMode(kind)
+export function clampMode(kind: TemplateKind, mode: StudioMode, features?: StudioFeatures): StudioMode {
+  return availableModes(kind, features).includes(mode) ? mode : defaultMode(kind, features)
 }
 
 /**

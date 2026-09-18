@@ -5,13 +5,15 @@
  * the actions that apply to the whole template on the right. It is sticky so
  * that Save and the mode switch stay reachable while the page scrolls.
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type Ref } from 'react'
 import { Send } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { EmailTemplate, PreviewDevice, StudioMode } from '@/domain'
 import { relativeTime } from '@/presentation/shared/relativeTime'
+import type { VisualEditorControls } from '../visual/editorControls'
 import { DeviceToggle } from './DeviceToggle'
 import { DraftStatusBadge } from './DraftStatusBadge'
+import { InspectorToggle } from './InspectorToggle'
 import { ModeToggle } from './ModeToggle'
 import { SaveTemplateButton } from './SaveTemplateButton'
 import { StudioOverflowMenu } from './StudioOverflowMenu'
@@ -40,6 +42,20 @@ export interface StudioSubHeaderProps {
   onDownloadText: () => void
   /** Why the two downloads cannot be used; `undefined` means they can. */
   downloadReason?: string
+  /** Opens the read-only Exported HTML / Plain text / document.json views. */
+  onViewExportedCode: () => void
+  /**
+   * True only while the canvas is really mounted: a visual template, the
+   * server has answered, and the flag is on. The controls that act on the
+   * canvas are not drawn at all otherwise.
+   */
+  canvasEnabled?: boolean
+  /** Undo/redo state from the visual canvas; null for a code template. */
+  visualControls: VisualEditorControls | null
+  /** The off-canvas inspector rail, below xl. Absent for a code template. */
+  inspectorOpen?: boolean
+  onToggleInspector?: () => void
+  inspectorToggleRef?: Ref<HTMLButtonElement>
 }
 
 export function StudioSubHeader({
@@ -58,6 +74,12 @@ export function StudioSubHeader({
   onDownloadHtml,
   onDownloadText,
   downloadReason,
+  onViewExportedCode,
+  canvasEnabled = false,
+  visualControls,
+  inspectorOpen = false,
+  onToggleInspector,
+  inspectorToggleRef,
 }: StudioSubHeaderProps) {
   return (
     <header className="bg-card/85 sticky top-0 z-30 flex min-h-[52px] min-w-0 shrink-0 flex-wrap items-center gap-2 border-b px-4 py-1.5 backdrop-blur-sm">
@@ -65,20 +87,29 @@ export function StudioSubHeader({
       <DraftStatusBadge status={template.metadata.status} dirty={dirty} />
       <AutosaveNote lastSavedAt={lastSavedAt} />
 
+      {/* The cluster WRAPS rather than refusing to shrink: a visual template
+          carries two more controls than a code one (undo/redo, the inspector
+          toggle), and at `md` those were exactly enough to push the row past
+          the viewport. Wrapping costs a second line on a narrow screen and
+          keeps every control reachable, which a horizontal scrollbar would
+          not (docs/DESIGN.md, overflow checklist). */}
       <div
         role="toolbar"
         aria-label="Template actions"
-        className="ml-auto flex min-w-0 shrink-0 items-center gap-2"
+        className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-2"
       >
-        <div className="hidden items-center gap-2 md:flex">
+        <div className="hidden flex-wrap items-center justify-end gap-2 md:flex">
           <ModeToggle modes={modes} value={mode} onChange={onModeChange} reasonFor={modeReason} />
-          <UndoRedoGroup kind={template.kind} />
+          <UndoRedoGroup kind={template.kind} canvasEnabled={canvasEnabled} controls={visualControls} />
           <DeviceToggle value={device} onChange={onDeviceChange} />
           <Button variant="outline" size="sm" onClick={onSendTest}>
             <Send aria-hidden="true" />
             Send test
           </Button>
         </div>
+        {onToggleInspector ? (
+          <InspectorToggle ref={inspectorToggleRef} open={inspectorOpen} onToggle={onToggleInspector} />
+        ) : null}
         <SaveTemplateButton />
         <StudioOverflowMenu
           kind={template.kind}
@@ -88,6 +119,7 @@ export function StudioSubHeader({
           onDownloadHtml={onDownloadHtml}
           onDownloadText={onDownloadText}
           downloadReason={downloadReason}
+          onViewExportedCode={onViewExportedCode}
         />
       </div>
     </header>

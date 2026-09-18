@@ -74,6 +74,10 @@
     // stop. See "Turning live sending on" in docs/DEPLOYMENT.md.
     "STUDIO_SEND_ENABLED": "true",
     "STUDIO_SEND_DRY_RUN": "false",
+    // The rollback switch for the visual editor (docs/DEPLOYMENT.md). Set it to
+    // the literal "false" and redeploy - no rebuild - and every visual template
+    // opens read-only in Preview mode. Anything else, including absent, is "on".
+    "STUDIO_VISUAL_EDITOR": "true",
     "AWS_REGION": "ap-southeast-2",
     "SES_FROM_ADDRESS": "testing@swarm.camp",
     "SES_ALLOWED_RECIPIENTS": "echo@swarm.work",
@@ -84,6 +88,7 @@
       "vars": {
         "STUDIO_SEND_ENABLED": "true",
         "STUDIO_SEND_DRY_RUN": "true",
+        "STUDIO_VISUAL_EDITOR": "true",
         "AWS_REGION": "us-east-1",
         "SES_FROM_ADDRESS": "studio@example.test",
         "SES_ALLOWED_RECIPIENTS": "qa@example.test,second@example.test",

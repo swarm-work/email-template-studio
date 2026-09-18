@@ -12,12 +12,19 @@
  * validator) is attached in templateMapper.ts.
  */
 import { z } from 'zod'
-import { templateId, type PropsValidator, type TemplateId, type TemplateRecord } from '@/domain'
+import {
+  templateId,
+  type EmailDocument,
+  type PropsValidator,
+  type TemplateId,
+  type TemplateRecord,
+} from '@/domain'
 import { zodPropsValidator } from '@/infrastructure/validation/zodPropsValidator'
 import { prettyJson, STARTER_CATALOG } from './starterCatalog'
 import welcomeVerificationSource from './welcome-verification.email.tsx?raw'
 import passwordResetSource from './password-reset.email.tsx?raw'
 import teamInvitationSource from './team-invitation.email.tsx?raw'
+import productLaunchDocument from './starters/product-launch.visual.json'
 
 const url = z.url({ protocol: /^https?$/, message: 'Must be an http(s) URL' })
 
@@ -35,6 +42,17 @@ const STARTER_SOURCES: Readonly<Record<string, string>> = {
 }
 
 /**
+ * The Tiptap document of each visual starter, keyed by its `documentFile`.
+ *
+ * It is a plain JSON import rather than a `?raw` one: the studio hands the
+ * editor an object, and parsing the same text on every page load would be work
+ * for nothing.
+ */
+const STARTER_DOCUMENTS: Readonly<Record<string, EmailDocument>> = {
+  'starters/product-launch.visual.json': productLaunchDocument as EmailDocument,
+}
+
+/**
  * The TSX text for one catalog entry. A typo in `sourceFile` is a mistake, not
  * a template with no source: the server-side seed throws on it (readFileSync),
  * and an empty starter here would only show up as a blank editor in the studio.
@@ -43,6 +61,13 @@ function sourceFor(sourceFile: string, slug: string): string {
   const source = STARTER_SOURCES[sourceFile]
   if (!source) throw new Error(`Starter "${slug}" names an unknown sourceFile: ${sourceFile}`)
   return source
+}
+
+/** The same rule for a visual starter's document. */
+function documentFor(documentFile: string, slug: string): EmailDocument {
+  const document = STARTER_DOCUMENTS[documentFile]
+  if (!document) throw new Error(`Starter "${slug}" names an unknown documentFile: ${documentFile}`)
+  return document
 }
 
 const welcomeVerificationSchema = z.strictObject({
@@ -73,8 +98,18 @@ const teamInvitationSchema = z.strictObject({
 })
 
 export const STARTER_TEMPLATES: readonly TemplateRecord[] = STARTER_CATALOG.map((entry) => ({
-  kind: 'code',
-  source: sourceFor(entry.sourceFile, entry.slug),
+  // A visual starter ships its document and NO exported html/text: the studio
+  // composes those the moment the template is opened, from the live editor, so
+  // storing a stale copy in the repository would only ever be a second truth.
+  ...(entry.kind === 'visual'
+    ? {
+        kind: 'visual' as const,
+        document: documentFor(entry.documentFile, entry.slug),
+        theme: entry.theme,
+        html: '',
+        text: '',
+      }
+    : { kind: 'code' as const, source: sourceFor(entry.sourceFile, entry.slug) }),
   metadata: {
     id: templateId(entry.slug),
     name: entry.name,

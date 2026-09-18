@@ -14,6 +14,26 @@ import type { TemplateRenderer } from '@/infrastructure/render/renderClient'
 
 export const DEFAULT_RENDER_DEBOUNCE_MS = 300
 
+/** The knobs both preview hooks take. Grouped so a call site names what it sets. */
+export interface RenderPreviewOptions {
+  /**
+   * false = this pipeline is not the one on screen (a visual template, say).
+   * The hook then holds no timer and reports `idle`, so the studio never pays
+   * for a render nobody asked for. Hooks cannot be called conditionally, which
+   * is why this is a flag rather than "do not call it".
+   */
+  readonly enabled?: boolean
+  readonly debounceMs?: number
+}
+
+/** The empty state: what a preview hook reports before anything has been rendered. */
+export const IDLE_PREVIEW_STATE = {
+  result: null,
+  html: null,
+  text: null,
+  renderedAt: null,
+} as const
+
 export interface RenderPreviewState {
   readonly status: RenderStatus
   /** Outcome of the most recent finished render for this template, success or failure. */
@@ -48,7 +68,7 @@ export function useRenderPreview(
   source: string,
   /** `null` when the payload is invalid; rendering is then blocked. */
   props: PreviewPayload | null,
-  debounceMs: number = DEFAULT_RENDER_DEBOUNCE_MS,
+  { enabled = true, debounceMs = DEFAULT_RENDER_DEBOUNCE_MS }: RenderPreviewOptions = {},
 ): RenderPreviewState {
   const [completed, setCompleted] = useState<Completed | null>(null)
   const [lastGood, setLastGood] = useState<LastGood | null>(null)
@@ -57,7 +77,8 @@ export function useRenderPreview(
 
   const propsKey = useMemo(() => (props === null ? null : JSON.stringify(props)), [props])
   // Everything that should trigger a new render is folded into one key.
-  const requestKey = propsKey === null ? null : `${resetKey} ${refreshCount} ${propsKey} ${source}`
+  const requestKey =
+    !enabled || propsKey === null ? null : `${resetKey} ${refreshCount} ${propsKey} ${source}`
 
   useEffect(() => {
     latestRequest.current = requestKey
@@ -78,6 +99,12 @@ export function useRenderPreview(
 
   const currentCompleted = completed && completed.resetKey === resetKey ? completed : null
   const currentGood = lastGood && lastGood.resetKey === resetKey ? lastGood : null
+
+  // A switched-off pipeline reports nothing at all, not a stale success: the
+  // studio picks one hook's state by template kind, and a leftover render from
+  // the other would reach the status bar and the diagnostics as if it were the
+  // one on screen.
+  if (!enabled) return { status: 'idle', ...IDLE_PREVIEW_STATE, refresh }
 
   let status: RenderStatus
   if (requestKey === null) status = 'blocked'

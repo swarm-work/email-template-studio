@@ -35,3 +35,8 @@
 # Shared password gate, when Cloudflare Access is not set up yet. Minimum 12 characters.
 # Generate one with: openssl rand -base64 24
 # STUDIO_PASSWORD=
+
+# Feature flags. The visual editor is ON unless this says the literal "false",
+# in which case visual templates open read-only in Preview mode. It is the
+# rollback switch of docs/DEPLOYMENT.md, not a per-developer preference.
+# STUDIO_VISUAL_EDITOR=false

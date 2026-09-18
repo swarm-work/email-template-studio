@@ -37,6 +37,7 @@
     "@fontsource-variable/geist-mono": "^5.3.0",
     "@hono/node-server": "^2.1.1",
     "@react-email/components": "^1.0.12",
+    "@react-email/editor": "1.7.8",
     "@tailwindcss/vite": "^4.3.3",
     "@uiw/react-codemirror": "^4.25.11",
     "aws4fetch": "^1.0.20",

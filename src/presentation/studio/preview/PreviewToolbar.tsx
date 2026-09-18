@@ -4,15 +4,18 @@
  * Presentation layer: it echoes the device the sub-header's toggle chose (this
  * is not a second control), says when the picture on screen was made, and
  * carries the two downloads plus Refresh. No rules live here; every label is a
- * prop.
+ * prop, and a button that cannot be used says why (`ReasonedButton`) rather
+ * than going grey and dropping out of the tab order.
  */
 import { Download, RefreshCw } from 'lucide-react'
 import { AnimatedBadge } from '@/components/motion/animated-badge'
-import { Button } from '@/components/ui/button'
 import { PREVIEW_DEVICE_WIDTHS, type PreviewDevice, type RenderStatus } from '@/domain'
 import { ReasonedButton } from '@/presentation/shared/ReasonedButton'
 import { cn } from '@/lib/utils'
 import { previewStatusPresentation } from './previewStatus'
+
+/** Rendering is paused while the payload is invalid, so there is nothing to redo. */
+const BLOCKED_REFRESH_REASON = 'Fix the preview payload first; rendering is paused until it is valid.'
 
 export interface PreviewToolbarProps {
   headingId: string
@@ -22,6 +25,8 @@ export interface PreviewToolbarProps {
   stale: boolean
   renderedAt: Date | null
   onRefresh: () => void
+  /** Why Refresh cannot be used; `undefined` means it can. */
+  refreshReason?: string
   onDownloadHtml: () => void
   onDownloadText: () => void
   /** Why the downloads cannot be used; `undefined` means they can. */
@@ -35,6 +40,7 @@ export function PreviewToolbar({
   stale,
   renderedAt,
   onRefresh,
+  refreshReason,
   onDownloadHtml,
   onDownloadText,
   downloadReason,
@@ -63,13 +69,18 @@ export function PreviewToolbar({
             </time>
           </span>
         ) : null}
-        <Button variant="ghost" size="sm" onClick={onRefresh} disabled={status === 'blocked'}>
+        <ReasonedButton
+          variant="ghost"
+          size="sm"
+          reason={refreshReason ?? (status === 'blocked' ? BLOCKED_REFRESH_REASON : undefined)}
+          onClick={onRefresh}
+        >
           <RefreshCw
             className={cn(status === 'rendering' && 'animate-spin motion-reduce:animate-none')}
             aria-hidden="true"
           />
           Refresh
-        </Button>
+        </ReasonedButton>
         <ReasonedButton variant="ghost" size="sm" reason={downloadReason} onClick={onDownloadHtml}>
           <Download aria-hidden="true" />
           Download HTML

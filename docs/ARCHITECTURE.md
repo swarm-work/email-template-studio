@@ -11,13 +11,14 @@ flowchart TB
   I -. implements .-> A
 ```
 
-| Layer          | Folder               | Contains                                                                                                                                                                             | Must not contain                          |
-| -------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------- |
-| Domain         | `src/domain`         | `TemplateRecord` (`code` \| `visual`), `EmailTemplate`, `TemplateMetadata`, `TemplateEnvelope`, `EmailDocument`, `PreviewPayload`, `ValidationResult`, `RenderResult`, status unions | React, Zod, Tiptap, browser APIs, network |
-| Application    | `src/application`    | `parsePreviewPayload`, `studioReducer` (select, edit, reset, device, mode), `studioModes`, `buildDiagnostics`, `repositories/` (ports: `TemplateRepository` and its result types)    | React, DOM, Zod                           |
-| Infrastructure | `src/infrastructure` | Starter registry + `starterCatalog.json` + Zod schemas, `templateMapper` (record → `EmailTemplate`), props validators, render pipeline and worker, session storage, no-send provider | UI                                        |
-| Presentation   | `src/presentation`   | `AppShell` + `GlobalHeader`, `templates/` (route, library page, grid, card, search), `StudioPage`, panels, dialogs, hooks (`useStudio`, `useTemplateLibrary`, `useRenderPreview`)    | Business rules (they live in application) |
-| Shared         | `shared`             | `templateContracts.ts`: the request/response Zod schemas and size caps the browser, the Node server and the Worker all validate against                                              | Everything but `zod`                      |
+| Layer          | Folder                           | Contains                                                                                                                                                                                                                                                                                                           | Must not contain                                 |
+| -------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------ |
+| Domain         | `src/domain`                     | `TemplateRecord` (`code` \| `visual`), `EmailTemplate`, `TemplateMetadata`, `TemplateEnvelope`, `EmailDocument`, `PreviewPayload`, `ValidationResult`, `RenderResult`, status unions                                                                                                                               | React, Zod, Tiptap, browser APIs, network        |
+| Application    | `src/application`                | `parsePreviewPayload`, `studioReducer` (select, edit, reset, device, mode), `studioModes`, `buildDiagnostics`, `repositories/` (ports: `TemplateRepository` and its result types)                                                                                                                                  | React, DOM, Zod                                  |
+| Infrastructure | `src/infrastructure`             | Starter registry + `starterCatalog.json` + Zod schemas, `templateMapper` (record → `EmailTemplate`), props validators, render pipeline and worker, session storage, no-send provider                                                                                                                               | UI                                               |
+| Presentation   | `src/presentation`               | `AppShell` + `GlobalHeader`, `templates/` (route, library page, grid, card, search), `StudioPage`, panels, dialogs, hooks (`useStudio`, `useTemplateLibrary`, `useRenderPreview`, `useVisualPreview`)                                                                                                              | Business rules (they live in application)        |
+| ⤷ visual       | `src/presentation/studio/visual` | `VisualWorkspace` (lazy boundary), `VisualEditorSurface` (**the only** runtime `@react-email/editor` import; `visualEmailRenderer` `import()`s `/core` and `studioTheme` takes a type only), `EmailCanvas`, `CanvasChip`, `StudioInspector`, `FontFallbackNote`, `InspectorFooterShortcuts`, `documentUpdateGuard` | A static import of the editor from anywhere else |
+| Shared         | `shared`                         | `templateContracts.ts`: the request/response Zod schemas and size caps the browser, the Node server and the Worker all validate against                                                                                                                                                                            | Everything but `zod`                             |
 
 ## The preview pipeline
 
@@ -68,6 +69,53 @@ flowchart LR
 3. The regex import check can be fooled by comments or template strings; the `require` shim still blocks execution, so this only affects the quality of the error message.
 4. Types are not checked in the browser, so a template can compile and then throw at render time; the error is shown but not prevented.
 5. The iframe CSP allows `img-src http:`; a template can therefore embed a tracking pixel that fires when previewed. Mail clients behave the same way; tighten to `https:` if preferred.
+
+## The visual pipeline
+
+The second way to author an email, next to the code one above. Same currency (`RenderResult`), same
+preview, same send — a different way of producing the HTML.
+
+```mermaid
+flowchart LR
+  subgraph lazy["Lazy chunk (fetched only for a visual template)"]
+    ED["EmailEditor (Tiptap)<br/>uncontrolled, key = template id"]
+    INS["Inspector.* in the rail<br/>(portal, shares editor context)"]
+  end
+  subgraph main["Main thread"]
+    DOC["draft.document<br/>(Tiptap JSON)"] -->|"content, once"| ED
+    ED -->|"onUpdate → getJSON()"| GUARD{"first update<br/>and not yet onReady?"}
+    GUARD -->|yes| DROP["dropped: the package's own<br/>container normalisation"]
+    GUARD -->|no| DOC
+    ED -->|onReady| HOOK["useVisualPreview<br/>debounce 300 ms, stale guard"]
+    HOOK -->|"import('@react-email/editor/core')"| CMP["composeReactEmail({ editor, preview })"]
+    CMP --> RES["RenderResult<br/>html = unformattedHtml, text"]
+    RES --> PD["buildPreviewDocument()"] --> IFR["iframe sandbox=&quot;&quot;"]
+  end
+  ED -->|onUploadImage| UP["POST /api/uploads → R2<br/>{ url } → /media/img_…"]
+```
+
+Things worth knowing about it:
+
+- **The editor is uncontrolled.** `content` is handed over once per template (`key={templateId}`) and
+  the draft is never fed back in. Feeding a controlled value back would fight the editor's own
+  undo history and reset the caret on every keystroke.
+- **`onUpdate` is guarded.** The package normalises a document that is not rooted in a `container`
+  node, and that normalisation runs while the editor is being built — before it calls `onReady`. The
+  shipped fixture IS container-rooted (a unit test says so), and `documentUpdateGuard.ts` drops the
+  first update anyway if it arrives before `onReady`. Readiness, NOT focus, is the test:
+  `Inspector.Document` writes through `setGlobalContent` without focusing the canvas, so a
+  focus-based guard swallowed the first change made from the rail.
+- **A number, not the document, is the trigger.** `getJSON()` returns a fresh object every time, so
+  `StudioPage` counts transactions and `useVisualPreview` keys its work off that counter.
+- **The theme is not in the document.** `getJSON()` does not carry it, so the version stores a theme
+  NAME and the studio passes the matching config back as the `theme` prop (ADR-18).
+- **Both hooks always run.** `StudioPage` calls `useRenderPreview` and `useVisualPreview` on every
+  render and switches one of them off — hooks cannot live inside an `if` — then picks the state by
+  kind. Everything downstream (preview, thumbnail, diagnostics, status bar, downloads, send) reads one
+  `RenderPreviewState` and never asks which pipeline produced it.
+- **The flag gates the download, not just the mount.** With `STUDIO_VISUAL_EDITOR=false` the studio
+  waits for `/api/send-test/status`, never mounts the workspace, and shows the export saved with the
+  version instead.
 
 ## View state: one route owner, no router (yet)
 

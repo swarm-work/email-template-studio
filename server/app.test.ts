@@ -11,6 +11,7 @@ import {
   TEST_SUBJECT_PREFIX,
 } from './app.ts'
 import type { SendServerConfig } from './config.ts'
+import { loadFeatures } from './config.ts'
 import {
   createDeveloperAuthenticator,
   createDisabledAuthenticator,
@@ -93,6 +94,9 @@ describe('send server API', () => {
       provider: 'amazon-ses',
       reason: 'off',
       user: 'tester@example.test',
+      // Reported even here: which workspaces the studio offers has nothing to
+      // do with whether SES is reachable.
+      features: { visualEditor: true },
     })
     const response = await post(app, validBody)
     expect(response.status).toBe(503)
@@ -111,6 +115,7 @@ describe('send server API', () => {
     expect(body).toEqual({
       enabled: true,
       user: 'tester@example.test',
+      features: { visualEditor: true },
       provider: 'amazon-ses',
       mode: 'dry-run',
       from: 'sender@example.com',
@@ -121,6 +126,19 @@ describe('send server API', () => {
       rateLimitPerMinute: 2,
       preflight: { ok: true, message: 'Dry run: no AWS calls are made.' },
     })
+  })
+
+  it('reports the visual editor as switched off when the flag says so', async () => {
+    const app = createApp({
+      authenticator: testAuth,
+      config: enabledConfig,
+      sender: createDryRunSender(() => {}),
+      features: loadFeatures({ STUDIO_VISUAL_EDITOR: 'false' }),
+    })
+    const body = (await (
+      await app.request('/api/send-test/status', { headers: { host: 'localhost:8787' } })
+    ).json()) as { features: unknown }
+    expect(body.features).toEqual({ visualEditor: false })
   })
 
   it('validates the body', async () => {

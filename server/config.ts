@@ -76,6 +76,35 @@ export type SendServerConfig =
       readonly credentials?: AwsCredentials
     }
 
+/**
+ * Optional parts of the studio that can be switched off without a code change.
+ *
+ * This is the rollback switch of docs/DEPLOYMENT.md: a Worker `var`, so turning
+ * the visual editor off is an edit to wrangler.jsonc plus a deploy, with no
+ * rebuild of the app. The browser mirror of this type is `src/domain/features.ts`;
+ * the wire shape is the `features` object in `GET /api/send-test/status`.
+ */
+export interface StudioFeatures {
+  /** false = visual templates open read-only in Preview mode. */
+  readonly visualEditor: boolean
+}
+
+/** Everything on. What a server with no feature variables set reports. */
+export const DEFAULT_STUDIO_FEATURES: StudioFeatures = { visualEditor: true }
+
+/**
+ * Reads the feature variables.
+ *
+ * Deliberately NOT part of `loadConfig`: a broken SES configuration disables
+ * sending, and a feature flag must not be able to take the whole API down with
+ * it. Only the literal "false" switches a feature off, so a typo (or an unset
+ * variable) leaves the studio working — the safe direction for a rollback lever
+ * nobody touches on a normal day.
+ */
+export function loadFeatures(env: Record<string, string | undefined>): StudioFeatures {
+  return { visualEditor: (env.STUDIO_VISUAL_EDITOR ?? '').trim().toLowerCase() !== 'false' }
+}
+
 export class ConfigError extends Error {}
 
 /** Parses process.env-like input. Throws ConfigError for an enabled but incomplete setup (fail fast). */

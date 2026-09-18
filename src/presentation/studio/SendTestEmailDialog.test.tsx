@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { DEFAULT_STUDIO_FEATURES } from '@/domain'
 import {
   NoSendEmailProvider,
   type EmailProvider,
@@ -35,6 +36,7 @@ class FakeConnectedProvider implements EmailProvider {
   async getStatus(): Promise<ProviderStatus> {
     return {
       connected: true,
+      features: DEFAULT_STUDIO_FEATURES,
       provider: 'fake',
       mode: this.options.mode ?? 'dry-run',
       from: 'studio@example.test',

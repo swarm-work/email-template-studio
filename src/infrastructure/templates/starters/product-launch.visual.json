@@ -1,0 +1,329 @@
+{
+  "type": "doc",
+  "content": [
+    {
+      "type": "container",
+      "content": [
+        {
+          "type": "paragraph",
+          "attrs": {
+            "style": "",
+            "alignment": null,
+            "class": ""
+          },
+          "content": [
+            {
+              "type": "text",
+              "marks": [
+                {
+                  "type": "bold"
+                }
+              ],
+              "text": "SPRING RELEASE"
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "style": "",
+            "alignment": null,
+            "class": "",
+            "level": 1
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "Next-Gen Edge APIs & Global Routing"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "attrs": {
+            "style": "",
+            "alignment": null,
+            "class": ""
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "We have fully rolled out our distributed edge runtime across 38 global regions. Expect sub-15 ms cold starts, native TypeScript streaming and unified telemetry with no extra configuration."
+            }
+          ]
+        },
+        {
+          "type": "twoColumns",
+          "attrs": {
+            "align": null,
+            "width": null,
+            "height": null,
+            "id": null,
+            "class": null,
+            "title": null,
+            "lang": null,
+            "dir": null,
+            "data-id": null,
+            "cellspacing": null
+          },
+          "content": [
+            {
+              "type": "columnsColumn",
+              "attrs": {
+                "style": "",
+                "alignment": null,
+                "class": "",
+                "align": null,
+                "width": null,
+                "height": null,
+                "id": null,
+                "title": null,
+                "lang": null,
+                "dir": null,
+                "data-id": null
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "attrs": {
+                    "style": "",
+                    "alignment": null,
+                    "class": ""
+                  },
+                  "content": [
+                    {
+                      "type": "text",
+                      "marks": [
+                        {
+                          "type": "bold"
+                        }
+                      ],
+                      "text": "AVERAGE LATENCY"
+                    }
+                  ]
+                },
+                {
+                  "type": "heading",
+                  "attrs": {
+                    "style": "",
+                    "alignment": null,
+                    "class": "",
+                    "level": 3
+                  },
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "12 ms"
+                    }
+                  ]
+                },
+                {
+                  "type": "paragraph",
+                  "attrs": {
+                    "style": "",
+                    "alignment": null,
+                    "class": ""
+                  },
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Compared with origin compute."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "columnsColumn",
+              "attrs": {
+                "style": "",
+                "alignment": null,
+                "class": "",
+                "align": null,
+                "width": null,
+                "height": null,
+                "id": null,
+                "title": null,
+                "lang": null,
+                "dir": null,
+                "data-id": null
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "attrs": {
+                    "style": "",
+                    "alignment": null,
+                    "class": ""
+                  },
+                  "content": [
+                    {
+                      "type": "text",
+                      "marks": [
+                        {
+                          "type": "bold"
+                        }
+                      ],
+                      "text": "TARGET SLA"
+                    }
+                  ]
+                },
+                {
+                  "type": "heading",
+                  "attrs": {
+                    "style": "",
+                    "alignment": null,
+                    "class": "",
+                    "level": 3
+                  },
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "99.99%"
+                    }
+                  ]
+                },
+                {
+                  "type": "paragraph",
+                  "attrs": {
+                    "style": "",
+                    "alignment": null,
+                    "class": ""
+                  },
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Multi-region automatic failover."
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "button",
+          "attrs": {
+            "style": "",
+            "alignment": "center",
+            "class": "",
+            "href": "https://meridian.example/docs"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "Explore Live Documentation →"
+            }
+          ]
+        },
+        {
+          "type": "horizontalRule",
+          "attrs": {
+            "style": "",
+            "class": ""
+          }
+        },
+        {
+          "type": "paragraph",
+          "attrs": {
+            "style": "",
+            "alignment": null,
+            "class": ""
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "Meridian Systems · 548 Market Street, San Francisco, CA 94104"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "attrs": {
+            "style": "",
+            "alignment": null,
+            "class": ""
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "You are receiving this operational dispatch because you hold an active API developer credential with Meridian."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "attrs": {
+            "style": "",
+            "alignment": null,
+            "class": ""
+          },
+          "content": [
+            {
+              "type": "text",
+              "marks": [
+                {
+                  "type": "link",
+                  "attrs": {
+                    "style": "",
+                    "class": "",
+                    "href": "https://meridian.example/unsubscribe",
+                    "target": "_blank",
+                    "rel": "noopener noreferrer nofollow",
+                    "title": null,
+                    "ses:no-track": null
+                  }
+                }
+              ],
+              "text": "Unsubscribe"
+            },
+            {
+              "type": "text",
+              "text": " · "
+            },
+            {
+              "type": "text",
+              "marks": [
+                {
+                  "type": "link",
+                  "attrs": {
+                    "style": "",
+                    "class": "",
+                    "href": "https://meridian.example/preferences",
+                    "target": "_blank",
+                    "rel": "noopener noreferrer nofollow",
+                    "title": null,
+                    "ses:no-track": null
+                  }
+                }
+              ],
+              "text": "Notification preferences"
+            },
+            {
+              "type": "text",
+              "text": " · "
+            },
+            {
+              "type": "text",
+              "marks": [
+                {
+                  "type": "link",
+                  "attrs": {
+                    "style": "",
+                    "class": "",
+                    "href": "https://meridian.example/privacy",
+                    "target": "_blank",
+                    "rel": "noopener noreferrer nofollow",
+                    "title": null,
+                    "ses:no-track": null
+                  }
+                }
+              ],
+              "text": "Privacy policy"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -12,6 +12,11 @@ import { defineConfig, devices } from '@playwright/test'
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: false,
+  // One worker, not one per file: every spec drives the SAME preview server and
+  // the same local D1 and R2, so two browsers racing each other would be two
+  // tests editing one database. It also keeps the editor chunk's download time
+  // off a second browser's critical path.
+  workers: 1,
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? 'github' : 'list',
   // A test may wait out a cold worker boot (FIRST_RENDER_TIMEOUT) and still do
@@ -29,7 +34,7 @@ export default defineConfig({
     // starters, then serve the production build.
     //
     // The reset deletes EVERY template (versions go with them, ON DELETE
-    // CASCADE) and replays the seed migration by hand. Deleting only what a run
+    // CASCADE) and replays every seed migration by hand. Deleting only what a run
     // created would leave a starter a test had saved over at version 2 forever:
     // `d1 migrations apply` has already recorded 0002 as applied, so it never
     // re-seeds, and the next run's "this starter is at v1" assertion would fail.
@@ -39,6 +44,7 @@ export default defineConfig({
       'npx wrangler d1 migrations apply STUDIO_DB --local --env e2e',
       'npx wrangler d1 execute STUDIO_DB --local --env e2e --command "DELETE FROM templates"',
       'npx wrangler d1 execute STUDIO_DB --local --env e2e --file migrations/0002_seed_starter_templates.sql',
+      'npx wrangler d1 execute STUDIO_DB --local --env e2e --file migrations/0003_seed_visual_starter.sql',
       'npx vite preview --port 4173 --strictPort',
     ].join(' && '),
     url: 'http://localhost:4173/api/send-test/status',

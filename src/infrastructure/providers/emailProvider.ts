@@ -10,6 +10,7 @@
  * Zod before use.
  */
 import { z } from 'zod'
+import { DEFAULT_STUDIO_FEATURES, type StudioFeatures } from '@/domain'
 
 export interface OutgoingTestEmail {
   /** One or more addresses; the server sends a single email to all of them. */
@@ -27,9 +28,15 @@ export interface ProviderPreflight {
 }
 
 export type ProviderStatus =
-  | { readonly connected: false; readonly reason: string }
+  | {
+      readonly connected: false
+      readonly reason: string
+      /** Reported even when sending is off: feature flags are independent of SES. */
+      readonly features: StudioFeatures
+    }
   | {
       readonly connected: true
+      readonly features: StudioFeatures
       readonly provider: string
       readonly mode: 'live' | 'dry-run'
       readonly from: string
@@ -72,7 +79,7 @@ export class NoSendEmailProvider implements EmailProvider {
   readonly label = 'No-send (local)'
 
   async getStatus(): Promise<ProviderStatus> {
-    return { connected: false, reason: SENDING_DISABLED_REASON }
+    return { connected: false, reason: SENDING_DISABLED_REASON, features: DEFAULT_STUDIO_FEATURES }
   }
 
   async send(): Promise<SendOutcome> {
@@ -80,10 +87,18 @@ export class NoSendEmailProvider implements EmailProvider {
   }
 }
 
+/**
+ * Mirrors `StudioFeatures` in server/config.ts. The default keeps an older
+ * server (which sends no `features` object at all) working, and "on" is the
+ * right reading: the flag exists to switch something OFF deliberately.
+ */
+const featuresSchema = z.object({ visualEditor: z.boolean().default(true) }).default(DEFAULT_STUDIO_FEATURES)
+
 const statusSchema = z.union([
-  z.object({ enabled: z.literal(false), reason: z.string() }),
+  z.object({ enabled: z.literal(false), reason: z.string(), features: featuresSchema }),
   z.object({
     enabled: z.literal(true),
+    features: featuresSchema,
     provider: z.string(),
     mode: z.enum(['live', 'dry-run']),
     from: z.string(),
@@ -137,15 +152,22 @@ export class HttpTestEmailProvider implements EmailProvider {
     try {
       response = await this.fetchImpl(`${this.baseUrl}/status`, { headers: { accept: 'application/json' } })
     } catch {
-      return { connected: false, reason: SERVER_NOT_RUNNING_REASON }
+      return { connected: false, reason: SERVER_NOT_RUNNING_REASON, features: DEFAULT_STUDIO_FEATURES }
     }
-    if (!response.ok) return { connected: false, reason: SERVER_NOT_RUNNING_REASON }
+    if (!response.ok)
+      return { connected: false, reason: SERVER_NOT_RUNNING_REASON, features: DEFAULT_STUDIO_FEATURES }
 
     const parsed = statusSchema.safeParse(await response.json().catch(() => null))
     if (!parsed.success)
-      return { connected: false, reason: 'The send server returned an unexpected status response.' }
-    if (!parsed.data.enabled) return { connected: false, reason: parsed.data.reason }
+      return {
+        connected: false,
+        reason: 'The send server returned an unexpected status response.',
+        features: DEFAULT_STUDIO_FEATURES,
+      }
+    if (!parsed.data.enabled)
+      return { connected: false, reason: parsed.data.reason, features: parsed.data.features }
     const {
+      features,
       provider,
       mode,
       from,
@@ -157,6 +179,7 @@ export class HttpTestEmailProvider implements EmailProvider {
     } = parsed.data
     return {
       connected: true,
+      features,
       provider,
       mode,
       from,

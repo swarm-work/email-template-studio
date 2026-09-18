@@ -315,6 +315,53 @@ its identity (objects and arrays passed to children), and leave arithmetic alone
 decimals so a sub-pixel wobble does not re-render), and ADR-25 in `docs/DECISIONS.md` for the decision
 itself.
 
+## `React.lazy`, `Suspense` and code splitting
+
+A bundler normally produces one JavaScript file: everything the app might need, downloaded before
+anything is drawn. That is fine until one feature is very large. The visual editor is 2.5 MB of
+Tiptap, ProseMirror and React Email — bigger than the whole rest of the studio — and most of the
+time nobody opens a visual template at all.
+
+**The seam is a dynamic `import()`.** A normal `import X from './X'` is static: the bundler follows it
+and puts `X` in the same file. `import('./X')` is a function call that returns a promise, and the
+bundler treats it as a **split point**: `X` and everything only `X` needs go into a separate file that
+the browser fetches the first time that line runs.
+
+```tsx
+const VisualEditorSurface = lazy(() =>
+  import('./VisualEditorSurface').then((module) => ({ default: module.VisualEditorSurface })),
+)
+```
+
+`React.lazy` wraps that promise into something you can put in JSX. The `.then(...)` is only there
+because `lazy` wants a module whose `default` export is the component, and this codebase prefers named
+exports.
+
+**`Suspense` is what is on screen while you wait.** A lazy component "suspends" on its first render;
+the nearest `<Suspense fallback={...}>` above it shows the fallback until the chunk arrives. The
+fallback here is `VisualEditorSkeleton`, drawn in the shape of the finished screen so the layout does
+not jump when the real editor appears.
+
+**An error boundary is what happens when it never arrives.** A stale deploy, an offline browser or a
+proxy eating the request all end with the promise rejecting, and `Suspense` has nothing to say about
+that. Error boundaries are the one thing React still needs a class for (`getDerivedStateFromError`).
+Ours turns the failure into a `RenderError { kind: 'editor-load' }` so it is shown by the same banner
+as a compile or export error — one vocabulary for "the pipeline could not finish".
+
+**Splitting only works if nothing else imports the module.** One stray `import { EmailEditor } from
+'@react-email/editor'` in a file the main bundle already needs and the whole 2.5 MB is back in the
+first download, silently. That is why exactly one module imports the package at
+runtime (`VisualEditorSurface.tsx`), why `visualEmailRenderer.ts` reaches `/core` through another
+`import()` rather than a static import, why `studioTheme.ts` takes the `ThemeConfig` type only (a
+type import is erased, so it costs nothing), why `scripts/check-worker-bundle.mjs` greps **`src/`
+itself** against that three-file allow-list as well as the directories that must stay entirely
+clear, and why `e2e/visual.spec.ts` watches the network and asserts that opening a **code** template
+fetches no editor chunk at all. A rule nobody can measure is a rule that quietly stops being true.
+
+**Where to look.** `src/presentation/studio/visual/VisualWorkspace.tsx` (the lazy boundary, the
+skeleton and the error boundary), `src/infrastructure/render/visualEmailRenderer.ts` (the second
+dynamic import), `scripts/check-worker-bundle.mjs` and ADR-18 in `docs/DECISIONS.md`.
+
 ## Suggested reading order through the code
 
 1. `src/domain/*` — the vocabulary (10 minutes).
@@ -322,13 +369,15 @@ itself.
 3. `src/infrastructure/render/renderTemplate.ts` then `compileTemplate.ts` and `evaluateTemplate.ts` — the pipeline in plain functions.
 4. `src/infrastructure/render/renderClient.ts` and `render.worker.ts` — the worker boundary.
 5. `src/presentation/studio/StudioPage.tsx` — how everything is composed.
-6. `migrations/0001_create_templates.sql` then `server/templateStore.ts` — the shape of the data and the port over it.
-7. `server/templateRoutes.test.ts` — every HTTP rule the API promises, one case each.
-8. `e2e/studio.spec.ts` — the behaviours we promise, written as a user would experience them.
+6. `src/presentation/studio/visual/VisualWorkspace.tsx` then `VisualEditorSurface.tsx` — the lazy boundary, and the one module that touches the editor package.
+7. `migrations/0001_create_templates.sql` then `server/templateStore.ts` — the shape of the data and the port over it.
+8. `server/templateRoutes.test.ts` — every HTTP rule the API promises, one case each.
+9. `e2e/studio.spec.ts` — the behaviours we promise, written as a user would experience them.
 
 ## Things worth practising
 
-- Add a fourth template: create `*.email.tsx`, a Zod schema, an entry in `starterCatalog.json`, then `npm run seed:generate` and `npm test` (the render test and the seed drift test both pick it up).
+- Add another code template: create `*.email.tsx`, a Zod schema, an entry in `starterCatalog.json` (with `seedBatch` and `kind: "code"`), then `npm run seed:generate` and `npm test` (the render test and the seed drift test both pick it up).
+- Break the code split on purpose: add `import '@react-email/editor'` to `server/app.ts` and watch `npm run build` refuse it by name.
 - Break the concurrency rule on purpose: comment out `AND revision = ?` in `server/d1TemplateStore.ts` and watch which contract test fails, and why.
 - Add a diagnostic: extend `buildDiagnostics.ts` and its test before touching the panel.
 - Change the debounce or timeout constants and watch the E2E tests react.

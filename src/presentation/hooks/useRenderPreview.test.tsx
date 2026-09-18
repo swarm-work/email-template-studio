@@ -26,7 +26,7 @@ describe('useRenderPreview', () => {
     const renderer = fakeRenderer([ok])
     const { result, rerender } = renderHook(
       ({ props }: { props: Record<string, unknown> | null }) =>
-        useRenderPreview(renderer, 't1', 'src', props, 100),
+        useRenderPreview(renderer, 't1', 'src', props, { debounceMs: 100 }),
       { initialProps: { props: null as Record<string, unknown> | null } },
     )
     expect(result.current.status).toBe('blocked')
@@ -49,7 +49,8 @@ describe('useRenderPreview', () => {
     vi.useFakeTimers()
     const renderer = fakeRenderer([ok, failed])
     const { result, rerender } = renderHook(
-      ({ source }: { source: string }) => useRenderPreview(renderer, 't1', source, { a: 1 }, 50),
+      ({ source }: { source: string }) =>
+        useRenderPreview(renderer, 't1', source, { a: 1 }, { debounceMs: 50 }),
       { initialProps: { source: 'v1' } },
     )
     await act(async () => {
@@ -74,7 +75,7 @@ describe('useRenderPreview', () => {
     vi.useFakeTimers()
     const renderer = fakeRenderer([ok])
     const { result, rerender } = renderHook(
-      ({ key }: { key: string }) => useRenderPreview(renderer, key, 'src', { a: 1 }, 50),
+      ({ key }: { key: string }) => useRenderPreview(renderer, key, 'src', { a: 1 }, { debounceMs: 50 }),
       { initialProps: { key: 't1' } },
     )
     await act(async () => {

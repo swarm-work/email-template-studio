@@ -12,7 +12,11 @@
       "createdAt": "2026-08-21T09:30:00Z"
     },
     "createdAt": "2026-08-21T09:30:00Z",
+    "seedBatch": 2,
+    "kind": "code",
     "sourceFile": "welcome-verification.email.tsx",
+    "documentFile": "",
+    "theme": "",
     "envelope": {
       "subject": "Verify your email address",
       "preheader": "",
@@ -69,7 +73,11 @@
       "createdAt": "2026-09-02T14:05:00Z"
     },
     "createdAt": "2026-09-02T14:05:00Z",
+    "seedBatch": 2,
+    "kind": "code",
     "sourceFile": "password-reset.email.tsx",
+    "documentFile": "",
+    "theme": "",
     "envelope": {
       "subject": "Reset your password",
       "preheader": "",
@@ -128,7 +136,11 @@
       "createdAt": "2026-09-05T11:00:00Z"
     },
     "createdAt": "2026-09-05T11:00:00Z",
+    "seedBatch": 2,
+    "kind": "code",
     "sourceFile": "team-invitation.email.tsx",
+    "documentFile": "",
+    "theme": "",
     "envelope": {
       "subject": "You have been invited to join a team",
       "preheader": "",
@@ -188,5 +200,31 @@
       ],
       "additionalProperties": false
     }
+  },
+  {
+    "slug": "product-launch",
+    "name": "Product launch",
+    "description": "Announces a release to developers on the platform. Edited on the visual canvas, not in TSX.",
+    "category": "notification",
+    "status": "draft",
+    "tags": ["changelog", "announcements"],
+    "version": {
+      "number": 1,
+      "label": "v1",
+      "createdAt": "2026-09-18T10:22:00Z"
+    },
+    "createdAt": "2026-09-18T10:22:00Z",
+    "seedBatch": 3,
+    "kind": "visual",
+    "sourceFile": "",
+    "documentFile": "starters/product-launch.visual.json",
+    "theme": "studio-v1",
+    "envelope": {
+      "subject": "Next-gen edge APIs and global routing",
+      "preheader": "Lower latency routes, global failovers and updated developer tools.",
+      "replyTo": ""
+    },
+    "samplePayload": {},
+    "propsSchema": {}
   }
 ]

@@ -54,6 +54,8 @@ export interface PreviewWorkspaceProps {
   text: string | null
   renderedAt: Date | null
   onRefresh: () => void
+  /** Why Refresh cannot be used; `undefined` means it can. */
+  refreshReason?: string
   onDownloadHtml: () => void
   onDownloadText: () => void
   /** Why the downloads cannot be used; `undefined` means they can. */
@@ -76,6 +78,7 @@ export function PreviewWorkspace({
   text,
   renderedAt,
   onRefresh,
+  refreshReason,
   onDownloadHtml,
   onDownloadText,
   downloadReason,
@@ -109,6 +112,7 @@ export function PreviewWorkspace({
         stale={failed && document !== null}
         renderedAt={renderedAt}
         onRefresh={onRefresh}
+        refreshReason={refreshReason}
         onDownloadHtml={onDownloadHtml}
         onDownloadText={onDownloadText}
         downloadReason={downloadReason}

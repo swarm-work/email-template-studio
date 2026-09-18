@@ -10,7 +10,8 @@ describe('buildDiagnostics', () => {
       validation: ok,
       renderStatus: 'success',
       renderResult: { ok: true, html: '<html></html>', text: '', durationMs: 42 },
-      sourceDirty: false,
+      kind: 'code',
+      contentDirty: false,
       payloadDirty: false,
     })
     const byId = Object.fromEntries(items.map((item) => [item.id, item]))
@@ -26,7 +27,8 @@ describe('buildDiagnostics', () => {
       validation: ok,
       renderStatus: 'idle',
       renderResult: null,
-      sourceDirty: false,
+      kind: 'code',
+      contentDirty: false,
       payloadDirty: false,
     })
     const fake = items.filter((item) => ['links', 'spf-dkim-dmarc', 'spam-score'].includes(item.id))
@@ -39,7 +41,8 @@ describe('buildDiagnostics', () => {
       validation: { ok: false, kind: 'schema', issues: [{ path: 'recipientName', message: 'Required' }] },
       renderStatus: 'blocked',
       renderResult: null,
-      sourceDirty: false,
+      kind: 'code',
+      contentDirty: false,
       payloadDirty: true,
     })
     const byId = Object.fromEntries(items.map((item) => [item.id, item]))
@@ -56,7 +59,8 @@ describe('buildDiagnostics', () => {
         ok: false,
         error: { kind: 'compile', message: 'Syntax error: Unexpected token', line: 3 },
       },
-      sourceDirty: true,
+      kind: 'code',
+      contentDirty: true,
       payloadDirty: false,
     })
     const byId = Object.fromEntries(items.map((item) => [item.id, item]))
@@ -69,9 +73,41 @@ describe('buildDiagnostics', () => {
       validation: ok,
       renderStatus: 'success',
       renderResult: { ok: true, html: 'x'.repeat(120 * 1024), text: '', durationMs: 1 },
-      sourceDirty: false,
+      kind: 'code',
+      contentDirty: false,
       payloadDirty: false,
     })
     expect(items.find((item) => item.id === 'html')?.state).toBe('warning')
+  })
+
+  it('talks about the canvas document, not a source, for a visual template', () => {
+    // A visual template has no source and nothing compiles: what ran is the
+    // export. Saying "Compiles. Matches the original file." after somebody
+    // typed on the canvas would be wrong twice over.
+    const items = buildDiagnostics({
+      validation: ok,
+      renderStatus: 'success',
+      renderResult: { ok: true, html: '<html></html>', text: '', durationMs: 7 },
+      kind: 'visual',
+      contentDirty: true,
+      payloadDirty: false,
+    })
+    const template = items.find((item) => item.id === 'template')
+    expect(template?.label).toBe('Canvas document')
+    expect(template?.detail).toBe('Exports. Contains unsaved local edits.')
+  })
+
+  it('attributes a compose failure to the canvas document', () => {
+    const items = buildDiagnostics({
+      validation: ok,
+      renderStatus: 'error',
+      renderResult: { ok: false, error: { kind: 'compose', message: 'Could not export the canvas.' } },
+      kind: 'visual',
+      contentDirty: false,
+      payloadDirty: false,
+    })
+    const template = items.find((item) => item.id === 'template')
+    expect(template?.state).toBe('error')
+    expect(template?.detail).toBe('Could not export the canvas.')
   })
 })

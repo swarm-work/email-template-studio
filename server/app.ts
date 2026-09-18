@@ -28,7 +28,8 @@ import {
   SESSION_COOKIE,
   SESSION_TTL_SECONDS,
 } from './auth.ts'
-import type { SendServerConfig } from './config.ts'
+import type { SendServerConfig, StudioFeatures } from './config.ts'
+import { DEFAULT_STUDIO_FEATURES } from './config.ts'
 import type { EmailSender, SenderPreflight } from './emailSender.ts'
 import { apiError } from './http.ts'
 import type { ObjectStore } from './objectStore.ts'
@@ -112,6 +113,11 @@ export interface AppDependencies {
   readonly templateStore?: TemplateStore | null
   /** Where uploaded images are stored (R2 in the Worker). Absent or null -> uploads answer 503. */
   readonly objectStore?: ObjectStore | null
+  /**
+   * Which optional parts of the studio are switched on. Defaults to all of
+   * them, so an adapter that forgets to pass any keeps the studio complete.
+   */
+  readonly features?: StudioFeatures
   /** Injectable clock for tests. */
   readonly now?: () => number
 }
@@ -135,6 +141,7 @@ export function createApp({
   passwordGate,
   templateStore = null,
   objectStore = null,
+  features = DEFAULT_STUDIO_FEATURES,
   now = () => Date.now(),
 }: AppDependencies) {
   const app = new Hono<{ Variables: Variables }>()
@@ -249,12 +256,22 @@ export function createApp({
     // The signed-in email is echoed back so the UI can show who Access let in.
     const user = c.get('identity').email
     if (!config.enabled) {
-      return c.json({ enabled: false as const, provider: 'amazon-ses', reason: config.reason, user })
+      // `features` is reported on BOTH branches: which workspaces the studio
+      // offers has nothing to do with whether SES is reachable, and a studio
+      // with sending switched off still has to know its editor is switched on.
+      return c.json({
+        enabled: false as const,
+        provider: 'amazon-ses',
+        reason: config.reason,
+        user,
+        features,
+      })
     }
     return c.json({
       enabled: true as const,
       provider: 'amazon-ses',
       user,
+      features,
       mode: sender?.mode ?? 'dry-run',
       from: config.from,
       recipientPolicy: config.recipientPolicy,

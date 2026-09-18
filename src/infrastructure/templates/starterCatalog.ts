@@ -9,7 +9,7 @@
  *
  * It must not import React, Zod or anything from `@/application`.
  */
-import type { TemplateCategory, TemplateStatus, TemplateVersion } from '@/domain'
+import type { TemplateCategory, TemplateKind, TemplateStatus, TemplateVersion } from '@/domain'
 import catalog from './starterCatalog.json'
 
 /** One starter, exactly as the JSON file spells it. */
@@ -22,8 +22,19 @@ export interface StarterCatalogEntry {
   readonly tags: readonly string[]
   readonly version: TemplateVersion
   readonly createdAt: string
-  /** The TSX file next to this one that holds the template's source. */
+  /**
+   * Which seed migration writes this starter. Migrations are append-only: a
+   * starter added later gets a NEW batch and a new file, because editing a
+   * migration that has already been applied would never reach a live database.
+   */
+  readonly seedBatch: number
+  readonly kind: TemplateKind
+  /** Code starters: the TSX file next to this one. '' for a visual starter. */
   readonly sourceFile: string
+  /** Visual starters: the Tiptap JSON file under ./starters. '' for a code starter. */
+  readonly documentFile: string
+  /** Visual starters: the editor theme the document was authored with. '' for code. */
+  readonly theme: string
   readonly envelope: { readonly subject: string; readonly preheader: string; readonly replyTo: string }
   readonly samplePayload: Record<string, unknown>
   /** JSON Schema for the props; `registry.test.ts` checks it against the Zod schema. */

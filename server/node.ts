@@ -13,7 +13,7 @@ import { readStarterSeed } from './starterSeed.ts'
 import type { AuthConfig } from './auth.ts'
 import { createAuthenticator, loadAuthConfig } from './auth.ts'
 import type { SendServerConfig } from './config.ts'
-import { ConfigError, loadConfig } from './config.ts'
+import { ConfigError, loadConfig, loadFeatures } from './config.ts'
 import { createSender } from './createSender.ts'
 
 /**
@@ -58,6 +58,7 @@ function main(): void {
     // No R2 here, so `POST /api/uploads` answers 503 and the visual editor
     // offers no image button in this runtime.
     objectStore: null,
+    features: loadFeatures(process.env),
   })
   const server = serve({ fetch: app.fetch, port: config.port, hostname: '127.0.0.1' }, (info) => {
     const base = `http://127.0.0.1:${info.port}`

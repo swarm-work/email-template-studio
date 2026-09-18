@@ -32,7 +32,10 @@ describe('TemplateLibraryPage', () => {
     expect(cards[0]).not.toHaveAttribute('aria-pressed')
     expect(screen.getByText('password-reset.email.tsx')).toBeInTheDocument()
     expect(screen.getByText('v5')).toBeInTheDocument()
-    expect(screen.getAllByText('Code')).toHaveLength(TEMPLATES.length)
+    // The kind chip is per card, and the library ships both kinds.
+    const codeCount = TEMPLATES.filter((template) => template.kind === 'code').length
+    expect(screen.getAllByText('Code')).toHaveLength(codeCount)
+    expect(screen.getAllByText('Visual')).toHaveLength(TEMPLATES.length - codeCount)
   })
 
   it('calls onOpenTemplate with the template id when a card is activated', async () => {

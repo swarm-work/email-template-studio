@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs'
 import { expect, test, type Page } from '@playwright/test'
 
 const WELCOME = 'Welcome & verification'
+/** Three code starters plus the visual one (migrations 0002 and 0003). */
+const STARTER_COUNT = 4
 const PASSWORD_RESET = 'Password reset'
 const WELCOME_SOURCE_LABEL = 'Template source for welcome-verification.email.tsx'
 const PAYLOAD_LABEL = 'Preview payload JSON'
@@ -142,7 +144,7 @@ test.afterEach(async ({ page }) => {
 
 test('the library lists the templates and opens one into the editor and back', async ({ page }) => {
   await expect(page.getByRole('region', { name: 'Template library' })).toBeVisible()
-  await expect(page.getByRole('button', { name: /^Open / })).toHaveCount(3)
+  await expect(page.getByRole('button', { name: /^Open / })).toHaveCount(STARTER_COUNT)
   // A card opens a template; it is an action, not a toggle that stays pressed.
   await expect(templateCard(page, WELCOME)).not.toHaveAttribute('aria-pressed', /.*/)
 
@@ -152,7 +154,7 @@ test('the library lists the templates and opens one into the editor and back', a
   await expect(libraryHeading(page)).toHaveCount(0)
 
   await backToLibrary(page)
-  await expect(page.getByRole('button', { name: /^Open / })).toHaveCount(3)
+  await expect(page.getByRole('button', { name: /^Open / })).toHaveCount(STARTER_COUNT)
 })
 
 test('library search narrows the grid and can be cleared', async ({ page }) => {
@@ -164,7 +166,7 @@ test('library search narrows the grid and can be cleared', async ({ page }) => {
   await search.fill('invoice')
   await expect(page.getByText('No templates match "invoice".')).toBeVisible()
   await page.getByRole('button', { name: 'Clear search' }).click()
-  await expect(page.getByRole('button', { name: /^Open / })).toHaveCount(3)
+  await expect(page.getByRole('button', { name: /^Open / })).toHaveCount(STARTER_COUNT)
 })
 
 test('renders the default template in the isolated preview frame', async ({ page }) => {

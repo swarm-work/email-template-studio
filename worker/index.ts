@@ -20,7 +20,7 @@
 import { createApp } from '../server/app.ts'
 import { createAuthenticator, loadAuthConfig } from '../server/auth.ts'
 import type { SendServerConfig } from '../server/config.ts'
-import { ConfigError, loadConfig } from '../server/config.ts'
+import { ConfigError, loadConfig, loadFeatures } from '../server/config.ts'
 import { createSender } from '../server/createSender.ts'
 import type { EmailSender } from '../server/emailSender.ts'
 import { D1TemplateStore } from '../server/d1TemplateStore.ts'
@@ -68,6 +68,9 @@ function buildApp(env: Env): App {
     // Worker refusing to boot: sending must keep working either way.
     templateStore: env.STUDIO_DB ? new D1TemplateStore(env.STUDIO_DB) : null,
     objectStore: env.STUDIO_ASSETS ?? null,
+    // The rollback switch: STUDIO_VISUAL_EDITOR="false" in wrangler.jsonc turns
+    // the visual canvas off for everyone without rebuilding the app.
+    features: loadFeatures(variables),
   })
 }
 

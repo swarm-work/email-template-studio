@@ -26,10 +26,14 @@ The revised order (2026-09-09): deploy the foundation on Cloudflare first (PLAN.
 - Version history and rollback (M3/M4)
 - Collaborative editing
 - AI-generated email content
-- Drag-and-drop email building
 - Attachments
 - Marketing campaigns, contact management, customer-managed domains
 - Advanced deliverability analytics (SPF/DKIM/DMARC checks, spam scoring, link checking) — the diagnostics panel already reserves labelled placeholder rows
+
+**No longer out of scope:** visual email building. It used to read "drag-and-drop email building" here;
+the studio now has a visual canvas built on `@react-email/editor`, with its own template kind, its own
+starter and its own lazily loaded chunk. The reasoning, and what was bought and given up, is
+**ADR-18** in `docs/DECISIONS.md`.
 
 ## Smaller improvements
 
