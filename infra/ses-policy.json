@@ -5,7 +5,10 @@
       "Sid": "SendOnlyAsTheStudioIdentity",
       "Effect": "Allow",
       "Action": "ses:SendEmail",
-      "Resource": "arn:aws:ses:ap-southeast-2:<account-id>:identity/swarm.camp",
+      "Resource": [
+        "arn:aws:ses:ap-southeast-2:<account-id>:identity/swarm.camp",
+        "arn:aws:ses:ap-southeast-2:<account-id>:configuration-set/<configuration-set>"
+      ],
       "Condition": {
         "StringEquals": { "ses:FromAddress": "testing@swarm.camp" }
       }

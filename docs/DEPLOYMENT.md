@@ -164,7 +164,10 @@ The Worker can reach Amazon SES (ADR-16). Whether it _does_ is one variable plus
       "Sid": "SendOnlyAsTheStudioIdentity",
       "Effect": "Allow",
       "Action": "ses:SendEmail",
-      "Resource": "arn:aws:ses:ap-southeast-2:<account-id>:identity/swarm.camp",
+      "Resource": [
+        "arn:aws:ses:ap-southeast-2:<account-id>:identity/swarm.camp",
+        "arn:aws:ses:ap-southeast-2:<account-id>:configuration-set/<configuration-set>"
+      ],
       "Condition": {
         "StringEquals": { "ses:FromAddress": "testing@swarm.camp" }
       }
@@ -179,7 +182,9 @@ The Worker can reach Amazon SES (ADR-16). Whether it _does_ is one variable plus
 }
 ```
 
-Replace the region, account id, identity and from-address. There is deliberately no `ses:Recipients` condition: recipients are typed in the studio (ADR-17), so what the policy pins down is the sender. If you do want to pin recipients as well, add `"ForAllValues:StringEquals": { "ses:Recipients": [...] }` back to the first statement — and remember that it must then list every address in `SES_ALLOWED_RECIPIENTS`. When a configuration set is in use, add a `ses:ConfigurationSetName` (or `ses:FeedbackAddress`) condition to the same `StringEquals` block.
+Replace the region, account id, identity, from-address and configuration-set name. There is deliberately no `ses:Recipients` condition: recipients are typed in the studio (ADR-17), so what the policy pins down is the sender. If you do want to pin recipients as well, add `"ForAllValues:StringEquals": { "ses:Recipients": [...] }` back to the first statement — and remember that it must then list every address in `SES_ALLOWED_RECIPIENTS`.
+
+The configuration set is a second **resource**, not a condition. SES authorises a send against the identity and against whichever configuration set applies: the one named by `SES_CONFIGURATION_SET`, or, when that is unset, the account's default configuration set if one is marked as default in the SES console. If the set's ARN is missing from `Resource`, every send fails with `AccessDeniedException: ... is not authorized to perform 'ses:SendEmail' on resource '...:configuration-set/<name>'`, even though recipients and the sender are allowed. Keep the two names in step: the set in the policy and the value of `SES_CONFIGURATION_SET` (or the account default) must match, and set `SES_CONFIGURATION_SET` explicitly in `wrangler.jsonc` so the choice is visible in code rather than hidden in an account default.
 
 **2. Set the non-secret variables** in `wrangler.jsonc` for that environment:
 
