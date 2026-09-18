@@ -255,6 +255,35 @@
 }
 
 /* ---------------------------------------------------------------------------
+ * Merge-field chips.
+ *
+ * Top level, unlayered, for the same reason as everything above: these rules
+ * have to beat the editor package's own stylesheet, which arrives unlayered
+ * from the lazy chunk. The chip is the only place in the email where the
+ * studio deliberately draws something the RECIPIENT will never see - by the
+ * time it is sent, `{{firstName}}` has become a name (ADR-26).
+ * ------------------------------------------------------------------------- */
+.studio-sheet [data-merge-field] {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: oklch(0.94 0.004 95);
+  color: oklch(0.32 0.012 265);
+  border-radius: calc(var(--radius) * 0.6);
+  padding: 0.05em 0.3em;
+  /* A field is one thing: it never wraps in the middle and the caret steps
+     over it rather than into it. */
+  white-space: nowrap;
+  -webkit-user-select: all;
+  user-select: all;
+}
+
+/* The canvas shows a selected chip the way it shows any selected node. */
+.studio-sheet [data-merge-field].ProseMirror-selectednode {
+  outline: 2px solid color-mix(in oklch, var(--ring) 70%, transparent);
+  outline-offset: 1px;
+}
+
+/* ---------------------------------------------------------------------------
  * The inspector rail, restyled to the studio's own controls.
  *
  * Every selector here is an attribute the package actually renders; they were
@@ -367,5 +396,63 @@
   .studio-editor .cm-editor.cm-focused {
     outline: 2px solid color-mix(in oklch, var(--ring) 60%, transparent);
     outline-offset: -2px;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * The status badge's motion (src/components/motion/animated-badge.tsx).
+ *
+ * These two animations replaced the `motion` library in phase 6: the same
+ * gesture in about 30 lines of CSS, and 45 KB gzip off the main chunk
+ * (docs/TECH_DEBT.md #30). The easing is the `EASE_OUT` curve the vendored beUI
+ * component used.
+ *
+ * Unlayered, next to the other rules that have to win over the editor package's
+ * own stylesheet, and because a `@layer` would put them behind Tailwind's
+ * `animate-none` utility under `motion-reduce:`.
+ * ------------------------------------------------------------------------- */
+@keyframes badge-roll-in {
+  from {
+    opacity: 0.72;
+    transform: translateY(80%) scale(0.93);
+    filter: blur(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+@keyframes badge-pulse {
+  0%,
+  100% {
+    opacity: 0.08;
+    transform: scale(0.94);
+  }
+  50% {
+    opacity: 0.16;
+    transform: scale(1.08);
+  }
+}
+
+.badge-roll {
+  animation: badge-roll-in 320ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  will-change: transform;
+}
+
+.badge-pulse {
+  opacity: 0.1;
+  animation: badge-pulse 1.6s ease-in-out infinite;
+}
+
+/* Reduced motion keeps the badge and drops the movement: the label simply
+   appears, and the pulse is removed rather than frozen mid-throb. */
+@media (prefers-reduced-motion: reduce) {
+  .badge-roll {
+    animation: none;
+  }
+  .badge-pulse {
+    display: none;
   }
 }

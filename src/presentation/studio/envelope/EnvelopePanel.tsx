@@ -14,6 +14,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { listMergeFields } from '@/application/mergeFields'
 import { parseRecipientList } from '@/application/parseRecipientList'
 import {
   subjectLengthState,
@@ -58,6 +59,9 @@ export function EnvelopePanel({ envelope, metadata, dirty, onChange, onReset, fr
   const [open, setOpen] = useState(true)
 
   const subjectState = subjectLengthState(envelope.subject)
+  // A subject may carry merge fields too, and the person typing one wants to
+  // know it was recognised as a field rather than left as literal braces.
+  const subjectFields = listMergeFields(envelope.subject)
   const replyToError = replyToProblem(envelope.replyTo)
 
   return (
@@ -108,7 +112,11 @@ export function EnvelopePanel({ envelope, metadata, dirty, onChange, onReset, fr
               className="md:col-span-3 xl:col-span-5"
               adornment={<SubjectCounter length={envelope.subject.length} state={subjectState} />}
               helper={
-                subjectState === 'too-long' ? 'Most clients truncate subjects past 78 characters.' : undefined
+                subjectState === 'too-long'
+                  ? 'Most clients truncate subjects past 78 characters.'
+                  : subjectFields.length > 0
+                    ? `Uses {{${subjectFields[0]}}}`
+                    : undefined
               }
             >
               <Input
@@ -117,7 +125,7 @@ export function EnvelopePanel({ envelope, metadata, dirty, onChange, onReset, fr
                 onChange={(event) => onChange({ ...envelope, subject: event.target.value })}
                 className={FIELD_CLASS}
                 aria-describedby={describedBy(`${fieldId}-subject`, {
-                  helper: subjectState === 'too-long',
+                  helper: subjectState === 'too-long' || subjectFields.length > 0,
                 })}
               />
             </EnvelopeField>

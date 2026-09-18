@@ -12,6 +12,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { buildDiagnostics } from '@/application/buildDiagnostics'
+import {
+  applyMergeFields,
+  findUnsafeHrefs,
+  listDocumentMergeFields,
+  listMergeFields,
+  missingMergeFields,
+  parsePayloadObject,
+} from '@/application/mergeFields'
 import { parsePreviewPayload } from '@/application/parsePreviewPayload'
 import {
   ALL_STUDIO_MODES,
@@ -20,8 +28,10 @@ import {
   nextModeForPreviewToggle,
 } from '@/application/studioModes'
 import {
+  templateDocument,
   VISUAL_EDITOR_OFF_MESSAGE,
   type EmailDocument,
+  type PreviewPayload,
   type StudioFeatures,
   type StudioMode,
   type TemplateKind,
@@ -29,6 +39,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { buildPreviewDocument } from '@/infrastructure/render/previewDocument'
 import { DEFAULT_STUDIO_THEME } from '@/infrastructure/render/studioTheme'
+import { mergeFieldPropsValidator } from '@/infrastructure/validation/mergeFieldPropsValidator'
 import type { EmailProvider } from '@/infrastructure/providers/emailProvider'
 import type { TemplateRenderer } from '@/infrastructure/render/renderClient'
 import { useSendServerStatus } from '@/presentation/hooks/useSendServerStatus'
@@ -95,11 +106,45 @@ export function StudioPage({ studio, renderer, provider, onBackToLibrary, onRend
   const kindModes = availableModes(template.kind, features)
   const mode = kindModes.includes(state.mode) ? state.mode : kindModes[0]
 
+  /**
+   * Every `{{key}}` this template uses: the chips on the canvas plus anything
+   * typed into the subject or the preheader. For a visual template this is the
+   * contract - there is no schema to read and no TSX to infer props from - so
+   * it is computed from the LIVE document rather than from the saved version
+   * (plan §3.4). A code template keeps the validator its mapper built.
+   */
+  // Memoised through a STRING rather than straight to an array. The inputs
+  // change on every keystroke, but the keys they yield usually do not, and a
+  // fresh array each time would give `validation` - and through it the render
+  // hook - a new identity, re-rendering the template while somebody types a
+  // subject that contains no merge fields at all.
+  const mergeFieldKeysText = useMemo(() => {
+    const fromDocument = isVisual ? listDocumentMergeFields(draft.document ?? templateDocument(template)) : []
+    return unique([
+      ...fromDocument,
+      ...listMergeFields(draft.envelope.subject),
+      ...listMergeFields(draft.envelope.preheader),
+    ]).join('\n')
+  }, [isVisual, draft.document, draft.envelope.subject, draft.envelope.preheader, template])
+
+  const mergeFieldKeys = useMemo(
+    () => (mergeFieldKeysText === '' ? EMPTY_KEYS : mergeFieldKeysText.split('\n')),
+    [mergeFieldKeysText],
+  )
+
+  const validateProps = useMemo(
+    () => (isVisual ? mergeFieldPropsValidator(mergeFieldKeys) : template.validateProps),
+    [isVisual, mergeFieldKeys, template],
+  )
+
   // Validation is memoised on the text so its identity only changes when the text does.
   const validation = useMemo(
-    () => parsePreviewPayload(draft.payloadText, template.validateProps),
-    [draft.payloadText, template],
+    () => parsePreviewPayload(draft.payloadText, validateProps),
+    [draft.payloadText, validateProps],
   )
+  // Only the CODE render path takes these: a component is given typed props or
+  // it is not rendered at all. Merge-field substitution deliberately does not
+  // go through here - see the `payload` memo below.
   const props = validation.ok ? validation.value : null
 
   // Counts the canvas transactions a person has made. The document itself is a
@@ -130,13 +175,63 @@ export function StudioPage({ studio, renderer, provider, onBackToLibrary, onRend
   const preview = isVisual ? (canvasEnabled ? visualPreview : savedExport) : codePreview
 
   /**
+   * Merge fields filled in (ADR-26). Everything a PERSON looks at or sends -
+   * the preview, the thumbnail, the downloads, the status bar's sizes, the
+   * envelope summary and the test send - reads these resolved strings. What is
+   * SAVED stays unresolved, so a later server-side send can substitute per
+   * recipient.
+   *
+   * Substitution reads the payload JSON itself, NOT the schema-validated
+   * props. Filling the Data tab in is a key at a time, so the schema is red
+   * most of the time; resolving against `validation.value` would mean one
+   * unfilled key left every OTHER key unresolved too, and the diagnostics row
+   * would then name keys whose value is sitting right there. Only text that is
+   * not a JSON object at all resolves against `{}` — and then every key shows
+   * as missing rather than blank, which is how you find out the JSON is broken.
+   */
+  const payload: PreviewPayload = useMemo(
+    () => parsePayloadObject(draft.payloadText) ?? EMPTY_PAYLOAD,
+    [draft.payloadText],
+  )
+  const resolved = useMemo(() => {
+    const html = preview.html === null ? null : applyMergeFields(preview.html, payload, { escape: 'html' })
+    const text = preview.text === null ? null : applyMergeFields(preview.text, payload, { escape: 'none' })
+    const subject = applyMergeFields(draft.envelope.subject, payload, { escape: 'none' })
+    const preheader = applyMergeFields(draft.envelope.preheader, payload, { escape: 'none' })
+    return {
+      html: html?.text ?? null,
+      text: text?.text ?? null,
+      envelope: { ...draft.envelope, subject: subject.text, preheader: preheader.text },
+      // A `javascript:` or `data:` link can only appear AFTER substitution, so
+      // the check runs on the resolved HTML, never on the template's own.
+      unsafeHrefs: findUnsafeHrefs(html?.text ?? ''),
+    }
+  }, [preview.html, preview.text, draft.envelope, payload])
+
+  /**
+   * Every key in play, and which of them the payload cannot fill in. The export
+   * is debounced, so the keys are taken from the document AND from the last
+   * export: a chip typed a second ago is counted immediately.
+   */
+  const keysInUse = useMemo(
+    () =>
+      unique([
+        ...mergeFieldKeys,
+        ...listMergeFields(preview.html ?? ''),
+        ...listMergeFields(preview.text ?? ''),
+      ]),
+    [mergeFieldKeys, preview.html, preview.text],
+  )
+  const missingKeys = useMemo(() => missingMergeFields(keysInUse, payload), [keysInUse, payload])
+
+  /**
    * The one preview document, built once per successful render (ADR-25).
    * Preview mode and the thumbnail are two views of this exact string; that is
    * what makes switching between them free.
    */
   const previewDocument = useMemo(
-    () => (preview.html === null ? null : buildPreviewDocument(preview.html)),
-    [preview.html],
+    () => (resolved.html === null ? null : buildPreviewDocument(resolved.html)),
+    [resolved.html],
   )
 
   const diagnostics = useMemo(
@@ -151,6 +246,9 @@ export function StudioPage({ studio, renderer, provider, onBackToLibrary, onRend
         // say "Matches the original file" - about a document being typed into.
         contentDirty: isVisual ? documentDirty : sourceDirty,
         payloadDirty,
+        missingMergeFields: missingKeys,
+        mergeFieldCount: keysInUse.length,
+        unsafeHrefs: resolved.unsafeHrefs,
       }),
     [
       validation,
@@ -161,6 +259,9 @@ export function StudioPage({ studio, renderer, provider, onBackToLibrary, onRend
       documentDirty,
       sourceDirty,
       payloadDirty,
+      missingKeys,
+      keysInUse,
+      resolved.unsafeHrefs,
     ],
   )
 
@@ -269,18 +370,20 @@ export function StudioPage({ studio, renderer, provider, onBackToLibrary, onRend
     actions.setMode(next)
   }, [actions, mode, rememberMode, returnMode])
 
-  const downloadReason = preview.html === null ? NOTHING_RENDERED_REASON : undefined
+  const downloadReason = resolved.html === null ? NOTHING_RENDERED_REASON : undefined
   // Refresh re-runs a pipeline, and the saved export is not one. Saying so is
   // better than a button that looks live and does nothing.
   const refreshReason = preview === savedExport ? SAVED_EXPORT_REASON : undefined
+  // What you download is what you were looking at: the resolved email, not the
+  // template with its tokens still in it.
   const downloadHtml = useCallback(() => {
-    if (preview.html === null) return
-    downloadTextFile(`${template.metadata.slug}.html`, preview.html, 'text/html')
-  }, [preview.html, template.metadata.slug])
+    if (resolved.html === null) return
+    downloadTextFile(`${template.metadata.slug}.html`, resolved.html, 'text/html')
+  }, [resolved.html, template.metadata.slug])
   const downloadText = useCallback(() => {
-    if (preview.text === null) return
-    downloadTextFile(`${template.metadata.slug}.txt`, preview.text, 'text/plain')
-  }, [preview.text, template.metadata.slug])
+    if (resolved.text === null) return
+    downloadTextFile(`${template.metadata.slug}.txt`, resolved.text, 'text/plain')
+  }, [resolved.text, template.metadata.slug])
 
   useStudioShortcuts({
     enabled: true,
@@ -368,6 +471,11 @@ export function StudioPage({ studio, renderer, provider, onBackToLibrary, onRend
                 onControlsChange={setVisualControls}
                 inspectorOpen={inspectorOpen}
                 onCloseInspector={closeInspector}
+                mergeFields={{
+                  keys: mergeFieldKeys,
+                  payloadText: draft.payloadText,
+                  onPayloadChange: actions.updatePayload,
+                }}
                 dataPanel={
                   <PropsPayloadCard
                     validation={validation}
@@ -444,13 +552,13 @@ export function StudioPage({ studio, renderer, provider, onBackToLibrary, onRend
             <PreviewWorkspace
               ref={previewRef}
               template={template}
-              envelope={draft.envelope}
+              envelope={resolved.envelope}
               from={fromIdentity}
               device={state.device}
               status={preview.status}
               result={preview.result}
               document={previewDocument}
-              text={preview.text}
+              text={resolved.text}
               renderedAt={preview.renderedAt}
               onRefresh={preview.refresh}
               refreshReason={refreshReason}
@@ -464,7 +572,9 @@ export function StudioPage({ studio, renderer, provider, onBackToLibrary, onRend
         </div>
       </div>
 
-      <StudioStatusBar template={template} html={preview.html} text={preview.text} />
+      {/* Sizes are measured on the RESOLVED email, because that is what would
+          be sent; a name is rarely the same length as `{{firstName}}`. */}
+      <StudioStatusBar template={template} html={resolved.html} text={resolved.text} />
 
       {/* The studio's one mode live region: a whole sentence, announced when
           the workspace changes and at no other time (docs/DESIGN.md §4.6). */}
@@ -477,7 +587,10 @@ export function StudioPage({ studio, renderer, provider, onBackToLibrary, onRend
         onOpenChange={setSendOpen}
         template={template}
         provider={provider}
-        html={preview.html}
+        subject={resolved.envelope.subject}
+        replyTo={draft.envelope.replyTo}
+        html={resolved.html}
+        text={resolved.text}
       />
       <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
       <ExportedCodeDialog
@@ -489,6 +602,17 @@ export function StudioPage({ studio, renderer, provider, onBackToLibrary, onRend
       />
     </div>
   )
+}
+
+/** The payload every substitution falls back to when the JSON does not parse. */
+const EMPTY_PAYLOAD: PreviewPayload = {}
+
+/** One shared empty list, so "no merge fields" keeps a stable identity. */
+const EMPTY_KEYS: readonly string[] = []
+
+/** The same list with duplicates removed, keeping the first of each. */
+function unique(values: readonly string[]): string[] {
+  return [...new Set(values)]
 }
 
 /**

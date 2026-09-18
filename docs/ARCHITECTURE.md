@@ -11,14 +11,14 @@ flowchart TB
   I -. implements .-> A
 ```
 
-| Layer          | Folder                           | Contains                                                                                                                                                                                                                                                                                                           | Must not contain                                 |
-| -------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------ |
-| Domain         | `src/domain`                     | `TemplateRecord` (`code` \| `visual`), `EmailTemplate`, `TemplateMetadata`, `TemplateEnvelope`, `EmailDocument`, `PreviewPayload`, `ValidationResult`, `RenderResult`, status unions                                                                                                                               | React, Zod, Tiptap, browser APIs, network        |
-| Application    | `src/application`                | `parsePreviewPayload`, `studioReducer` (select, edit, reset, device, mode), `studioModes`, `buildDiagnostics`, `repositories/` (ports: `TemplateRepository` and its result types)                                                                                                                                  | React, DOM, Zod                                  |
-| Infrastructure | `src/infrastructure`             | Starter registry + `starterCatalog.json` + Zod schemas, `templateMapper` (record → `EmailTemplate`), props validators, render pipeline and worker, session storage, no-send provider                                                                                                                               | UI                                               |
-| Presentation   | `src/presentation`               | `AppShell` + `GlobalHeader`, `templates/` (route, library page, grid, card, search), `StudioPage`, panels, dialogs, hooks (`useStudio`, `useTemplateLibrary`, `useRenderPreview`, `useVisualPreview`)                                                                                                              | Business rules (they live in application)        |
-| ⤷ visual       | `src/presentation/studio/visual` | `VisualWorkspace` (lazy boundary), `VisualEditorSurface` (**the only** runtime `@react-email/editor` import; `visualEmailRenderer` `import()`s `/core` and `studioTheme` takes a type only), `EmailCanvas`, `CanvasChip`, `StudioInspector`, `FontFallbackNote`, `InspectorFooterShortcuts`, `documentUpdateGuard` | A static import of the editor from anywhere else |
-| Shared         | `shared`                         | `templateContracts.ts`: the request/response Zod schemas and size caps the browser, the Node server and the Worker all validate against                                                                                                                                                                            | Everything but `zod`                             |
+| Layer          | Folder                           | Contains                                                                                                                                                                                                                                                                                                                                                                                                                  | Must not contain                                 |
+| -------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| Domain         | `src/domain`                     | `TemplateRecord` (`code` \| `visual`), `EmailTemplate`, `TemplateMetadata`, `TemplateEnvelope`, `EmailDocument`, `PreviewPayload`, `ValidationResult`, `RenderResult`, status unions                                                                                                                                                                                                                                      | React, Zod, Tiptap, browser APIs, network        |
+| Application    | `src/application`                | `parsePreviewPayload`, `studioReducer` (select, edit, reset, device, mode), `studioModes`, `buildDiagnostics`, `repositories/` (ports: `TemplateRepository` and its result types)                                                                                                                                                                                                                                         | React, DOM, Zod                                  |
+| Infrastructure | `src/infrastructure`             | Starter registry + `starterCatalog.json` + Zod schemas, `templateMapper` (record → `EmailTemplate`), props validators, render pipeline and worker, session storage, no-send provider                                                                                                                                                                                                                                      | UI                                               |
+| Presentation   | `src/presentation`               | `AppShell` + `GlobalHeader`, `templates/` (route, library page, grid, card, search), `StudioPage`, panels, dialogs, hooks (`useStudio`, `useTemplateLibrary`, `useRenderPreview`, `useVisualPreview`)                                                                                                                                                                                                                     | Business rules (they live in application)        |
+| ⤷ visual       | `src/presentation/studio/visual` | `VisualWorkspace` (lazy boundary), `VisualEditorSurface` (mounts `@react-email/editor`; with `mergeFieldNode` and `editorExtensions` one of **three** static importers, all reachable only through this lazy seam - `visualEmailRenderer` `import()`s `/core` and `studioTheme` takes a type only), `EmailCanvas`, `CanvasChip`, `StudioInspector`, `FontFallbackNote`, `InspectorFooterShortcuts`, `documentUpdateGuard` | A static import of the editor from anywhere else |
+| Shared         | `shared`                         | `templateContracts.ts`: the request/response Zod schemas and size caps the browser, the Node server and the Worker all validate against                                                                                                                                                                                                                                                                                   | Everything but `zod`                             |
 
 ## The preview pipeline
 
@@ -33,7 +33,8 @@ flowchart LR
     VAL -->|yes| HOOK
     HOOK -->|"postMessage {id, source, props}"| CLI[WorkerTemplateRenderer]
     CLI -->|"5 s timeout → terminate(), recreate"| CLI
-    CLI -->|"result.html → buildPreviewDocument()"| IFR["iframe sandbox=&quot;&quot;<br/>srcDoc + CSP: default-src 'none'"]
+    CLI -->|"result.html, result.text"| MF["applyMergeFields(…, payload)<br/>escape: html / none"]
+    MF -->|"resolved html → buildPreviewDocument()"| IFR["iframe sandbox=&quot;&quot;<br/>srcDoc + CSP: default-src 'none'"]
   end
   subgraph worker["Render Web Worker (same origin, no DOM)"]
     PG[prismWorkerGuard<br/>first import] --> HG[hardenWorkerGlobals<br/>fetch, XHR, WebSocket, Worker… = undefined]
@@ -88,8 +89,9 @@ flowchart LR
     GUARD -->|no| DOC
     ED -->|onReady| HOOK["useVisualPreview<br/>debounce 300 ms, stale guard"]
     HOOK -->|"import('@react-email/editor/core')"| CMP["composeReactEmail({ editor, preview })"]
-    CMP --> RES["RenderResult<br/>html = unformattedHtml, text"]
-    RES --> PD["buildPreviewDocument()"] --> IFR["iframe sandbox=&quot;&quot;"]
+    CMP --> RES["RenderResult<br/>html = unformattedHtml, text<br/>merge-field tokens still in it"]
+    RES --> MF["applyMergeFields(html, text, subject, preheader)"]
+    MF --> PD["buildPreviewDocument()"] --> IFR["iframe sandbox=&quot;&quot;"]
   end
   ED -->|onUploadImage| UP["POST /api/uploads → R2<br/>{ url } → /media/img_…"]
 ```
@@ -116,6 +118,12 @@ Things worth knowing about it:
 - **The flag gates the download, not just the mount.** With `STUDIO_VISUAL_EDITOR=false` the studio
   waits for `/api/send-test/status`, never mounts the workspace, and shows the export saved with the
   version instead.
+- **Merge fields are substituted after the export, not during it** (ADR-26). Both pipelines produce
+  HTML and plain text that still contain `{{key}}`; `StudioPage` resolves those, plus the subject and
+  the preheader, against the validated payload in the one memo that also builds the preview document.
+  Everything a person looks at or sends reads the resolved strings; what is SAVED keeps its tokens,
+  so a later server-side send can substitute per recipient. A key with no value stays visible and
+  becomes a diagnostics warning.
 
 ## View state: one route owner, no router (yet)
 

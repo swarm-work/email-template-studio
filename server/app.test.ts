@@ -282,6 +282,91 @@ describe('send server API', () => {
     expect(response.status).toBe(400)
   })
 
+  it('caps the HTML and the plain text TOGETHER', async () => {
+    // Neither part is over on its own; the message they would make is.
+    const app = createApp({
+      authenticator: testAuth,
+      config: enabledConfig,
+      sender: createDryRunSender(() => {}),
+    })
+    // Kept under the text field's own 200 000-character limit, so what refuses
+    // this request is the body budget and not the schema.
+    const response = await post(app, {
+      ...validBody,
+      html: 'x'.repeat(MAX_HTML_BYTES - 100_000),
+      text: 'y'.repeat(150_000),
+    })
+    expect(response.status).toBe(400)
+    expect(await response.json()).toMatchObject({
+      message: 'HTML and plain text together are larger than 500 KB.',
+    })
+  })
+
+  it('passes the plain-text part through to the sender', async () => {
+    const sent: unknown[] = []
+    const app = createApp({ authenticator: testAuth, config: enabledConfig, sender: recordingSender(sent) })
+    const response = await post(app, { ...validBody, text: 'hi' })
+    expect(response.status).toBe(200)
+    expect(sent[0]).toMatchObject({ text: 'hi' })
+  })
+
+  it('refuses more than five reply-to addresses', async () => {
+    const app = createApp({
+      authenticator: testAuth,
+      config: enabledConfig,
+      sender: createDryRunSender(() => {}),
+    })
+    const replyTo = Array.from({ length: 6 }, (_, index) => `reply${index}@example.com`)
+    const response = await post(app, { ...validBody, replyTo })
+    expect(response.status).toBe(400)
+  })
+
+  it('refuses a reply-to address containing a control character', async () => {
+    const app = createApp({
+      authenticator: testAuth,
+      config: enabledConfig,
+      sender: createDryRunSender(() => {}),
+    })
+    // A CR/LF in a header value is the classic header-injection shape.
+    const response = await post(app, { ...validBody, replyTo: 'reply\r\nBcc: x@example.com' })
+    expect(response.status).toBe(400)
+  })
+
+  it('does NOT hold reply-to to the recipient allow-list, and de-duplicates it', async () => {
+    // Nothing is delivered to a reply-to address, so SES_ALLOWED_RECIPIENTS -
+    // which exists to stop mail reaching strangers - has nothing to say here.
+    const sent: unknown[] = []
+    const app = createApp({ authenticator: testAuth, config: enabledConfig, sender: recordingSender(sent) })
+    const response = await post(app, {
+      ...validBody,
+      replyTo: ['stranger@elsewhere.test', 'STRANGER@elsewhere.test'],
+    })
+    expect(response.status).toBe(200)
+    expect(sent[0]).toMatchObject({ replyTo: ['stranger@elsewhere.test'] })
+  })
+
+  it('sends no reply-to when the request carries none', async () => {
+    const sent: unknown[] = []
+    const app = createApp({ authenticator: testAuth, config: enabledConfig, sender: recordingSender(sent) })
+    await post(app, validBody)
+    expect((sent[0] as { replyTo?: string[] }).replyTo).toBeUndefined()
+  })
+
+  it('names the reply-to in the audit line', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      const app = createApp({
+        authenticator: testAuth,
+        config: enabledConfig,
+        sender: createDryRunSender(() => {}),
+      })
+      await post(app, { ...validBody, replyTo: 'support@example.com' })
+      expect(log.mock.calls.flat().join(' ')).toContain('reply-to support@example.com')
+    } finally {
+      log.mockRestore()
+    }
+  })
+
   it('sends through the sender with the [TEST] prefix and the configured from address', async () => {
     const sent: unknown[] = []
     const app = createApp({

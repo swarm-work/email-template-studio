@@ -2,32 +2,33 @@
 
 For a developer coming from Salesforce (Apex, LWC, Flows) into this codebase. Each concept points at the file that uses it, so you can read code and theory together.
 
-| Concept                                                          | Closest Salesforce idea                                           | Where it is used                                                                        | Read                                                        |
-| ---------------------------------------------------------------- | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| TypeScript union types with a discriminant (`ok: true \| false`) | Apex enums + wrapper classes, but checked by the compiler         | `src/domain/preview.ts` (`ValidationResult`, `RenderResult`)                            | TS handbook: Narrowing, Discriminated unions                |
-| Branded ids                                                      | Salesforce `Id` type                                              | `src/domain/template.ts` (`TemplateId`)                                                 | TS handbook: Type aliases                                   |
-| Discriminated unions driving exhaustive `switch`                 | A `Type` picklist plus `if` chains you have to remember to update | `src/domain/template.ts` (`TemplateRecord`), `src/application/studioState.ts`           | See "Discriminated unions drive exhaustive switches" below  |
-| `unknown` at boundaries + runtime validation                     | Deserialising JSON with `JSON.deserializeUntyped` then checking   | `src/application/parsePreviewPayload.ts`, `src/infrastructure/session/sessionStore.ts`  | Zod docs: `safeParse`, `z.strictObject`                     |
-| Pure reducer for state                                           | A service class with static methods, no side effects              | `src/application/studioState.ts` (+ test)                                               | React docs: Extracting state logic into a reducer           |
-| React hooks (`useReducer`, `useEffect`, `useMemo`)               | LWC `@wire`/lifecycle hooks, but functions                        | `src/presentation/hooks/useStudio.ts`, `useRenderPreview.ts`                            | React docs: Hooks reference, "You might not need an effect" |
-| Derived state instead of stored state                            | Formula fields                                                    | `useRenderPreview.ts` derives `status` from keys                                        | React docs: Choosing the state structure                    |
-| Web Workers and `postMessage`                                    | Queueable/async Apex running off the main thread                  | `src/infrastructure/render/render.worker.ts`, `renderClient.ts`                         | MDN: Using Web Workers                                      |
-| `new Function` and CommonJS `require`                            | Dynamic Apex (`Type.forName`) with an allow-list                  | `src/infrastructure/render/evaluateTemplate.ts`                                         | MDN: Function constructor (and why it is dangerous)         |
-| iframe `sandbox` and CSP                                         | Lightning Locker / LWS isolation                                  | `src/infrastructure/render/previewDocument.ts`, `PreviewWorkspace.tsx`                  | MDN: iframe sandbox, Content-Security-Policy                |
-| React Email components                                           | Visualforce email templates, but React                            | `src/infrastructure/templates/*.email.tsx`                                              | react.email docs: Components, `render`                      |
-| Vite `?raw` imports                                              | Static resources                                                  | `src/infrastructure/templates/registry.ts`                                              | Vite docs: Static asset handling                            |
-| Tailwind v4 tokens (`@theme`)                                    | SLDS design tokens                                                | `src/index.css`                                                                         | Tailwind docs: Theme variables                              |
-| shadcn/ui                                                        | Base Lightning components you copy and own                        | `src/components/ui/*`, `components.json`                                                | ui.shadcn.com/docs                                          |
-| Accessible roles and names                                       | LWC accessibility guidance                                        | `aria-label`, `role="region"`, `aria-pressed` across `src/presentation`                 | MDN: ARIA, WAI-ARIA Authoring Practices                     |
-| Unit tests with Vitest                                           | Apex test classes                                                 | `*.test.ts` next to each module                                                         | vitest.dev/guide                                            |
-| Component tests with Testing Library                             | Jest tests for LWC                                                | `src/presentation/studio/*.test.tsx`                                                    | testing-library.com/docs                                    |
-| Browser tests with Playwright                                    | UTAM / Selenium                                                   | `e2e/studio.spec.ts`, `playwright.config.ts`                                            | playwright.dev/docs                                         |
-| Cloudflare Worker (V8 isolate, request-scoped)                   | Apex transaction: short-lived, governor limits                    | `worker/index.ts`, `wrangler.jsonc`                                                     | developers.cloudflare.com/workers: How Workers works        |
-| Bindings, `vars` and secrets                                     | Named Credentials, Custom Metadata vs Protected Settings          | `wrangler.jsonc` (`vars`), `.dev.vars.example`, `worker-configuration.d.ts` (generated) | Cloudflare docs: Configuration, Secrets                     |
-| One HTTP app, two adapters                                       | One service class called from a trigger and from a batch          | `server/app.ts` (shared), `server/node.ts`, `worker/index.ts`                           | Hono docs: Getting started (Node, Cloudflare Workers)       |
-| Same-origin policy and CSRF                                      | CSRF tokens on Visualforce forms                                  | `rejectForeignRequest` in `server/app.ts` (+ test)                                      | MDN: Same-origin policy, Origin header                      |
-| API keys shown once                                              | Named Credential secret value shown at creation                   | `src/presentation/api/ApiKeysPage.tsx`, `src/application/apiKeys.ts`                    | OWASP: API keys, MDN: Web Crypto                            |
-| Webhook signatures and replay windows                            | Signed outbound integration callback                              | `src/presentation/api/ApiKeysPage.tsx` (planned UI), later `docs/WEBHOOKS.md`           | Stripe docs: webhook signatures, MDN: SubtleCrypto HMAC     |
+| Concept                                                          | Closest Salesforce idea                                               | Where it is used                                                                        | Read                                                            |
+| ---------------------------------------------------------------- | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| TypeScript union types with a discriminant (`ok: true \| false`) | Apex enums + wrapper classes, but checked by the compiler             | `src/domain/preview.ts` (`ValidationResult`, `RenderResult`)                            | TS handbook: Narrowing, Discriminated unions                    |
+| Branded ids                                                      | Salesforce `Id` type                                                  | `src/domain/template.ts` (`TemplateId`)                                                 | TS handbook: Type aliases                                       |
+| Discriminated unions driving exhaustive `switch`                 | A `Type` picklist plus `if` chains you have to remember to update     | `src/domain/template.ts` (`TemplateRecord`), `src/application/studioState.ts`           | See "Discriminated unions drive exhaustive switches" below      |
+| `unknown` at boundaries + runtime validation                     | Deserialising JSON with `JSON.deserializeUntyped` then checking       | `src/application/parsePreviewPayload.ts`, `src/infrastructure/session/sessionStore.ts`  | Zod docs: `safeParse`, `z.strictObject`                         |
+| Pure reducer for state                                           | A service class with static methods, no side effects                  | `src/application/studioState.ts` (+ test)                                               | React docs: Extracting state logic into a reducer               |
+| React hooks (`useReducer`, `useEffect`, `useMemo`)               | LWC `@wire`/lifecycle hooks, but functions                            | `src/presentation/hooks/useStudio.ts`, `useRenderPreview.ts`                            | React docs: Hooks reference, "You might not need an effect"     |
+| Derived state instead of stored state                            | Formula fields                                                        | `useRenderPreview.ts` derives `status` from keys                                        | React docs: Choosing the state structure                        |
+| Web Workers and `postMessage`                                    | Queueable/async Apex running off the main thread                      | `src/infrastructure/render/render.worker.ts`, `renderClient.ts`                         | MDN: Using Web Workers                                          |
+| `new Function` and CommonJS `require`                            | Dynamic Apex (`Type.forName`) with an allow-list                      | `src/infrastructure/render/evaluateTemplate.ts`                                         | MDN: Function constructor (and why it is dangerous)             |
+| iframe `sandbox` and CSP                                         | Lightning Locker / LWS isolation                                      | `src/infrastructure/render/previewDocument.ts`, `PreviewWorkspace.tsx`                  | MDN: iframe sandbox, Content-Security-Policy                    |
+| React Email components                                           | Visualforce email templates, but React                                | `src/infrastructure/templates/*.email.tsx`                                              | react.email docs: Components, `render`                          |
+| Vite `?raw` imports                                              | Static resources                                                      | `src/infrastructure/templates/registry.ts`                                              | Vite docs: Static asset handling                                |
+| Tailwind v4 tokens (`@theme`)                                    | SLDS design tokens                                                    | `src/index.css`                                                                         | Tailwind docs: Theme variables                                  |
+| shadcn/ui                                                        | Base Lightning components you copy and own                            | `src/components/ui/*`, `components.json`                                                | ui.shadcn.com/docs                                              |
+| Accessible roles and names                                       | LWC accessibility guidance                                            | `aria-label`, `role="region"`, `aria-pressed` across `src/presentation`                 | MDN: ARIA, WAI-ARIA Authoring Practices                         |
+| Unit tests with Vitest                                           | Apex test classes                                                     | `*.test.ts` next to each module                                                         | vitest.dev/guide                                                |
+| Component tests with Testing Library                             | Jest tests for LWC                                                    | `src/presentation/studio/*.test.tsx`                                                    | testing-library.com/docs                                        |
+| Browser tests with Playwright                                    | UTAM / Selenium                                                       | `e2e/studio.spec.ts`, `playwright.config.ts`                                            | playwright.dev/docs                                             |
+| Cloudflare Worker (V8 isolate, request-scoped)                   | Apex transaction: short-lived, governor limits                        | `worker/index.ts`, `wrangler.jsonc`                                                     | developers.cloudflare.com/workers: How Workers works            |
+| Bindings, `vars` and secrets                                     | Named Credentials, Custom Metadata vs Protected Settings              | `wrangler.jsonc` (`vars`), `.dev.vars.example`, `worker-configuration.d.ts` (generated) | Cloudflare docs: Configuration, Secrets                         |
+| One HTTP app, two adapters                                       | One service class called from a trigger and from a batch              | `server/app.ts` (shared), `server/node.ts`, `worker/index.ts`                           | Hono docs: Getting started (Node, Cloudflare Workers)           |
+| Same-origin policy and CSRF                                      | CSRF tokens on Visualforce forms                                      | `rejectForeignRequest` in `server/app.ts` (+ test)                                      | MDN: Same-origin policy, Origin header                          |
+| API keys shown once                                              | Named Credential secret value shown at creation                       | `src/presentation/api/ApiKeysPage.tsx`, `src/application/apiKeys.ts`                    | OWASP: API keys, MDN: Web Crypto                                |
+| Pure functions and table-driven tests                            | A utility Apex class with no SOQL or DML, tested with a list of cases | `src/application/mergeFields.ts` (+ test)                                               | See "Pure functions and table-driven tests: merge fields" below |
+| Webhook signatures and replay windows                            | Signed outbound integration callback                                  | `src/presentation/api/ApiKeysPage.tsx` (planned UI), later `docs/WEBHOOKS.md`           | Stripe docs: webhook signatures, MDN: SubtleCrypto HMAC         |
 
 ## Discriminated unions drive exhaustive switches
 
@@ -350,17 +351,119 @@ as a compile or export error — one vocabulary for "the pipeline could not fini
 
 **Splitting only works if nothing else imports the module.** One stray `import { EmailEditor } from
 '@react-email/editor'` in a file the main bundle already needs and the whole 2.5 MB is back in the
-first download, silently. That is why exactly one module imports the package at
-runtime (`VisualEditorSurface.tsx`), why `visualEmailRenderer.ts` reaches `/core` through another
-`import()` rather than a static import, why `studioTheme.ts` takes the `ThemeConfig` type only (a
-type import is erased, so it costs nothing), why `scripts/check-worker-bundle.mjs` greps **`src/`
-itself** against that three-file allow-list as well as the directories that must stay entirely
-clear, and why `e2e/visual.spec.ts` watches the network and asserts that opening a **code** template
+first download, silently. That is why only three modules import the package
+statically — `VisualEditorSurface.tsx`, which mounts the editor, and phase 6's `mergeFieldNode.ts`
+and `editorExtensions.ts`, which are imported ONLY from inside that surface's subtree — why
+`visualEmailRenderer.ts` reaches `/core` through another `import()` rather than a static import, why
+`studioTheme.ts` takes the `ThemeConfig` type only (a type import is erased, so it costs nothing),
+why `scripts/check-worker-bundle.mjs` greps **`src/` itself** against that five-file allow-list as
+well as the directories that must stay entirely clear, and why `e2e/visual.spec.ts` watches the network and asserts that opening a **code** template
 fetches no editor chunk at all. A rule nobody can measure is a rule that quietly stops being true.
 
 **Where to look.** `src/presentation/studio/visual/VisualWorkspace.tsx` (the lazy boundary, the
 skeleton and the error boundary), `src/infrastructure/render/visualEmailRenderer.ts` (the second
 dynamic import), `scripts/check-worker-bundle.mjs` and ADR-18 in `docs/DECISIONS.md`.
+
+## Pure functions and table-driven tests: merge fields
+
+Merge fields are the studio's best example of a feature that is almost entirely **pure functions**,
+and of the kind of test that suits them.
+
+### What "pure" bought here
+
+`src/application/mergeFields.ts` takes strings and plain objects and returns strings and plain
+objects. It imports nothing but a type. No React, no DOM, no Zod, no editor. That is not purism — it
+is what makes the following all true at once:
+
+- The same `applyMergeFields` runs in the browser today and could run on a server tomorrow, per
+  recipient, with no changes at all. That is the whole reason a saved version is stored with its
+  `{{key}}` tokens still in it (ADR-26).
+- Its forty-odd tests run in **milliseconds** in the Node environment. No jsdom, no editor to mount,
+  no waiting for a render.
+- A failing test points at one function. When the end-to-end suite reported
+  `Unknown variable {{FIRSTNAME}}`, every unit test was green — which was itself the answer: the bug
+  was not in the substitution, it was that `html-to-text` uppercases heading text in the plain-text
+  part (TECH_DEBT #40).
+
+In Apex terms: this is the utility class with no SOQL, no DML and no `Test.startTest()` — the part
+you can test a hundred cases of without ever building a record.
+
+### Table-driven tests
+
+The interesting question about `applyMergeFields` is not "does it replace text" but **which values
+count as a value**. A string does. A number and a boolean do, through `String()`. `null`, `undefined`,
+an object and an array do not — they have no sensible one-line spelling, so the token stays on screen
+and the key is reported as missing.
+
+Nine near-identical tests would bury that rule in ceremony. A table puts it where you can read it:
+
+```ts
+const cases = [
+  { name: 'a string', payload: { name: 'Ada' }, expected: 'Hi Ada!', missing: [] },
+  { name: 'a number', payload: { name: 42 }, expected: 'Hi 42!', missing: [] },
+  { name: 'null', payload: { name: null }, expected: 'Hi {{name}}!', missing: ['name'] },
+  // …
+]
+
+for (const { name, payload, expected, missing } of cases) {
+  it(`substitutes ${name}`, () => {
+    const result = applyMergeFields('Hi {{name}}!', payload, { escape: 'none' })
+    expect(result.text).toBe(expected)
+    expect(result.missing).toEqual(missing)
+  })
+}
+```
+
+Each row is still its own `it`, so a failure names exactly which case broke; adding a case is one
+line; and the table documents the decision better than prose would. You can see at a glance that an
+empty string is a value (`Hi !`) while `null` is not.
+
+Use a table when the cases differ only in **data**. Keep separate tests when they differ in
+**behaviour**: `withMissingKeys` preserving the indentation someone hand-aligned and
+`withMissingKeys` recovering from unparseable JSON are two different stories, not two rows.
+
+### Two regexes, and the test that stops them drifting
+
+`MERGE_FIELD_PATTERN` matches `{{ key }}` inside a longer string; `MERGE_FIELD_KEY_PATTERN` matches a
+bare `key` for the Data tab's "Add field" input. Deriving the second from the first with string
+surgery was tried and read horribly, so both are written out — and one test asserts that every key
+the first one finds is accepted by the second. That is the cheap way to have readable duplication:
+duplicate the code, never the guarantee.
+
+Two things about the `/g` flag are worth remembering, because both produce bugs that look like
+witchcraft:
+
+- A global regex keeps a `lastIndex`, so `.test()` on the same string can answer `true` and then
+  `false`. Every scan in this module goes through `new RegExp(source, 'g')`, which hands out a fresh
+  one each time.
+- `String.replace` with a global regex calls your function once per match, and whatever the function
+  returns is what lands in the text. Returning `undefined` by accident writes the literal string
+  `"undefined"` into somebody's email.
+
+### One rule, in one place
+
+Pure functions only pay off if everyone asks THEM. Two bugs the phase-6 review found were both the
+same mistake — a second copy of a rule that already existed:
+
+- The Data tab decided "missing" for itself (`readPayloadValue(...) === ''`), so a key filled in with
+  an empty string counted as missing in the panel and as filled everywhere else: the button that
+  fills keys in stayed lit forever, next to a diagnostics row saying everything had a value. The fix
+  is one line — call `missingMergeFields`, the same function the warning row calls.
+- Substitution read the SCHEMA-VALIDATED props (`validation.ok ? validation.value : {}`) instead of
+  the payload JSON. Since the schema wants every key, one unfilled key made the whole object `{}`,
+  and every _other_ key stopped resolving too. Filling a form in is one field at a time, so that was
+  the normal state, not an edge case.
+
+The lesson is not "be careful". It is that a rule you can only apply by re-implementing it will be
+re-implemented differently, and the second copy is invisible until somebody notices the two halves
+of a screen disagreeing. Export the function, delete the re-implementation.
+
+### Where to look
+
+`src/application/mergeFields.ts` and `mergeFields.test.ts` (the pure core), then
+`src/infrastructure/render/mergeFieldNode.ts` (the editor's side of the same rule) and
+`src/presentation/studio/StudioPage.tsx`, where one memo decides what is resolved and what is not.
+ADR-26 in `docs/DECISIONS.md` explains that boundary.
 
 ## Suggested reading order through the code
 
@@ -370,9 +473,10 @@ dynamic import), `scripts/check-worker-bundle.mjs` and ADR-18 in `docs/DECISIONS
 4. `src/infrastructure/render/renderClient.ts` and `render.worker.ts` — the worker boundary.
 5. `src/presentation/studio/StudioPage.tsx` — how everything is composed.
 6. `src/presentation/studio/visual/VisualWorkspace.tsx` then `VisualEditorSurface.tsx` — the lazy boundary, and the one module that touches the editor package.
-7. `migrations/0001_create_templates.sql` then `server/templateStore.ts` — the shape of the data and the port over it.
-8. `server/templateRoutes.test.ts` — every HTTP rule the API promises, one case each.
-9. `e2e/studio.spec.ts` — the behaviours we promise, written as a user would experience them.
+7. `src/application/mergeFields.ts` and its test — a whole feature as pure functions, and what a table-driven test looks like.
+8. `migrations/0001_create_templates.sql` then `server/templateStore.ts` — the shape of the data and the port over it.
+9. `server/templateRoutes.test.ts` — every HTTP rule the API promises, one case each.
+10. `e2e/studio.spec.ts` — the behaviours we promise, written as a user would experience them.
 
 ## Things worth practising
 
@@ -380,4 +484,5 @@ dynamic import), `scripts/check-worker-bundle.mjs` and ADR-18 in `docs/DECISIONS
 - Break the code split on purpose: add `import '@react-email/editor'` to `server/app.ts` and watch `npm run build` refuse it by name.
 - Break the concurrency rule on purpose: comment out `AND revision = ?` in `server/d1TemplateStore.ts` and watch which contract test fails, and why.
 - Add a diagnostic: extend `buildDiagnostics.ts` and its test before touching the panel.
+- Add a merge-field rule: make `applyMergeFields` accept a `Date` (as an ISO string, say) — one row in the table, then the code.
 - Change the debounce or timeout constants and watch the E2E tests react.

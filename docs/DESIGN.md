@@ -214,9 +214,33 @@ Duplicate block and Delete block as icon buttons) and then the package's own
 on the **block the cursor is in**, not on the text selection: what people mean by "Delete block" in a
 rail is the block the breadcrumb's last crumb names. Then `FontFallbackNote`, which is data-driven
 from `fontFallbackFor()` — a success note for a stack the studio has checked, a warning for anything
-else, so the reassurance cannot outlive the theme that earned it. Data is the props payload card
-(merge fields join it in phase 6). The footer strip repeats `⌘S Save · ⌘P Preview · / Blocks` from the
-one `SHORTCUTS` array and is `aria-hidden`: it is a reminder, not a control.
+else, so the reassurance cannot outlive the theme that earned it. The footer strip repeats
+`⌘S Save · ⌘P Preview · / Blocks` from the one `SHORTCUTS` array and is `aria-hidden`: it is a
+reminder, not a control.
+
+**Data tab** (`visual/MergeFieldsPanel`, above the props payload card) — the merge fields the
+template uses and the sample values that fill them in. Heading `Merge fields`, a count chip
+`<n> in document`, then one row per key: the token as a mono chip (which is the row's `<label>`), the
+state chips `Unused` (in the JSON, not in the document) or `Not in payload` (in the document, with no
+value the substitution could print — `missingMergeFields`' rule, so an empty string counts as a
+value and the chip, the button below and the diagnostics row never disagree), an `Insert {{key}}`
+icon button, and a `Sample value` input bound to the payload through `setPayloadValue`, so a dotted
+key like `user.first_name` writes a nested object. Below the rows,
+`Fill in missing keys` (disabled-with-reason when nothing is missing) and `Add field`, whose name is
+checked against the key pattern before it can be used. At the bottom, a collapsed
+**Sample values (JSON)** section wrapping the same `<CodeEditor>` the code mode's
+`preview-props.json` tab uses, on the same `draft.payloadText` — which is how a visual template
+finally gets a typeable payload. While that JSON does not parse, every write path in the panel is
+switched off — the value inputs go read-only and both buttons are disabled with a reason — because
+writing one key means re-printing the whole payload, and half-typed JSON cannot be re-printed
+without losing what is in it. The panel says so above the rows.
+
+This is also the studio's only route to a merge field besides typing one: the package's slash menu
+cannot be given an item without replacing the whole menu (see the hooks inventory below), so
+insertion goes through this panel and the `{{key}}` input rule. Empty state:
+_"No merge fields yet. Type {{firstName}} in the canvas or add one here."_ The panel itself lives in
+the lazy editor chunk but imports nothing from `@react-email/editor`: inserting a chip is a callback
+`VisualEditorSurface` hands in, which is why it can be tested under jsdom without an editor.
 
 ### Editor hooks inventory (phase-5 step 0)
 
@@ -331,10 +355,17 @@ Short, direct, sentence case. Say what happened and what to do next. Examples us
 - "Scaled to 41% of 680 px. ⌘P opens the full preview." (thumbnail caption) · "Open full preview"
 - "Preview mode. Read only." / "Code editor." (the hidden live region that announces a mode change)
 - "Plain text ready" / "Plain text —" (status bar) · "No preheader text." (envelope summary)
+- `Merge fields` · `4 in document` · `Insert {{recipientName}}` · `Unused` · `Not in payload` · `Fill in missing keys` · `Add field` · `Sample values (JSON)` (the inspector's Data tab)
+- "No merge fields yet. Type {{firstName}} in the canvas or add one here." (Data tab, empty)
+- "Unknown variable {{x}} · not in payload" (diagnostics, warning) / "All merge fields have values" (pass) — and the row is absent entirely when the template uses no merge fields
+- "Unsafe link after substitution" (diagnostics, error: a payload value turned an href into `javascript:` or `data:`)
+- "Every merge field already has a value." (Fill in missing keys, with nothing to fill) · "A field name starts with a letter or underscore and may contain letters, digits, underscores and dots." (Add field, invalid name) · "Fix the sample values JSON below first." (every Data tab control, while the payload does not parse) · "The sample values are not valid JSON, so these fields are read-only." (the same, said once above the rows)
+- "Uses {{firstName}}" (under the envelope's Subject line, when it contains a merge field)
+- "Where replies go. Leave empty to reply to the From address." (the send dialog's Reply-to) · `Current preview, 14.2 KB HTML + 3.1 KB plain text` (its Body row)
 
 ## Motion rules
 
-- Durations 150–300 ms; springs only inside the vendored badge.
+- Durations 150–300 ms. The badge's roll-in is CSS keyframes on the `EASE_OUT` curve; phase 6 removed `motion` entirely (ADR-4 update, TECH_DEBT #30), so nothing in the studio runs spring physics any more.
 - Every transition is a state change: badge status, device width, collapsible chevron, spinner while rendering.
-- `prefers-reduced-motion` disables all of it (global CSS rule + `useReducedMotion()` in the badge).
+- `prefers-reduced-motion` disables all of it (global CSS rule, plus a `@media` block that switches the badge's `.badge-roll` and `.badge-pulse` animations off).
 - Nothing blocks input; the preview keeps its last good state while updating.

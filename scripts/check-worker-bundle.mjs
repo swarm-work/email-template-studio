@@ -74,8 +74,8 @@ const EDITOR_FREE_PATHS = [
 /**
  * The app's own source is scanned too - this is where the risk actually lives,
  * since one `import { EmailEditor }` in a file the main bundle already needs
- * puts the whole 2.5 MB back in the first download. Three files are allowed to
- * name the package, and each for a different reason.
+ * puts the whole 2.5 MB back in the first download. A handful of files are
+ * allowed to name the package, and each for a different reason.
  */
 const EDITOR_SCANNED_PATHS = ['src']
 
@@ -83,6 +83,8 @@ const EDITOR_ALLOWED = new Map([
   ['src/presentation/studio/visual/VisualEditorSurface.tsx', 'the one module that mounts the editor'],
   ['src/infrastructure/render/visualEmailRenderer.ts', 'reaches /core through a dynamic import()'],
   ['src/infrastructure/render/studioTheme.ts', 'a type-only import, erased at build time'],
+  ['src/infrastructure/render/mergeFieldNode.ts', 'the merge-field node, built on EmailNode'],
+  ['src/infrastructure/render/editorExtensions.ts', "the canvas's extension list (StarterKit + theming)"],
 ])
 
 /** The one module allowed to import the package, and its own folder's re-exports. */

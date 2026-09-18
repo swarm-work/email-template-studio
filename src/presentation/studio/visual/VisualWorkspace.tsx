@@ -13,6 +13,7 @@ import type { EmailDocument, RenderError } from '@/domain'
 import type { VisualEditorHandle } from '@/infrastructure/render/visualEmailRenderer'
 import { RenderErrorBanner } from '../code/RenderErrorBanner'
 import type { VisualEditorControls } from './editorControls'
+import type { MergeFieldsData } from './MergeFieldsPanel'
 import { VisualEditorSkeleton } from './VisualEditorSkeleton'
 
 // The one dynamic import in the studio. Rolldown turns it into a separate chunk
@@ -44,6 +45,13 @@ export interface VisualWorkspaceProps {
   onCloseInspector: () => void
   /** The props payload card, built by StudioPage and shown on the Data tab. */
   dataPanel: ReactNode
+  /**
+   * Merge-field keys and the sample payload. Passed straight through: this
+   * component is in the main chunk and only the surface beyond the lazy seam
+   * renders the panel that reads them (the import above is type-only, so it is
+   * erased and nothing of the editor chunk leaks back here).
+   */
+  mergeFields: MergeFieldsData
 }
 
 export function VisualWorkspace(props: VisualWorkspaceProps) {

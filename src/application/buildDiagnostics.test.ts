@@ -13,6 +13,9 @@ describe('buildDiagnostics', () => {
       kind: 'code',
       contentDirty: false,
       payloadDirty: false,
+      missingMergeFields: [],
+      mergeFieldCount: 0,
+      unsafeHrefs: [],
     })
     const byId = Object.fromEntries(items.map((item) => [item.id, item]))
     expect(byId.template?.state).toBe('pass')
@@ -30,6 +33,9 @@ describe('buildDiagnostics', () => {
       kind: 'code',
       contentDirty: false,
       payloadDirty: false,
+      missingMergeFields: [],
+      mergeFieldCount: 0,
+      unsafeHrefs: [],
     })
     const fake = items.filter((item) => ['links', 'spf-dkim-dmarc', 'spam-score'].includes(item.id))
     expect(fake).toHaveLength(3)
@@ -44,6 +50,9 @@ describe('buildDiagnostics', () => {
       kind: 'code',
       contentDirty: false,
       payloadDirty: true,
+      missingMergeFields: [],
+      mergeFieldCount: 0,
+      unsafeHrefs: [],
     })
     const byId = Object.fromEntries(items.map((item) => [item.id, item]))
     expect(byId.payload?.state).toBe('error')
@@ -62,6 +71,9 @@ describe('buildDiagnostics', () => {
       kind: 'code',
       contentDirty: true,
       payloadDirty: false,
+      missingMergeFields: [],
+      mergeFieldCount: 0,
+      unsafeHrefs: [],
     })
     const byId = Object.fromEntries(items.map((item) => [item.id, item]))
     expect(byId.template?.state).toBe('error')
@@ -76,6 +88,9 @@ describe('buildDiagnostics', () => {
       kind: 'code',
       contentDirty: false,
       payloadDirty: false,
+      missingMergeFields: [],
+      mergeFieldCount: 0,
+      unsafeHrefs: [],
     })
     expect(items.find((item) => item.id === 'html')?.state).toBe('warning')
   })
@@ -91,6 +106,9 @@ describe('buildDiagnostics', () => {
       kind: 'visual',
       contentDirty: true,
       payloadDirty: false,
+      missingMergeFields: [],
+      mergeFieldCount: 0,
+      unsafeHrefs: [],
     })
     const template = items.find((item) => item.id === 'template')
     expect(template?.label).toBe('Canvas document')
@@ -105,9 +123,69 @@ describe('buildDiagnostics', () => {
       kind: 'visual',
       contentDirty: false,
       payloadDirty: false,
+      missingMergeFields: [],
+      mergeFieldCount: 0,
+      unsafeHrefs: [],
     })
     const template = items.find((item) => item.id === 'template')
     expect(template?.state).toBe('error')
     expect(template?.detail).toBe('Could not export the canvas.')
+  })
+  /* ---------------------------------------------------------------------
+   * Merge fields (phase 6). One row per outcome, and no row at all for a
+   * template that uses no merge fields.
+   * ------------------------------------------------------------------ */
+  const base = {
+    validation: ok,
+    renderStatus: 'success' as const,
+    renderResult: { ok: true as const, html: '<html></html>', text: '', durationMs: 5 },
+    kind: 'visual' as const,
+    contentDirty: false,
+    payloadDirty: false,
+    missingMergeFields: [] as string[],
+    mergeFieldCount: 0,
+    unsafeHrefs: [] as string[],
+  }
+
+  it('says nothing about merge fields when the template uses none', () => {
+    const items = buildDiagnostics(base)
+    expect(items.find((item) => item.id === 'merge-fields')).toBeUndefined()
+  })
+
+  it('passes when every merge field has a value', () => {
+    const items = buildDiagnostics({ ...base, mergeFieldCount: 2 })
+    const row = items.find((item) => item.id === 'merge-fields')
+    expect(row?.state).toBe('pass')
+    expect(row?.detail).toBe('All merge fields have values')
+  })
+
+  it('warns, naming the first missing key', () => {
+    const items = buildDiagnostics({ ...base, mergeFieldCount: 1, missingMergeFields: ['firstName'] })
+    const row = items.find((item) => item.id === 'merge-fields')
+    expect(row?.state).toBe('warning')
+    expect(row?.detail).toBe('Unknown variable {{firstName}} · not in payload')
+  })
+
+  it('counts the rest when several keys are missing', () => {
+    const items = buildDiagnostics({
+      ...base,
+      mergeFieldCount: 3,
+      missingMergeFields: ['firstName', 'company', 'code'],
+    })
+    expect(items.find((item) => item.id === 'merge-fields')?.detail).toBe(
+      'Unknown variable {{firstName}} · not in payload (+2 more)',
+    )
+  })
+
+  it('says nothing about links until one resolves to something unsafe', () => {
+    expect(buildDiagnostics(base).find((item) => item.id === 'unsafe-links')).toBeUndefined()
+  })
+
+  it('reports an unsafe link after substitution as an error', () => {
+    const items = buildDiagnostics({ ...base, unsafeHrefs: ['javascript:alert(1)'] })
+    const row = items.find((item) => item.id === 'unsafe-links')
+    expect(row?.state).toBe('error')
+    expect(row?.label).toBe('Unsafe link after substitution')
+    expect(row?.detail).toContain('javascript:alert(1)')
   })
 })

@@ -5,7 +5,7 @@
  *   POST /api/send-test         -> send one test email to up to 10 recipients
  *
  * The browser never sees credentials; it only sees this API. Guards, in order:
- * enabled flag, body validation, recipient policy, HTML size cap, rate limit.
+ * enabled flag, body validation, recipient policy, body size cap, rate limit.
  *
  * Who may receive is `config.recipientPolicy`: an allow-list, or any valid
  * address when SES_ALLOWED_RECIPIENTS is "*" (see server/config.ts). The
@@ -37,7 +37,10 @@ import type { TemplateStore } from './templateStore.ts'
 import { registerTemplateRoutes } from './templateRoutes.ts'
 import { registerUploadRoutes } from './uploadRoutes.ts'
 
+/** The cap on the message body: HTML and the plain-text part together. */
 export const MAX_HTML_BYTES = 500 * 1024
+/** At most five reply-to addresses, matching what the dialog offers. */
+export const MAX_REPLY_TO = 5
 /** Friendly cap, applied after de-duplication, so one send is one readable To header. */
 export const MAX_RECIPIENTS_PER_SEND = 10
 export const TEST_SUBJECT_PREFIX = '[TEST] '
@@ -68,6 +71,24 @@ const sendRequestSchema = z.object({
     .max(200)
     .refine((value) => !CONTROL_CHARACTERS.test(value), 'Subject must not contain control characters'),
   html: z.string().min(1),
+  /**
+   * The plain-text alternative part. Optional so an older browser tab, and the
+   * curl example in docs/SENDING.md, keep working; empty means HTML only.
+   */
+  text: z.string().max(200_000).optional(),
+  /**
+   * Where replies go. NOT checked against SES_ALLOWED_RECIPIENTS: nothing is
+   * delivered to a reply-to address, so the rule that protects recipients has
+   * nothing to protect here. It is still de-duplicated, control-char checked
+   * and capped, because it lands in a mail header.
+   */
+  replyTo: z
+    .union([recipient, z.array(recipient).min(1).max(MAX_REPLY_TO)])
+    .optional()
+    .refine(
+      (value) => value === undefined || !asList(value).some((address) => CONTROL_CHARACTERS.test(address)),
+      'Reply-to must not contain control characters',
+    ),
   templateId: z
     .string()
     .min(1)
@@ -374,12 +395,16 @@ export function createApp({
       )
     }
 
-    if (new TextEncoder().encode(request.html).length > MAX_HTML_BYTES) {
+    // One message, one budget: the two parts travel in the same email, so the
+    // cap is on their sum rather than on the HTML alone.
+    const encoder = new TextEncoder()
+    const bodyBytes = encoder.encode(request.html).length + encoder.encode(request.text ?? '').length
+    if (bodyBytes > MAX_HTML_BYTES) {
       return c.json(
         {
           status: 'error',
           code: 'invalid-request',
-          message: `HTML is larger than ${MAX_HTML_BYTES / 1024} KB.`,
+          message: `HTML and plain text together are larger than ${MAX_HTML_BYTES / 1024} KB.`,
         },
         400,
       )
@@ -399,12 +424,21 @@ export function createApp({
     const subject = /^\[TEST\]/i.test(request.subject)
       ? request.subject
       : `${TEST_SUBJECT_PREFIX}${request.subject}`
+    const replyTo = dedupe(asList(request.replyTo))
     try {
-      const receipt = await sender.send({ from: config.from, to, subject, html: request.html })
+      const receipt = await sender.send({
+        from: config.from,
+        to,
+        subject,
+        html: request.html,
+        text: request.text,
+        replyTo: replyTo.length > 0 ? replyTo : undefined,
+      })
       // The requester is logged so a surprising send can be traced to a person.
       const who = to.length === 1 ? to[0] : `${to.length} recipients: ${to.join(', ')}`
+      const replyToNote = replyTo.length > 0 ? ` reply-to ${replyTo.join(', ')}` : ''
       console.log(
-        `[send-test] ${sender.mode} "${subject}" -> ${who} by ${c.get('identity').email} (template ${request.templateId}) message ${receipt.messageId}`,
+        `[send-test] ${sender.mode} "${subject}" -> ${who}${replyToNote} by ${c.get('identity').email} (template ${request.templateId}) message ${receipt.messageId}`,
       )
       return c.json({
         status: 'sent',
@@ -430,6 +464,26 @@ export function createApp({
   })
 
   return app
+}
+
+/** One optional address or a list of them, always as a list. */
+function asList(value: string | string[] | undefined): string[] {
+  if (value === undefined) return []
+  return Array.isArray(value) ? value : [value]
+}
+
+/** Removes duplicates case-insensitively, keeping the first spelling typed. */
+function dedupe(addresses: readonly string[]): string[] {
+  const seen = new Set<string>()
+  const kept: string[] = []
+  for (const raw of addresses) {
+    const address = raw.trim()
+    const key = address.toLowerCase()
+    if (address === '' || seen.has(key)) continue
+    seen.add(key)
+    kept.push(address)
+  }
+  return kept
 }
 
 /**

@@ -13,6 +13,9 @@ describe('DiagnosticsPanel', () => {
       kind: 'code',
       contentDirty: false,
       payloadDirty: true,
+      missingMergeFields: [],
+      mergeFieldCount: 0,
+      unsafeHrefs: [],
     })
     render(<DiagnosticsPanel items={items} />)
 

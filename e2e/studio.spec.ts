@@ -710,7 +710,9 @@ test('send test email goes through the API in dry-run mode', async ({ page }) =>
   await expect(sendDialog.getByText('studio@example.test')).toBeVisible()
   // Recipients are typed, not chosen: the field starts empty and both of these
   // are in the e2e allow-list (wrangler.jsonc env.e2e).
-  const recipients = sendDialog.getByLabel('To')
+  // `exact` because the dialog also has a Reply-to field, and a substring
+  // match on "To" would find both.
+  const recipients = sendDialog.getByLabel('To', { exact: true })
   await expect(recipients).toHaveValue('')
   await recipients.fill('qa@example.test, second@example.test')
 
@@ -738,4 +740,38 @@ test('send test email goes through the API in dry-run mode', async ({ page }) =>
   expect(recipientsBox!.x + recipientsBox!.width).toBeLessThanOrEqual(dialogBox!.x + dialogBox!.width - 8)
   // The dialog has two buttons named Close: the icon in the corner and the footer button.
   await sendDialog.getByRole('button', { name: 'Close' }).last().click()
+})
+
+test('a merge field in a code template subject resolves in the preview summary', async ({ page }) => {
+  // Merge fields are not a visual-only feature: the subject and the preheader
+  // of a code template go through the same substitution (ADR-26).
+  await openTemplate(page, WELCOME)
+  await waitForRender(page)
+
+  await envelopePanel(page).getByLabel('Subject line').fill('Hi {{recipientName}}, verify your email')
+  // The hint under the field says the braces were recognised as a field.
+  await expect(envelopePanel(page).getByText('Uses {{recipientName}}')).toBeVisible()
+
+  await modeButton(page, 'Preview').click()
+  const summary = previewPanel(page)
+  // `recipientName` is "Ada" in the starter's sample payload.
+  await expect(summary.getByText('Hi Ada, verify your email')).toBeVisible()
+  await expect(summary.getByText('{{recipientName}}')).toHaveCount(0)
+  // Nothing is missing, so the diagnostics row passes rather than warning.
+  await expect(page.getByRole('region', { name: 'Diagnostics' }).first()).toContainText(
+    'All merge fields have values',
+  )
+})
+
+test('a merge field with no value stays visible and is reported', async ({ page }) => {
+  await openTemplate(page, WELCOME)
+  await waitForRender(page)
+
+  await envelopePanel(page).getByLabel('Subject line').fill('Hi {{unknownKey}}')
+
+  await modeButton(page, 'Preview').click()
+  await expect(previewPanel(page).getByText('Hi {{unknownKey}}')).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Diagnostics' }).first()).toContainText(
+    'Unknown variable {{unknownKey}} · not in payload',
+  )
 })

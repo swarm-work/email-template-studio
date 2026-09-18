@@ -9,7 +9,7 @@
  * It owns no template data: the document comes in as a prop and every change
  * goes straight back out through `onDocumentChange`.
  */
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { JSONContent } from '@tiptap/core'
 import { toast } from 'sonner'
 import { EmailEditor, type EmailEditorRef } from '@react-email/editor'
@@ -17,12 +17,14 @@ import { Inspector } from '@react-email/editor/ui'
 import '@react-email/editor/themes/default.css'
 import type { EmailDocument } from '@/domain'
 import { uploadImage } from '@/infrastructure/providers/uploadImage'
+import { studioEditorExtensions } from '@/infrastructure/render/editorExtensions'
 import { STUDIO_FONT_STACK, studioTheme } from '@/infrastructure/render/studioTheme'
 import type { VisualEditorHandle } from '@/infrastructure/render/visualEmailRenderer'
 import { CANVAS_PLACEHOLDER } from './canvas'
 import { createDocumentUpdateGuard } from './documentUpdateGuard'
 import type { VisualEditorControls } from './editorControls'
 import { EmailCanvas } from './EmailCanvas'
+import { MergeFieldsPanel, type MergeFieldsData } from './MergeFieldsPanel'
 import { NO_SELECTION_REASON, StudioInspector } from './StudioInspector'
 
 /** The email sheet itself: the editor's own container, styled as paper. */
@@ -45,8 +47,10 @@ export interface VisualEditorSurfaceProps {
   /** Whether the off-canvas rail is showing (below xl); ignored at xl and up. */
   inspectorOpen: boolean
   onCloseInspector: () => void
-  /** The props payload card shown on the inspector's Data tab. */
+  /** The props payload card shown under the merge fields on the Data tab. */
   dataPanel: ReactNode
+  /** Discovered keys and the sample payload, for the Data tab's panel. */
+  mergeFields: MergeFieldsData
 }
 
 export function VisualEditorSurface({
@@ -60,6 +64,7 @@ export function VisualEditorSurface({
   inspectorOpen,
   onCloseInspector,
   dataPanel,
+  mergeFields,
 }: VisualEditorSurfaceProps) {
   // The rail is rendered beside the canvas, but the package renders our
   // children as siblings of the editor container - inside the canvas scroller.
@@ -143,6 +148,32 @@ export function VisualEditorSurface({
     }
   }, [editor, onControlsChange])
 
+  // The package's defaults plus the merge-field node. Memoised on the theme
+  // because a new array on every render would rebuild the whole editor.
+  const themeConfig = studioTheme(theme)
+  const extensions = useMemo(
+    () => studioEditorExtensions({ theme: themeConfig, placeholder: CANVAS_PLACEHOLDER }),
+    [themeConfig],
+  )
+
+  /**
+   * Puts a chip where the caret is. An editor nobody has clicked into has its
+   * selection at the very start, which is almost never where somebody pressing
+   * "Insert {{firstName}}" in the rail means; so an unfocused canvas is focused
+   * at its END first, which is where they were last typing.
+   */
+  const insertMergeField = useCallback(
+    (key: string) => {
+      if (!editor) return
+      editor
+        .chain()
+        .focus(editor.isFocused ? undefined : 'end')
+        .insertMergeField(key)
+        .run()
+    },
+    [editor],
+  )
+
   const handleUploadImage = useCallback(async (file: File) => {
     try {
       return await uploadImage(file)
@@ -164,8 +195,9 @@ export function VisualEditorSurface({
           key={templateId}
           className={SHEET_CLASS}
           content={initialDocument as JSONContent}
-          theme={studioTheme(theme)}
+          theme={themeConfig}
           placeholder={CANVAS_PLACEHOLDER}
+          extensions={extensions}
           onReady={handleReady}
           onUpdate={handleUpdate}
           onUploadImage={handleUploadImage}
@@ -184,7 +216,12 @@ export function VisualEditorSurface({
                     <Inspector.Text />
                   </>
                 }
-                dataPanel={dataPanel}
+                dataPanel={
+                  <div className="flex min-w-0 flex-col gap-4">
+                    <MergeFieldsPanel {...mergeFields} onInsert={insertMergeField} />
+                    {dataPanel}
+                  </div>
+                }
                 fontFamily={STUDIO_FONT_STACK}
                 nodeActionReason={hasNodeSelection ? undefined : NO_SELECTION_REASON}
                 onDeleteNode={() => editor && deleteSelectedBlock(editor)}

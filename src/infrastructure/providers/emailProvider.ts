@@ -17,6 +17,18 @@ export interface OutgoingTestEmail {
   readonly to: readonly string[]
   readonly subject: string
   readonly html: string
+  /**
+   * The plain-text alternative part. Sent alongside the HTML rather than
+   * instead of it, so a text-only client shows the same message (plan §3.9).
+   * '' means the render produced none and the email goes out HTML-only.
+   */
+  readonly text: string
+  /**
+   * Where replies go, at most five addresses. Optional, and deliberately NOT
+   * subject to SES_ALLOWED_RECIPIENTS: nothing is delivered to a reply-to
+   * address, so the allow-list that protects recipients does not apply.
+   */
+  readonly replyTo?: readonly string[]
   readonly templateId: string
 }
 

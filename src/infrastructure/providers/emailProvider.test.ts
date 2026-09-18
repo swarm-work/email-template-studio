@@ -9,7 +9,7 @@ function fetchReturning(status: number, body: unknown): typeof fetch {
   ) as unknown as typeof fetch
 }
 
-const email = { to: ['qa@example.com'], subject: 'Hi', html: '<p>x</p>', templateId: 't' }
+const email = { to: ['qa@example.com'], subject: 'Hi', html: '<p>x</p>', text: 'x', templateId: 't' }
 
 describe('NoSendEmailProvider', () => {
   it('is never connected and never sends', async () => {

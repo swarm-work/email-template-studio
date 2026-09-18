@@ -12,7 +12,12 @@ if (found?.kind !== 'visual') throw new Error('no visual starter to mount')
 /** The shipped visual starter, narrowed once so the tests below can read its document. */
 const VISUAL_STARTER = found
 
-function renderSurface(overrides: { onEditorReady?: (handle: VisualEditorHandle) => void } = {}) {
+function renderSurface(
+  overrides: {
+    onEditorReady?: (handle: VisualEditorHandle) => void
+    mergeFieldKeys?: readonly string[]
+  } = {},
+) {
   return render(
     // StrictMode, because the app runs in it: React mounts every effect twice,
     // and an editor that registers a plugin without cleaning it up shows here.
@@ -30,6 +35,11 @@ function renderSurface(overrides: { onEditorReady?: (handle: VisualEditorHandle)
             inspectorOpen={false}
             onCloseInspector={() => {}}
             dataPanel={<p>Props payload</p>}
+            mergeFields={{
+              keys: overrides.mergeFieldKeys ?? [],
+              payloadText: '{}',
+              onPayloadChange: () => {},
+            }}
           />
         </div>
       </TooltipProvider>

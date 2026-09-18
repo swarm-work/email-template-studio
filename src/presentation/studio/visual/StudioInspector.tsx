@@ -35,7 +35,7 @@ export interface StudioInspectorProps {
   hierarchy: ReactNode
   /** `Inspector.Document` / `.Node` / `.Text`, whichever the selection calls for. */
   styleSections: ReactNode
-  /** The props payload card; merge fields join it above in phase 6. */
+  /** The Data tab's contents: `MergeFieldsPanel` above the props payload card. */
   dataPanel: ReactNode
   /** The font stack the email exports with, for the client-safe note. */
   fontFamily: string

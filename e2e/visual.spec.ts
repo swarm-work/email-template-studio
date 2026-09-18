@@ -372,8 +372,14 @@ test('the feature flag switches the canvas off and says so', async ({ page }) =>
     if (EDITOR_CHUNK.test(request.url())) editorRequests.push(request.url())
   })
   await page.route('**/api/send-test/status', async (route) => {
-    const response = await route.fetch()
-    const body = (await response.json()) as Record<string, unknown>
+    // Best effort: `route.fetch()`'s response is disposed if a navigation lands
+    // while it is in flight, and a handler that throws never fulfils the route
+    // at all. The only part this test needs is the flag, so a failed read falls
+    // back to the rest of the answer being empty.
+    const body = await route
+      .fetch()
+      .then((response) => response.json() as Promise<Record<string, unknown>>)
+      .catch(() => ({}))
     await route.fulfill({ json: { ...body, features: { visualEditor: false } } })
   })
   await page.reload()
@@ -395,4 +401,139 @@ test('the feature flag switches the canvas off and says so', async ({ page }) =>
   await expect(actionsToolbar(page).getByRole('button', { name: 'Redo' })).toHaveCount(0)
   // The whole point of the switch: the 2.5 MB editor is never downloaded.
   expect(editorRequests, 'the editor chunk was fetched with the flag off').toEqual([])
+})
+
+/* ---------------------------------------------------------------------------
+ * Merge fields (phase 6). Typed on the canvas, filled in from the Data tab,
+ * resolved in the preview - and never resolved in what is saved (ADR-26).
+ * ------------------------------------------------------------------------ */
+
+/** The chips themselves, whatever they are styled as. */
+function chips(page: Page) {
+  return page.locator('.studio-sheet [data-merge-field]')
+}
+function diagnostics(page: Page) {
+  return page.getByRole('region', { name: 'Diagnostics' })
+}
+function dataTab(page: Page) {
+  return inspector(page).getByRole('tab', { name: 'Data' })
+}
+
+test('typed {{keys}} become chips, warn, and resolve one key at a time', async ({ page }) => {
+  await openVisualTemplate(page)
+  await expect(statusBar(page).getByText(/^HTML export /)).not.toHaveText('HTML export —', {
+    timeout: EDITOR_LOAD_TIMEOUT,
+  })
+
+  // 1. Typing the token converts it to one atomic chip. A PARAGRAPH, not the
+  //    heading: the plain-text part uppercases heading text, which would make
+  //    the token in that half `{{FIRSTNAME}}` (docs/TECH_DEBT.md #40).
+  await sheet(page).getByText('We have fully rolled out').first().click()
+  await page.keyboard.press('End')
+  await page.keyboard.type(' {{firstName}}')
+  await expect(chips(page)).toHaveCount(1)
+  await expect(chips(page).first()).toHaveText('{{firstName}}')
+
+  // 2. The diagnostics row names the key that has no value. Diagnostics live in
+  //    preview mode for a visual template (the canvas has the inspector instead).
+  await modeButton(page, 'Preview').click()
+  await expect(diagnostics(page)).toContainText('Unknown variable {{firstName}} · not in payload', {
+    timeout: EDITOR_LOAD_TIMEOUT,
+  })
+  // ...and the token is still visible in the preview rather than blanked out.
+  await expect(previewBody(page)).toContainText('{{firstName}}')
+
+  // 3. The Data tab says the same thing, and fills the key in.
+  await modeButton(page, 'Visual').click()
+  await dataTab(page).click()
+  await expect(inspector(page).getByText('1 in document')).toBeVisible()
+  await expect(inspector(page).getByText('Not in payload')).toBeVisible()
+  await inspector(page).getByRole('button', { name: 'Fill in missing keys' }).click()
+  await expect(inspector(page).getByText('Not in payload')).toHaveCount(0)
+
+  // By role, because the row's Insert button carries the same name in its
+  // `aria-label`; only one of the two is a text box.
+  await inspector(page).getByRole('textbox', { name: '{{firstName}}' }).fill('Ada')
+
+  // 4. A SECOND key, with no value. Substitution is per key, not all-or-nothing:
+  //    the one that has a value fills in even while the other does not, and only
+  //    the unfilled one is warned about.
+  await sheet(page).getByText('We have fully rolled out').first().click()
+  await page.keyboard.press('End')
+  await page.keyboard.type(' {{company}}')
+  await expect(chips(page)).toHaveCount(2)
+
+  await modeButton(page, 'Preview').click()
+  await expect(previewBody(page)).toContainText('Ada', { timeout: EDITOR_LOAD_TIMEOUT })
+  await expect(previewBody(page)).not.toContainText('{{firstName}}')
+  await expect(previewBody(page)).toContainText('{{company}}')
+  await expect(diagnostics(page)).toContainText('Unknown variable {{company}} · not in payload')
+
+  // 5. With both filled in, nothing is left over and the row passes.
+  await modeButton(page, 'Visual').click()
+  await dataTab(page).click()
+  await inspector(page).getByRole('textbox', { name: '{{company}}' }).fill('Acme')
+  await modeButton(page, 'Preview').click()
+  await expect(previewBody(page)).toContainText('Acme', { timeout: EDITOR_LOAD_TIMEOUT })
+  await expect(previewBody(page)).not.toContainText('{{company}}')
+  await expect(diagnostics(page)).toContainText('All merge fields have values')
+})
+
+test('Insert {{key}} from the Data tab puts a second chip on the canvas', async ({ page }) => {
+  await openVisualTemplate(page)
+  await sheet(page).getByText('We have fully rolled out').first().click()
+  await page.keyboard.press('End')
+  await page.keyboard.type(' {{firstName}}')
+  await expect(chips(page)).toHaveCount(1)
+
+  await dataTab(page).click()
+  await inspector(page).getByRole('button', { name: 'Insert {{firstName}}' }).click()
+  await expect(chips(page)).toHaveCount(2)
+})
+
+test('the send dialog carries the reply-to, the resolved subject and both parts', async ({ page }) => {
+  await openVisualTemplate(page)
+  await expect(statusBar(page).getByText(/^HTML export /)).not.toHaveText('HTML export —', {
+    timeout: EDITOR_LOAD_TIMEOUT,
+  })
+
+  // One field on the canvas and one in the subject, so both halves of what is
+  // sent can be checked for the RESOLVED text rather than the template's own.
+  await sheet(page).getByText('We have fully rolled out').first().click()
+  await page.keyboard.press('End')
+  await page.keyboard.type(' {{firstName}}')
+  await expect(chips(page)).toHaveCount(1)
+
+  const envelope = page.getByRole('region', { name: 'Envelope & dispatch' })
+  await envelope.getByLabel('Subject line').fill('Hello {{firstName}}')
+  await envelope.getByLabel('Reply-to address').fill('support@example.test')
+  await dataTab(page).click()
+  await inspector(page).getByRole('button', { name: 'Fill in missing keys' }).click()
+  // By role, because the row's Insert button carries the same name in its
+  // `aria-label`; only one of the two is a text box.
+  await inspector(page).getByRole('textbox', { name: '{{firstName}}' }).fill('Ada')
+
+  // What actually leaves the browser, rather than what the dialog says it will.
+  const sent: Record<string, unknown>[] = []
+  await page.route('**/api/send-test', async (route) => {
+    sent.push(route.request().postDataJSON() as Record<string, unknown>)
+    await route.continue()
+  })
+
+  await actionsToolbar(page).getByRole('button', { name: 'Send test' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Send test email' })
+  await expect(dialog.getByLabel('Reply-to')).toHaveValue('support@example.test')
+  await expect(dialog.getByLabel('Subject')).toHaveValue('Hello Ada')
+  await expect(dialog.getByText(/Current preview, .* KB HTML \+ .* KB plain text/)).toBeVisible()
+
+  await dialog.getByLabel('To', { exact: true }).fill('qa@example.test')
+  await dialog.getByRole('button', { name: /^Send test$/ }).click()
+  await expect(dialog.getByText('Dry run complete')).toBeVisible()
+
+  expect(sent).toHaveLength(1)
+  expect(sent[0].subject).toBe('Hello Ada')
+  expect(sent[0].replyTo).toEqual(['support@example.test'])
+  expect(String(sent[0].html)).toContain('Ada')
+  expect(String(sent[0].html)).not.toContain('{{firstName}}')
+  expect(typeof sent[0].text).toBe('string')
 })
