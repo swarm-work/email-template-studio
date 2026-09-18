@@ -8,7 +8,7 @@ export interface AppFooterProps {
 
 export function AppFooter({ environment, version, providerLabel }: AppFooterProps) {
   return (
-    <footer className="bg-card mt-8 border-t">
+    <footer className="bg-card mt-8 shrink-0 border-t">
       <div className="text-muted-foreground mx-auto flex h-9 max-w-[1440px] items-center gap-4 px-6 text-xs">
         <span className="flex items-center gap-1.5">
           <StatusDot tone="success" />

@@ -18,6 +18,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 
 /** What the gate is currently doing. */
 type GateState =
@@ -120,17 +122,15 @@ export function PasswordGate({ children, fetchImpl = (...args) => fetch(...args)
         {state.kind === 'locked' ? (
           <form onSubmit={submit} className="space-y-4">
             <div className="space-y-2">
-              <label htmlFor="studio-password" className="text-sm font-medium">
-                Password
-              </label>
-              <input
+              <Label htmlFor="studio-password">Password</Label>
+              <Input
                 id="studio-password"
                 type="password"
                 autoComplete="current-password"
                 autoFocus
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
-                className="border-input focus-visible:ring-ring/50 flex h-9 w-full rounded-md border bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:ring-[3px]"
+                className="h-9 px-3"
               />
             </div>
             {state.message ? (

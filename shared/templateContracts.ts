@@ -19,6 +19,7 @@ export const MAX_TEXT_BYTES = 256_000
 export const MAX_PROPS_BYTES = 64_000
 export const MAX_VERSION_BYTES = 1_000_000
 export const MAX_TAGS = 10
+export const MAX_TAG_LENGTH = 40
 export const MAX_NAME_LENGTH = 120
 export const MAX_SLUG_LENGTH = 80
 export const MAX_DESCRIPTION_LENGTH = 500
@@ -130,7 +131,7 @@ export const versionBodySchema = z
     `The version is larger than ${MAX_VERSION_BYTES} bytes`,
   )
 
-export const tagsSchema = z.array(z.string().min(1).max(40)).max(MAX_TAGS)
+export const tagsSchema = z.array(z.string().min(1).max(MAX_TAG_LENGTH)).max(MAX_TAGS)
 
 export const createTemplateRequest = z.object({
   name: z.string().min(1).max(MAX_NAME_LENGTH),

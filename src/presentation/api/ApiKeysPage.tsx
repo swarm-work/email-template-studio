@@ -21,9 +21,9 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { createApiKeyToken, displayApiKeyPrefix, normalizeApiKeyEnvironment } from '@/application/apiKeys'
-import { AppFooter } from '@/presentation/layout/AppFooter'
-import { GlobalHeader, type ProductPage } from '@/presentation/layout/GlobalHeader'
 import { StatusBadge, type StatusTone } from '@/presentation/shared/StatusBadge'
 import { cn } from '@/lib/utils'
 
@@ -52,12 +52,8 @@ interface WebhookEndpoint {
 }
 
 interface ApiKeysPageProps {
-  workspace: string
+  /** Named on generated mock keys. The shell owns the header and the footer. */
   environment: string
-  version: string
-  providerLabel: string
-  activePage: ProductPage
-  onNavigate: (page: ProductPage) => void
 }
 
 const topicOptions: WebhookTopic[] = ['delivered', 'bounced', 'complained', 'opened', 'clicked']
@@ -105,6 +101,11 @@ const snippetByLanguage = {
 
 type SnippetLanguage = keyof typeof snippetByLanguage
 
+/**
+ * Only the `<select>` below still uses this: shadcn has no select-styled native
+ * element, and this file is mock UI that docs/PRIORITIES.md says not to refactor
+ * further. The text fields are `<Input>`.
+ */
 const inputClass =
   'border-border bg-background focus-visible:ring-ring/50 h-8 w-full rounded-md border px-2 text-sm outline-none focus-visible:ring-3'
 
@@ -116,14 +117,7 @@ const keyStatusTone: Record<ApiKeyStatus, StatusTone> = {
   rotating: 'warning',
 }
 
-export function ApiKeysPage({
-  workspace,
-  environment,
-  version,
-  providerLabel,
-  activePage,
-  onNavigate,
-}: ApiKeysPageProps) {
+export function ApiKeysPage({ environment }: ApiKeysPageProps) {
   const [keys, setKeys] = useState<ApiKeyRecord[]>(initialKeys)
   const [webhooks, setWebhooks] = useState<WebhookEndpoint[]>(initialWebhooks)
   const [generateOpen, setGenerateOpen] = useState(false)
@@ -132,60 +126,47 @@ export function ApiKeysPage({
   const activeKeys = keys.filter((key) => key.status !== 'revoked').length
 
   return (
-    <div className="flex min-h-screen flex-col">
-      <GlobalHeader
-        workspace={workspace}
-        environment={environment}
-        workerHealth="ready"
-        lastRenderMs={null}
-        activePage={activePage}
-        onNavigate={onNavigate}
-      />
-
-      <main className="mx-auto w-full max-w-[1440px] flex-1 space-y-6 px-6 py-6">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div className="space-y-1.5">
-            <div className="flex items-center gap-2">
-              <h1 className="text-xl font-semibold tracking-tight">API Keys &amp; Integration</h1>
-              <StatusBadge tone="info">Seeded UI</StatusBadge>
-            </div>
-            <p className="text-muted-foreground max-w-2xl text-sm">
-              Create browser-only mock keys, review webhook endpoints and copy starter snippets. Real
-              authorization arrives when the Worker API keys table is wired to D1.
-            </p>
+    <div className="mx-auto w-full max-w-[1440px] space-y-6 px-6 py-6">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-semibold tracking-tight">API Keys &amp; Integration</h1>
+            <StatusBadge tone="info">Seeded UI</StatusBadge>
           </div>
+          <p className="text-muted-foreground max-w-2xl text-sm">
+            Create browser-only mock keys, review webhook endpoints and copy starter snippets. Real
+            authorization arrives when the Worker API keys table is wired to D1.
+          </p>
+        </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="bg-card text-muted-foreground flex h-7 items-center gap-2 rounded-md border px-2 font-mono text-xs">
-              {activeKeys} active keys
-              <span className="text-border" aria-hidden="true">
-                |
-              </span>
-              <span className="text-foreground">{webhooks.length} webhook</span>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="bg-card text-muted-foreground flex h-7 items-center gap-2 rounded-md border px-2 font-mono text-xs">
+            {activeKeys} active keys
+            <span className="text-border" aria-hidden="true">
+              |
             </span>
-            <Button variant="outline" size="sm" onClick={() => setWebhookOpen(true)}>
-              <Webhook aria-hidden="true" />
-              Add webhook
-            </Button>
-            <Button size="sm" onClick={() => setGenerateOpen(true)}>
-              <KeyRound aria-hidden="true" />
-              Generate key
-            </Button>
-          </div>
+            <span className="text-foreground">{webhooks.length} webhook</span>
+          </span>
+          <Button variant="outline" size="sm" onClick={() => setWebhookOpen(true)}>
+            <Webhook aria-hidden="true" />
+            Add webhook
+          </Button>
+          <Button size="sm" onClick={() => setGenerateOpen(true)}>
+            <KeyRound aria-hidden="true" />
+            Generate key
+          </Button>
         </div>
+      </div>
 
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(360px,0.9fr)]">
-          <CredentialsManagerCard keys={keys} onRotate={setKeys} onRevoke={setRevokeTarget} />
-          <IntegrationQuickstartCard onCopy={copyText} />
-        </div>
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(360px,0.9fr)]">
+        <CredentialsManagerCard keys={keys} onRotate={setKeys} onRevoke={setRevokeTarget} />
+        <IntegrationQuickstartCard onCopy={copyText} />
+      </div>
 
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
-          <WebhookDispatchCard webhooks={webhooks} />
-          <SecurityNotesCard />
-        </div>
-      </main>
-
-      <AppFooter environment={environment} version={version} providerLabel={providerLabel} />
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
+        <WebhookDispatchCard webhooks={webhooks} />
+        <SecurityNotesCard />
+      </div>
 
       <GenerateKeyDialog
         open={generateOpen}
@@ -518,10 +499,12 @@ function GenerateKeyDialog({
           </div>
         ) : (
           <div className="grid gap-4">
-            <label className="grid gap-1.5 text-sm">
-              <span className="meta-label">Name</span>
-              <input className={inputClass} value={name} onChange={(event) => setName(event.target.value)} />
-            </label>
+            <div className="grid gap-1.5 text-sm">
+              <Label htmlFor="generate-key-name" className="meta-label">
+                Name
+              </Label>
+              <Input id="generate-key-name" value={name} onChange={(event) => setName(event.target.value)} />
+            </div>
             <label className="grid gap-1.5 text-sm">
               <span className="meta-label">Scope</span>
               <select
@@ -601,27 +584,21 @@ function CreateWebhookDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4">
-          <label className="grid gap-1.5 text-sm">
-            <span className="meta-label">Name</span>
-            <input
-              aria-label="Name"
-              className={inputClass}
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-            />
-          </label>
-          <label className="grid gap-1.5 text-sm">
-            <span className="meta-label">Endpoint URL</span>
-            <input
-              aria-label="Endpoint URL"
-              className={inputClass}
-              value={url}
-              onChange={(event) => setUrl(event.target.value)}
-            />
+          <div className="grid gap-1.5 text-sm">
+            <Label htmlFor="webhook-name" className="meta-label">
+              Name
+            </Label>
+            <Input id="webhook-name" value={name} onChange={(event) => setName(event.target.value)} />
+          </div>
+          <div className="grid gap-1.5 text-sm">
+            <Label htmlFor="webhook-url" className="meta-label">
+              Endpoint URL
+            </Label>
+            <Input id="webhook-url" value={url} onChange={(event) => setUrl(event.target.value)} />
             {!url.startsWith('https://') ? (
               <span className="text-danger-foreground text-xs">Use HTTPS.</span>
             ) : null}
-          </label>
+          </div>
           <fieldset className="space-y-2">
             <legend className="meta-label">Topics</legend>
             <div className="flex flex-wrap gap-2">

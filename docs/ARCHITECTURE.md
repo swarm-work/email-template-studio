@@ -16,7 +16,7 @@ flowchart TB
 | Domain         | `src/domain`         | `TemplateRecord` (`code` \| `visual`), `EmailTemplate`, `TemplateMetadata`, `TemplateEnvelope`, `EmailDocument`, `PreviewPayload`, `ValidationResult`, `RenderResult`, status unions | React, Zod, Tiptap, browser APIs, network |
 | Application    | `src/application`    | `parsePreviewPayload`, `studioReducer` (select, edit, reset, device, mode), `studioModes`, `buildDiagnostics`, `repositories/` (ports: `TemplateRepository` and its result types)    | React, DOM, Zod                           |
 | Infrastructure | `src/infrastructure` | Starter registry + Zod schemas, `templateMapper` (record → `EmailTemplate`), props validators, render pipeline and worker, session storage, no-send provider                         | UI                                        |
-| Presentation   | `src/presentation`   | `StudioPage`, panels, dialogs, hooks (`useStudio`, `useRenderPreview`)                                                                                                               | Business rules (they live in application) |
+| Presentation   | `src/presentation`   | `AppShell` + `GlobalHeader`, `templates/` (route, library page, grid, card, search), `StudioPage`, panels, dialogs, hooks (`useStudio`, `useTemplateLibrary`, `useRenderPreview`)    | Business rules (they live in application) |
 | Shared         | `shared`             | `templateContracts.ts`: the request/response Zod schemas and size caps the browser, the Node server and the Worker all validate against                                              | Everything but `zod`                      |
 
 ## The preview pipeline
@@ -51,6 +51,7 @@ flowchart LR
 - **`require` shim.** After sucrase rewrites `import` to `require()`, the only modules that exist are the three in the map. Anything else throws a clear error. A regex pre-check gives a friendlier message earlier, but the shim is the actual boundary.
 - **Hardened worker globals.** Workers share the page origin and could `fetch()` with the page's cookies. Before any template code runs, network-capable globals are replaced with `undefined` on the global object and its prototype chain (non-writable, non-configurable). Verified in E2E: `typeof fetch === 'undefined'` inside templates.
 - **Sandboxed iframe + CSP.** `sandbox=""` removes scripts, forms, popups and same-origin access. The injected `Content-Security-Policy` meta forbids everything except inline styles, images and fonts. Rendered HTML from React Email contains no scripts anyway (asserted in E2E).
+- **The worker is warmed up at start-up.** Its bundle is megabytes of compiler and React Email, and fetching and parsing it happens _inside_ the render timeout. Since the studio opens on the library, that cost no longer overlaps with page load, so `App.tsx` calls `renderer.warmUp()` on mount; otherwise the first preview on a cold machine can be killed at 5 s and wrongly reported as an infinite loop. A timeout or a crash starts a replacement straight away, but a crash only does so twice in a row: a worker whose bundle cannot start at all would otherwise refetch megabytes in a loop, so after that the next `render()` creates one lazily.
 - **Last good render is kept.** When a new render fails or the payload is invalid, the preview shows the previous HTML with a banner rather than flashing empty.
 
 ### What code is allowed
@@ -67,6 +68,26 @@ flowchart LR
 3. The regex import check can be fooled by comments or template strings; the `require` shim still blocks execution, so this only affects the quality of the error message.
 4. Types are not checked in the browser, so a template can compile and then throw at render time; the error is shown but not prevented.
 5. The iframe CSP allows `img-src http:`; a template can therefore embed a tracking pixel that fires when previewed. Mail clients behave the same way; tighten to `https:` if preferred.
+
+## View state: one route owner, no router (yet)
+
+There is still no routing library. `presentation/templates/TemplatesRoute.tsx` holds one value,
+`StudioView = {kind:'library'} | {kind:'editor'; templateId}`, which deliberately mirrors the URLs the
+app will have: `/templates` and `/templates/:id`. Nothing else reads it — the library and the studio
+are handed `onOpenTemplate` / `onBackToLibrary` callbacks — so adding a real router later means
+replacing this one `useState` with `useParams`, and nothing below it changes.
+
+The app always lands on the library, and the view is **not** persisted: reopening the tab should show
+you the shelf, not the last file you had open. Drafts still are persisted (`sessionStorage`), keyed by
+template id, so going back to the library and into another template keeps every edit.
+
+`TemplatesRoute` also owns the two hooks the screens share: `useTemplateLibrary` (what the repository
+says: `loading | error | empty | ready`) and `useStudio` (drafts, device, mode). `useStudio` lives
+above the editor rather than inside it precisely because the library needs `dirtyTemplateIds` to badge
+cards "Modified" while the editor is not mounted.
+
+`AppShell` is rendered once, by `App.tsx`, around whichever screen is showing, so the header never
+remounts between views.
 
 ## State model
 

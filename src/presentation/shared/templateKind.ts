@@ -1,14 +1,14 @@
 /**
  * How a template's kind is written in the UI.
  *
- * Presentation layer: labels only, no rules. A code template is still shown as
- * "TSX" because that is what the person is editing; the kind itself ('code')
- * is the word the API and the database use.
+ * Presentation layer: labels only, no rules. These are the words on the library
+ * card's chip; the kind itself ('code' | 'visual') is what the API and the
+ * database use.
  */
 import type { TemplateKind } from '@/domain'
 
 const KIND_LABELS: Readonly<Record<TemplateKind, string>> = {
-  code: 'TSX',
+  code: 'Code',
   visual: 'Visual',
 }
 

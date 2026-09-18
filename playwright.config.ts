@@ -13,7 +13,9 @@ export default defineConfig({
   fullyParallel: false,
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? 'github' : 'list',
-  timeout: 45_000,
+  // A test may wait out a cold worker boot (FIRST_RENDER_TIMEOUT) and still do
+  // a few UI steps around it, so the per-test budget has to be comfortably larger.
+  timeout: 75_000,
   use: {
     baseURL: 'http://localhost:4173',
     viewport: { width: 1440, height: 900 },

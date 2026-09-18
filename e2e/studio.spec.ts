@@ -1,5 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 
+const WELCOME = 'Welcome & verification'
+const PASSWORD_RESET = 'Password reset'
 const WELCOME_SOURCE_LABEL = 'Template source for welcome-verification.email.tsx'
 const PAYLOAD_LABEL = 'Preview payload JSON'
 
@@ -9,6 +11,13 @@ const PAYLOAD_LABEL = 'Preview payload JSON'
  * a separate assertion checks the rendered HTML contains no script tags.
  */
 const SANDBOX_NOTICE = /Blocked script execution in 'about:srcdoc'/
+
+/**
+ * How long to wait for a preview. This is not a UI wait: it covers fetching and
+ * parsing the ~2 MB render worker and compiling the template inside it, which
+ * on a loaded machine took longer than the old 15 s and read as a broken build.
+ */
+const FIRST_RENDER_TIMEOUT = 30_000
 
 function previewBody(page: Page) {
   return page.frameLocator('iframe[title^="Email preview"]').locator('body')
@@ -21,6 +30,28 @@ function payloadPanel(page: Page) {
 }
 function previewPanel(page: Page) {
   return page.getByRole('region', { name: 'Preview', exact: true })
+}
+function libraryHeading(page: Page) {
+  return page.getByRole('heading', { level: 1, name: 'Templates', exact: true })
+}
+function editorHeading(page: Page) {
+  return page.getByRole('heading', { level: 1, name: 'Templates & Studio' })
+}
+function templateCard(page: Page, name: string) {
+  return page.getByRole('button', { name: `Open ${name}`, exact: true })
+}
+
+/** The app lands on the library; opening a card is how you reach the editor. */
+async function openTemplate(page: Page, name: string) {
+  await expect(libraryHeading(page)).toBeVisible()
+  await templateCard(page, name).click()
+  await expect(editorHeading(page)).toBeVisible()
+}
+
+/** The temporary "← Templates" button in the studio header. */
+async function backToLibrary(page: Page) {
+  await page.getByRole('button', { name: 'Templates', exact: true }).click()
+  await expect(libraryHeading(page)).toBeVisible()
 }
 
 /** Replaces the whole content of a CodeMirror editor. */
@@ -41,15 +72,42 @@ test.beforeEach(async ({ page }) => {
   })
   ;(page as PageWithErrors).__errors = errors
   await page.goto('/')
-  await expect(page.getByRole('heading', { level: 1, name: 'Templates & Studio' })).toBeVisible()
+  await expect(libraryHeading(page)).toBeVisible()
 })
 
 test.afterEach(async ({ page }) => {
   expect((page as PageWithErrors).__errors).toEqual([])
 })
 
+test('the library lists the templates and opens one into the editor and back', async ({ page }) => {
+  await expect(page.getByRole('region', { name: 'Template library' })).toBeVisible()
+  await expect(page.getByRole('button', { name: /^Open / })).toHaveCount(3)
+  // A card opens a template; it is an action, not a toggle that stays pressed.
+  await expect(templateCard(page, WELCOME)).not.toHaveAttribute('aria-pressed', /.*/)
+
+  await openTemplate(page, WELCOME)
+  await expect(page.getByRole('heading', { level: 2, name: 'welcome-verification.email.tsx' })).toBeVisible()
+  await expect(libraryHeading(page)).toHaveCount(0)
+
+  await backToLibrary(page)
+  await expect(page.getByRole('button', { name: /^Open / })).toHaveCount(3)
+})
+
+test('library search narrows the grid and can be cleared', async ({ page }) => {
+  const search = page.getByRole('searchbox', { name: 'Search templates' })
+  await search.fill('password')
+  await expect(page.getByRole('button', { name: /^Open / })).toHaveCount(1)
+  await expect(templateCard(page, PASSWORD_RESET)).toBeVisible()
+
+  await search.fill('invoice')
+  await expect(page.getByText('No templates match "invoice".')).toBeVisible()
+  await page.getByRole('button', { name: 'Clear search' }).click()
+  await expect(page.getByRole('button', { name: /^Open / })).toHaveCount(3)
+})
+
 test('renders the default template in the isolated preview frame', async ({ page }) => {
-  await expect(previewBody(page)).toContainText('Welcome, Ada', { timeout: 15_000 })
+  await openTemplate(page, WELCOME)
+  await expect(previewBody(page)).toContainText('Welcome, Ada', { timeout: FIRST_RENDER_TIMEOUT })
   await expect(previewPanel(page).getByText('Up to date')).toBeVisible()
 
   const iframe = page.locator('iframe[title^="Email preview"]')
@@ -57,14 +115,10 @@ test('renders the default template in the isolated preview frame', async ({ page
   const srcdoc = await iframe.getAttribute('srcdoc')
   expect(srcdoc).toContain('Content-Security-Policy')
   expect(srcdoc).not.toMatch(/<script/i)
-
-  await expect(page.getByRole('button', { name: /Welcome & verification/ })).toHaveAttribute(
-    'aria-pressed',
-    'true',
-  )
 })
 
 test('the source editor scrolls inside a bounded height', async ({ page }) => {
+  await openTemplate(page, WELCOME)
   const scroller = sourcePanel(page).locator('.cm-scroller').first()
   await expect(scroller).toBeVisible()
   const metrics = await scroller.evaluate((element) => ({
@@ -85,7 +139,8 @@ test('the source editor scrolls inside a bounded height', async ({ page }) => {
 })
 
 test('payload edits update the preview and are validated separately from JSON syntax', async ({ page }) => {
-  await expect(previewBody(page)).toContainText('Welcome, Ada', { timeout: 15_000 })
+  await openTemplate(page, WELCOME)
+  await expect(previewBody(page)).toContainText('Welcome, Ada', { timeout: FIRST_RENDER_TIMEOUT })
 
   await replaceEditorText(
     page,
@@ -102,7 +157,7 @@ test('payload edits update the preview and are validated separately from JSON sy
       2,
     ),
   )
-  await expect(previewBody(page)).toContainText('Welcome, Zed', { timeout: 15_000 })
+  await expect(previewBody(page)).toContainText('Welcome, Zed', { timeout: FIRST_RENDER_TIMEOUT })
   await expect(payloadPanel(page).getByText('Schema valid')).toBeVisible()
 
   // Schema-invalid: wrong type, reported by field path.
@@ -121,14 +176,15 @@ test('payload edits update the preview and are validated separately from JSON sy
   await payloadPanel(page).getByRole('button', { name: 'Reset' }).click()
   await page.getByRole('button', { name: 'Reset payload' }).click()
   await expect(payloadPanel(page).getByText('Schema valid')).toBeVisible()
-  await expect(previewBody(page)).toContainText('Welcome, Ada', { timeout: 15_000 })
+  await expect(previewBody(page)).toContainText('Welcome, Ada', { timeout: FIRST_RENDER_TIMEOUT })
 })
 
 test('source errors are reported without crashing and reset restores the original', async ({ page }) => {
-  await expect(previewBody(page)).toContainText('Welcome, Ada', { timeout: 15_000 })
+  await openTemplate(page, WELCOME)
+  await expect(previewBody(page)).toContainText('Welcome, Ada', { timeout: FIRST_RENDER_TIMEOUT })
 
   await replaceEditorText(page, WELCOME_SOURCE_LABEL, 'export default function Broken() {\n  return <p>\n}\n')
-  await expect(sourcePanel(page).getByText('Compile error')).toBeVisible({ timeout: 15_000 })
+  await expect(sourcePanel(page).getByText('Compile error')).toBeVisible({ timeout: FIRST_RENDER_TIMEOUT })
   await expect(previewPanel(page).getByText('Showing last good render')).toBeVisible()
 
   await replaceEditorText(
@@ -136,19 +192,22 @@ test('source errors are reported without crashing and reset restores the origina
     WELCOME_SOURCE_LABEL,
     "import fs from 'node:fs'\nexport default function T() { return null }\n",
   )
-  await expect(sourcePanel(page).getByText('Import not allowed')).toBeVisible({ timeout: 15_000 })
+  await expect(sourcePanel(page).getByText('Import not allowed')).toBeVisible({
+    timeout: FIRST_RENDER_TIMEOUT,
+  })
   await expect(sourcePanel(page).getByText(/"node:fs" is not available in the studio/)).toBeVisible()
 
   await sourcePanel(page).getByRole('button', { name: 'Reset' }).click()
   await page.getByRole('button', { name: 'Reset source' }).click()
   await expect(sourcePanel(page).getByText('Compiled and rendered without errors.')).toBeVisible({
-    timeout: 15_000,
+    timeout: FIRST_RENDER_TIMEOUT,
   })
   await expect(sourcePanel(page).getByText('Original', { exact: true })).toBeVisible()
 })
 
 test('an infinite loop is stopped by the worker timeout and the studio recovers', async ({ page }) => {
-  await expect(previewBody(page)).toContainText('Welcome, Ada', { timeout: 15_000 })
+  await openTemplate(page, WELCOME)
+  await expect(previewBody(page)).toContainText('Welcome, Ada', { timeout: FIRST_RENDER_TIMEOUT })
 
   await replaceEditorText(
     page,
@@ -163,39 +222,45 @@ test('an infinite loop is stopped by the worker timeout and the studio recovers'
     WELCOME_SOURCE_LABEL,
     "import { Html, Text } from '@react-email/components'\nexport default function Fine() { return <Html><Text>Recovered fine</Text></Html> }\n",
   )
-  await expect(previewBody(page)).toContainText('Recovered fine', { timeout: 15_000 })
+  await expect(previewBody(page)).toContainText('Recovered fine', { timeout: FIRST_RENDER_TIMEOUT })
 })
 
 test('network globals are unavailable inside the render worker', async ({ page }) => {
-  await expect(previewBody(page)).toContainText('Welcome, Ada', { timeout: 15_000 })
+  await openTemplate(page, WELCOME)
+  await expect(previewBody(page)).toContainText('Welcome, Ada', { timeout: FIRST_RENDER_TIMEOUT })
   await replaceEditorText(
     page,
     WELCOME_SOURCE_LABEL,
     'export default function Probe() {\n  const names = ["fetch", "XMLHttpRequest", "WebSocket", "importScripts", "Worker"]\n  const present = names.filter((n) => typeof (globalThis as any)[n] !== "undefined")\n  throw new Error("present:[" + present.join(",") + "]")\n}\n',
   )
-  await expect(sourcePanel(page).getByText('Render error')).toBeVisible({ timeout: 15_000 })
+  await expect(sourcePanel(page).getByText('Render error')).toBeVisible({ timeout: FIRST_RENDER_TIMEOUT })
   await expect(sourcePanel(page).getByText(/present:\[\]/)).toBeVisible()
 })
 
 test('drafts survive switching templates and reloading the page', async ({ page }) => {
-  await expect(previewBody(page)).toContainText('Welcome, Ada', { timeout: 15_000 })
+  await openTemplate(page, WELCOME)
+  await expect(previewBody(page)).toContainText('Welcome, Ada', { timeout: FIRST_RENDER_TIMEOUT })
   await replaceEditorText(page, PAYLOAD_LABEL, '{"recipientName": "Draft Person"}')
   await expect(payloadPanel(page).getByText('Schema invalid')).toBeVisible()
 
-  await page.getByRole('button', { name: /Password reset/ }).click()
+  // The library badges the card of a template with unsaved edits.
+  await backToLibrary(page)
+  await expect(templateCard(page, WELCOME)).toContainText('Modified')
+  await expect(templateCard(page, PASSWORD_RESET)).not.toContainText('Modified')
+
+  await openTemplate(page, PASSWORD_RESET)
   await expect(page.getByRole('heading', { level: 2, name: 'password-reset.email.tsx' })).toBeVisible()
-  await expect(previewBody(page)).toContainText('Reset your password', { timeout: 15_000 })
-  await expect(page.getByRole('button', { name: /Welcome & verification/ })).toContainText('Modified')
+  await expect(previewBody(page)).toContainText('Reset your password', { timeout: FIRST_RENDER_TIMEOUT })
 
   await page.reload()
-  await expect(page.getByRole('heading', { level: 2, name: 'password-reset.email.tsx' })).toBeVisible()
-  await page.getByRole('button', { name: /Welcome & verification/ }).click()
+  await openTemplate(page, WELCOME)
   await expect(page.getByLabel(PAYLOAD_LABEL)).toContainText('Draft Person')
 })
 
 test('device toggle changes the preview viewport', async ({ page }) => {
+  await openTemplate(page, WELCOME)
   const iframe = page.locator('iframe[title^="Email preview"]')
-  await expect(iframe).toBeVisible({ timeout: 15_000 })
+  await expect(iframe).toBeVisible({ timeout: FIRST_RENDER_TIMEOUT })
   const desktopWidth = await iframe.evaluate((element) => element.getBoundingClientRect().width)
   expect(desktopWidth).toBeGreaterThan(375)
   await expect(previewPanel(page).getByText('Desktop · up to 680px')).toBeVisible()
@@ -206,8 +271,33 @@ test('device toggle changes the preview viewport', async ({ page }) => {
   await expect(page.getByRole('radio', { name: 'Mobile preview' })).toHaveAttribute('aria-checked', 'true')
 })
 
+test('neither the library nor the editor scrolls sideways at any supported width', async ({ page }) => {
+  const overflow = () =>
+    page.evaluate(() => ({
+      scrollWidth: document.documentElement.scrollWidth,
+      clientWidth: document.documentElement.clientWidth,
+    }))
+
+  for (const width of [1440, 1280, 1024, 768]) {
+    await page.setViewportSize({ width, height: 900 })
+    await expect(libraryHeading(page)).toBeVisible()
+    const library = await overflow()
+    expect(library.scrollWidth, `library at ${width}px`).toBeLessThanOrEqual(library.clientWidth)
+
+    // The editor's layout is what is being measured, so this waits for the
+    // panels rather than for a finished render (which depends on the worker).
+    await openTemplate(page, WELCOME)
+    await expect(sourcePanel(page)).toBeVisible()
+    await expect(previewPanel(page)).toBeVisible()
+    const editor = await overflow()
+    expect(editor.scrollWidth, `editor at ${width}px`).toBeLessThanOrEqual(editor.clientWidth)
+
+    await backToLibrary(page)
+  }
+})
+
 test('API keys page generates a mock key and adds a webhook endpoint', async ({ page }) => {
-  await page.getByRole('button', { name: 'API Keys' }).click()
+  await page.getByRole('button', { name: 'API Keys & Webhooks' }).click()
   await expect(page.getByRole('heading', { level: 1, name: 'API Keys & Integration' })).toBeVisible()
   await expect(page.getByText('Welcome emails sandbox')).toBeVisible()
 
@@ -230,7 +320,8 @@ test('API keys page generates a mock key and adds a webhook endpoint', async ({ 
 })
 
 test('send test email goes through the API in dry-run mode', async ({ page }) => {
-  await expect(previewBody(page)).toContainText('Welcome, Ada', { timeout: 15_000 })
+  await openTemplate(page, WELCOME)
+  await expect(previewBody(page)).toContainText('Welcome, Ada', { timeout: FIRST_RENDER_TIMEOUT })
 
   await page.getByRole('button', { name: 'Send test email' }).click()
   const sendDialog = page.getByRole('dialog', { name: 'Send test email' })

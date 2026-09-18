@@ -37,10 +37,15 @@ const SAVE_DEBOUNCE_MS = 500
 export interface UseStudioOptions {
   readonly templates: readonly EmailTemplate[]
   readonly store: StudioSessionStore
+  /**
+   * The template the route has opened. Selection belongs to the route now (the
+   * library decides what is being edited), so when this is given it wins over
+   * the id kept in the reducer; null means "no route choice, use the stored one".
+   */
+  readonly selectedId?: TemplateId | null
 }
 
 export interface StudioActions {
-  selectTemplate(id: TemplateId): void
   updateSource(source: string): void
   updatePayload(payloadText: string): void
   updateDocument(document: EmailDocument): void
@@ -67,23 +72,31 @@ export interface UseStudioResult {
   readonly actions: StudioActions
 }
 
-export function useStudio({ templates, store }: UseStudioOptions): UseStudioResult {
+export function useStudio({ templates, store, selectedId = null }: UseStudioOptions): UseStudioResult {
   const [state, dispatch] = useReducer(studioReducer, undefined, () => hydrate(store.load(), templates))
 
   useDebouncedSave(state, store)
 
+  // Render against the route's choice straight away, then tell the reducer, so
+  // the stored selection and the mode clamp catch up without a blank frame.
+  const activeId = selectedId ?? state.selectedId
   const template = useMemo(
-    () => templates.find((candidate) => candidate.metadata.id === state.selectedId) ?? templates[0],
-    [templates, state.selectedId],
+    () => templates.find((candidate) => candidate.metadata.id === activeId) ?? templates[0],
+    [templates, activeId],
   )
   const id = template.metadata.id
 
+  useEffect(() => {
+    if (selectedId === null || selectedId === state.selectedId) return
+    const target = templates.find((candidate) => candidate.metadata.id === selectedId)
+    // An id that is not in the list would be stored — and then persisted — as a
+    // selection pointing at nothing, so an unknown choice is simply ignored.
+    if (!target) return
+    dispatch({ type: 'select-template', id: selectedId, kind: target.kind })
+  }, [selectedId, state.selectedId, templates])
+
   const actions = useMemo<StudioActions>(
     () => ({
-      selectTemplate: (next) => {
-        const target = templates.find((candidate) => candidate.metadata.id === next)
-        dispatch({ type: 'select-template', id: next, kind: target?.kind })
-      },
       updateSource: (source) => dispatch({ type: 'edit-source', id, template, source }),
       updatePayload: (payloadText) => dispatch({ type: 'edit-payload', id, template, payloadText }),
       updateDocument: (document) => dispatch({ type: 'edit-document', id, template, document }),
@@ -96,7 +109,7 @@ export function useStudio({ templates, store }: UseStudioOptions): UseStudioResu
       setDevice: (device) => dispatch({ type: 'set-device', device }),
       setMode: (mode) => dispatch({ type: 'set-mode', mode, kind: template.kind }),
     }),
-    [id, template, templates],
+    [id, template],
   )
 
   const dirtyTemplateIds = useMemo(

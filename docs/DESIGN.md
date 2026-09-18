@@ -52,9 +52,51 @@ Dark values exist under `.dark` for a later toggle.
 | Payload panel         | Schema valid / Schema invalid / Invalid JSON, Modified, issue list with paths                    |
 | Preview frame         | envelope rows, status badge, refresh, banners (paused / last good), loading, error, empty        |
 | Diagnostics           | real checks vs collapsed "not connected" placeholders                                            |
-| Template card         | selected ring, Modified, category/version/kind chips                                             |
+| Template card         | kind (Visual/Code), status, category, version chips, Modified badge, "Updated 3 days ago"        |
+| Template library      | skeleton (3 card outlines) / error Alert + Retry / empty / no search results — see below         |
+| Global header         | brand, workspace label, env badge, nav with `aria-current`, render pill, Docs, Feedback, avatar  |
 | Dialogs               | Send test (explanatory, action disabled), Reset confirmations                                    |
 | Toasts                | bottom-right, one sentence, past tense                                                           |
+
+## The template library, state by state
+
+The library is the screen the studio lands on, and it has four of them. They are separate states, not
+an array that happens to be empty, so each gets its own words (`useTemplateLibrary`).
+
+| State          | What is shown                                                                                                        |
+| -------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Loading        | Three `Skeleton` card outlines the same size as real cards, plus one for the heading, so nothing jumps when it lands |
+| Error          | Destructive `Alert`, "Templates could not be loaded", the failure's own message, and a **Retry** button              |
+| Empty          | Dashed panel: "No templates yet" / "Create a template to start authoring email."                                     |
+| No search hits | Dashed panel: `No templates match "invoice".` and a **Clear search** button                                          |
+
+Cards are plain buttons named `Open <name>`: opening a template is an action, not a selection that
+stays switched on, so there is no `aria-pressed` on them any more. **New template** is rendered
+`aria-disabled` with the reason "Coming with saved templates." — disabled with a reason, never bare
+`disabled` with a silent tooltip.
+
+## Header
+
+One `GlobalHeader` inside one `AppShell`, rendered once by `App.tsx` so it never remounts between
+screens; the first Tab lands on a **Skip to editor** link. Contents left to right: brand, workspace as
+a **static label** (there is one workspace — a dropdown that cannot switch anything is a lie), the
+environment badge, the nav (`Overview & Logs` and `Domains` are `aria-disabled` and say so when
+clicked; `API Keys & Webhooks` and `Template Studio` work, and the current one carries
+`aria-current="page"`), the render pill, Docs, Feedback and an initials avatar.
+
+The render pill reads `Local · render worker 24 ms`, and only says `LIVE` when the send server reports
+itself connected — it is a measurement of this browser, which is what its tooltip says. It falls back to
+`—` whenever no editor is open, because there is then no render on screen for it to be about.
+
+Every `aria-disabled` control in the header points at one `sr-only` sentence, "Planned for a later
+milestone.", so a screen reader is told what is unavailable **and** why — the same disabled-with-reason
+rule the library's **New template** button follows.
+
+Below `xl` the workspace label, the pill and Feedback step aside so the nav fits. The nav itself stays
+down to `md` and becomes a horizontal scroll strip rather than disappearing: it is the only route
+between the two screens, so hiding it would leave the app single-screen on a small laptop. Nothing in
+the header is allowed to push the page into a horizontal scroll, and an e2e sweep at
+1440/1280/1024/768 asserts it.
 
 ## Microcopy rules
 

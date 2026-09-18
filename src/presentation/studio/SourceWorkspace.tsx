@@ -22,7 +22,6 @@ import {
 } from '@/domain'
 import { CodeEditor } from '@/presentation/shared/CodeEditor'
 import { StatusBadge } from '@/presentation/shared/StatusBadge'
-import { templateKindLabel } from '@/presentation/shared/templateKind'
 
 export interface SourceWorkspaceProps {
   template: EmailTemplate
@@ -62,7 +61,7 @@ export function SourceWorkspace({
               {fileName}
             </h2>
             <StatusBadge tone="neutral" dot={false}>
-              React Email · {templateKindLabel(template.kind)}
+              React Email · TSX
             </StatusBadge>
             {sourceDirty ? (
               <StatusBadge tone="warning">Modified</StatusBadge>

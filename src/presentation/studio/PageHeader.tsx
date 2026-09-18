@@ -1,4 +1,4 @@
-import { Lock } from 'lucide-react'
+import { ArrowLeft, Lock } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { fileNameFor, type EmailTemplate, type PreviewDevice } from '@/domain'
@@ -10,13 +10,26 @@ export interface PageHeaderProps {
   device: PreviewDevice
   onDeviceChange: (device: PreviewDevice) => void
   onSendTest: () => void
+  /** Back to the template library. Temporary: phase 3 replaces this header with the sub-header. */
+  onBackToLibrary: () => void
   sourceDirty: boolean
 }
 
-export function PageHeader({ template, device, onDeviceChange, onSendTest, sourceDirty }: PageHeaderProps) {
+export function PageHeader({
+  template,
+  device,
+  onDeviceChange,
+  onSendTest,
+  onBackToLibrary,
+  sourceDirty,
+}: PageHeaderProps) {
   return (
     <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-      <div className="space-y-1.5">
+      <div className="min-w-0 space-y-1.5">
+        <Button variant="ghost" size="sm" className="-ml-2" onClick={onBackToLibrary}>
+          <ArrowLeft aria-hidden="true" />
+          Templates
+        </Button>
         <div className="flex items-center gap-2">
           <h1 className="text-xl font-semibold tracking-tight">Templates &amp; Studio</h1>
           <StatusBadge tone="warning">MVP · local development</StatusBadge>

@@ -13,6 +13,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
 import { PREVIEW_SAMPLE_RECIPIENT, type EmailTemplate } from '@/domain'
 import type { EmailProvider, ProviderStatus, SendOutcome } from '@/infrastructure/providers/emailProvider'
 import { StatusBadge } from '@/presentation/shared/StatusBadge'
@@ -27,9 +28,10 @@ export interface SendTestEmailDialogProps {
 }
 
 /**
- * Plain field styling, copied from PasswordGate rather than added as a new
- * shadcn component: the send canvas redesign will bring its own inputs, and
- * two small fields do not justify a dependency in the meantime.
+ * Styling for the one field that is still hand-rolled: the recipients box is a
+ * `<textarea>` (several addresses, several lines), and shadcn's `textarea`
+ * component arrives with the envelope panel in the next phase. The subject is
+ * an `<Input>`. These classes match what `<Input>` renders, deliberately.
  */
 const FIELD_CLASS =
   'border-input focus-visible:ring-ring/50 w-full rounded-md border bg-transparent px-2 py-1 text-xs shadow-xs outline-none focus-visible:ring-[3px]'
@@ -230,13 +232,13 @@ function SendTestEmailForm({
           <div className="flex items-center gap-2">
             {/* The server adds this prefix whatever is typed here. */}
             <span className="text-muted-foreground font-mono">[TEST]</span>
-            <input
+            <Input
               id="send-test-subject"
               type="text"
               maxLength={200}
               autoComplete="off"
               aria-describedby={subjectReason ? 'send-test-subject-hint' : undefined}
-              className={FIELD_CLASS}
+              className="h-7 px-2 py-1 text-xs md:text-xs"
               value={subjectText}
               onChange={(event) => {
                 setSubjectText(event.target.value)

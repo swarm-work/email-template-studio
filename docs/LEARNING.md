@@ -76,6 +76,61 @@ Two habits that keep this working:
 - Put the discriminant in the data, not in a separate boolean (`isVisual`). Two booleans can disagree;
   one literal field cannot.
 
+## Ports and adapters: the repository pattern and `VITE_DATA_MODE`
+
+In Apex you rarely think about this, because there is only ever one database. `Account` is a table
+SOQL can reach, and a test class fakes it by inserting real rows into the real org. Here the store
+moves: today the templates live in a JavaScript `Map` in the browser tab, tomorrow they live in a
+Cloudflare D1 database behind an HTTP API. The screens must not notice.
+
+The trick is to write down **what you need** separately from **who provides it**.
+
+```
+src/application/repositories/templateRepository.ts   the PORT: an interface, no code
+src/infrastructure/templates/inMemoryTemplateRepository.ts   an ADAPTER: a Map
+src/infrastructure/templates/httpTemplateRepository.ts       another ADAPTER (later): fetch + D1
+```
+
+The port lives in `application` — the layer that _needs_ templates — and it is written in domain
+words: `saveVersion(id, expectedRevision, version)`, not `POST /api/templates/:id/versions`. The
+adapters live in `infrastructure`, because that is where the outside world is allowed in. This is the
+"dependencies point inwards" rule from `docs/ARCHITECTURE.md` doing real work: the inner layer
+declares, the outer layer obeys. The closest Apex habit is an interface plus a mock implementation
+you inject in a test — except here the "mock" is a real, shipping adapter.
+
+Three details that are easy to skim past and worth stopping on:
+
+1. **Nothing throws.** Every method returns
+   `{ ok: true, value } | { ok: false, failure: { code, message } }`. A save refused because someone
+   else saved first is not exceptional, it is Tuesday; the UI has to _explain_ it. Compare an Apex
+   `DmlException` you catch four frames away with no idea which record failed. Because `ok` is a
+   literal `true`/`false`, TypeScript narrows on it: inside `if (result.ok)` there is a `value` and
+   no `failure`, and vice versa (the same discriminated-union trick as above).
+2. **`expectedRevision` is optimistic concurrency.** Every write says "I believe this template is at
+   revision 7". If it is at 8, the write does nothing and comes back with
+   `code: 'version-conflict'` **and the store's current copy**, so the dialog can offer "keep mine /
+   discard mine" without another round trip. This is exactly what Salesforce does when it refuses a
+   save because the record was "modified by another user", and what an `ETag` does over HTTP.
+3. **Everything is copied on the way in and on the way out** (`structuredClone`). An HTTP adapter
+   serialises anyway; if the in-memory one handed out live references, code could mutate the store by
+   accident and only the HTTP version would break. The strict adapter is the honest one.
+4. **The same limits as the API.** Name, description, tag, subject and preheader lengths, and the
+   byte caps on the content, are checked here too, against the very constants in
+   `shared/templateContracts.ts` that the server validates with. If memory mode accepted a 300-character
+   name, the only thing that would tell you it is invalid is a 400 from the API months later.
+
+`createTemplateRepository.ts` is the one place that chooses. It reads `import.meta.env.VITE_DATA_MODE`,
+a **build-time** variable: Vite does not look it up at runtime, it substitutes the literal text into
+the bundle while building (so `VITE_DATA_MODE=http npm run build` bakes `'http'` in). The `VITE_`
+prefix is required and is a safety rule — only variables with it are exposed to browser code, so a
+secret in `.env` cannot reach the client by accident. Think Custom Metadata read at compile time
+rather than a Custom Setting read at runtime.
+
+Finally, `templateRepositoryContract.ts`: one Vitest suite, handed a factory, that every adapter
+runs. When the HTTP adapter arrives it runs the same suite; a difference in behaviour becomes a red
+test rather than a bug report. If you write a second implementation of anything in this codebase,
+copy this pattern.
+
 ## Suggested reading order through the code
 
 1. `src/domain/*` — the vocabulary (10 minutes).
