@@ -110,6 +110,13 @@ export default defineConfig(({ mode }) => {
       setupFiles: ['./src/test/setup.ts'],
       include: ['src/**/*.test.{ts,tsx}', 'server/**/*.test.ts', 'shared/**/*.test.ts'],
       css: false,
+      // Why a fork cap: the default is one worker per core, and on a 4-core dev
+      // box with swap already full that races the jsdom suites out of memory --
+      // workers then fail to start at all ("Timeout waiting for worker to
+      // respond") and `npm run check` goes red for reasons unrelated to the code.
+      // Two workers is slower but deterministic, which is what a phase gate needs.
+      // (Top-level `maxWorkers`, not `poolOptions`: Vitest 4 removed the latter.)
+      maxWorkers: 2,
     },
   }
 })

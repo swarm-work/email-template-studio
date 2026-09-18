@@ -50,7 +50,10 @@ export default defineConfig({
     url: 'http://localhost:4173/api/send-test/status',
     // Never reuse: a stray preview could be a build with different variables.
     reuseExistingServer: false,
-    // The build, two wrangler commands and a cold workerd boot all fit in here.
-    timeout: 240_000,
+    // The build, three wrangler commands and a cold workerd boot all fit in here.
+    // 240 s was not enough once the visual editor landed: the production build
+    // alone is now the bulk of it, and the whole chain timed out before a single
+    // test ran. Generous on purpose -- it only costs time when something is wrong.
+    timeout: 600_000,
   },
 })
