@@ -15,7 +15,7 @@ flowchart TB
 | -------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------- |
 | Domain         | `src/domain`         | `TemplateRecord` (`code` \| `visual`), `EmailTemplate`, `TemplateMetadata`, `TemplateEnvelope`, `EmailDocument`, `PreviewPayload`, `ValidationResult`, `RenderResult`, status unions | React, Zod, Tiptap, browser APIs, network |
 | Application    | `src/application`    | `parsePreviewPayload`, `studioReducer` (select, edit, reset, device, mode), `studioModes`, `buildDiagnostics`, `repositories/` (ports: `TemplateRepository` and its result types)    | React, DOM, Zod                           |
-| Infrastructure | `src/infrastructure` | Starter registry + Zod schemas, `templateMapper` (record → `EmailTemplate`), props validators, render pipeline and worker, session storage, no-send provider                         | UI                                        |
+| Infrastructure | `src/infrastructure` | Starter registry + `starterCatalog.json` + Zod schemas, `templateMapper` (record → `EmailTemplate`), props validators, render pipeline and worker, session storage, no-send provider | UI                                        |
 | Presentation   | `src/presentation`   | `AppShell` + `GlobalHeader`, `templates/` (route, library page, grid, card, search), `StudioPage`, panels, dialogs, hooks (`useStudio`, `useTemplateLibrary`, `useRenderPreview`)    | Business rules (they live in application) |
 | Shared         | `shared`             | `templateContracts.ts`: the request/response Zod schemas and size caps the browser, the Node server and the Worker all validate against                                              | Everything but `zod`                      |
 
@@ -126,13 +126,38 @@ stateDiagram-v2
 
 The send server (`server/`, Node + Hono) owns the SES call, the recipient policy (an allow-list, or any typed address), the `[TEST]` prefix, the rate limit and the dry-run mode. Credentials are resolved by the AWS SDK from the developer's profile; the repository never reads them. Details in `docs/SENDING.md`.
 
+## Template storage
+
+Templates used to be a `const` array in the bundle. They are now rows in Cloudflare D1, reached through one port with two adapters, the same shape as the browser-side repository in ADR-20:
+
+```mermaid
+flowchart LR
+  B["Browser<br/>TemplateRepository"] -->|"/api/templates"| H["Hono routes<br/>server/templateRoutes.ts"]
+  H --> S["TemplateStore (port)<br/>server/templateStore.ts"]
+  S --> D1["D1TemplateStore<br/>Cloudflare D1 (SQLite)"]
+  S --> M["InMemoryTemplateStore<br/>tests + server/node.ts"]
+```
+
+- **`server/templateStore.ts`** declares the port and the structural `SqlDatabase` / `SqlStatement` types that Cloudflare's `D1Database` happens to satisfy. `server/` therefore still names no runtime.
+- **`server/d1TemplateStore.ts`** is plain SQL with one Zod row schema per table. **Every write is one `db.batch(...)`**, which D1 runs as a single transaction.
+- **`server/inMemoryTemplateStore.ts`** is a `Map` with deep copies. It backs the route tests and the Node runtime.
+- **`server/templateStoreContract.ts`** is the Vitest suite both adapters pass, so "they behave the same" is a test rather than a hope.
+
+Two tables (`migrations/0001_create_templates.sql`): `templates` is the mutable library card, `template_versions` is append-only history. A save never updates a version row, it inserts the next one. `templates.revision` bumps on **every** write and is the optimistic-concurrency token: a client sends the revision it read as `expectedRevision`, and a write whose guard matches no row comes back as `409 conflict` carrying the server's current copy.
+
+Starters are seeded by `migrations/0002_seed_starter_templates.sql`, generated from the real `*.email.tsx` files by `scripts/generate-seed-migration.mjs` (ADR-23). They are ordinary editable rows, not a special case.
+
+Uploaded images live in R2 (`STUDIO_ASSETS`) behind the same kind of structural port (`server/objectStore.ts`). `POST /api/uploads` is authenticated; `GET /media/:key` is deliberately public, because the image is fetched by a stranger's mail client. The prefix is `/media/`, not `/assets/`, because Vite builds the studio's own JS, CSS and fonts into `/assets/`: keeping them apart means `run_worker_first` never sends a static file through the Worker.
+
 ## Runtimes: one API, two hosts
 
 `server/app.ts` is a plain Hono app that knows nothing about where it runs. Two adapters host it:
 
-| Adapter           | Runs where                                       | Sender                                     | Host policy   |
-| ----------------- | ------------------------------------------------ | ------------------------------------------ | ------------- |
-| `server/node.ts`  | Node on the developer's machine, loopback only   | Amazon SES via the AWS SDK, or dry-run     | `loopback`    |
-| `worker/index.ts` | Cloudflare Worker (workerd locally and deployed) | None or dry-run (phase 1 adds `aws4fetch`) | `same-origin` |
+| Adapter           | Runs where                                       | Sender                                     | Templates                           | Uploads              | Host policy   |
+| ----------------- | ------------------------------------------------ | ------------------------------------------ | ----------------------------------- | -------------------- | ------------- |
+| `server/node.ts`  | Node on the developer's machine, loopback only   | Amazon SES via the AWS SDK, or dry-run     | In memory, seeded from the starters | 503 (no bucket)      | `loopback`    |
+| `worker/index.ts` | Cloudflare Worker (workerd locally and deployed) | None or dry-run (phase 1 adds `aws4fetch`) | D1 (`STUDIO_DB`)                    | R2 (`STUDIO_ASSETS`) | `same-origin` |
 
-The rule from `docs/PLAN.md`: `server/` never imports `node:*` or `cloudflare:*`; the adapters do the platform work. `server/sesSender.ts` is the one exception (AWS SDK) and only the Node adapter imports it. Deployment details in `docs/DEPLOYMENT.md`.
+Neither store is required: a missing binding makes the template and upload routes answer `503 storage-unavailable` while sending keeps working. It holds the other way round too — when the send configuration is broken, `worker/index.ts` builds the app with sending switched off, so only `/api/send-test*` reports the problem and stored templates and images stay reachable.
+
+The rule from `docs/PLAN.md`: `server/` never imports `node:*` or `cloudflare:*`; the adapters do the platform work. There are exactly two exceptions, and only `server/node.ts` and the build scripts import either: `server/sesSender.ts` (the AWS SDK) and `server/starterSeed.ts` (`node:fs`, to read the starter TSX files). `scripts/check-worker-bundle.mjs` enforces the second one — it fails the build if `node:fs` (or `@react-email`) turns up in the Worker bundle. Deployment details in `docs/DEPLOYMENT.md`.

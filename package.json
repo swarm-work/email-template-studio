@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "dev:node": "STUDIO_RUNTIME=node vite",
-    "build": "npm run cf:types && tsc -b && vite build",
+    "build": "npm run cf:types && tsc -b && vite build && node scripts/check-worker-bundle.mjs",
     "preview": "vite preview",
     "preview:node": "STUDIO_RUNTIME=node vite preview",
     "test": "vitest run",
@@ -20,7 +20,12 @@
     "check": "npm run typecheck && npm run lint && npm run format:check && npm run test",
     "server": "node --env-file-if-exists=.env server/node.ts",
     "server:dry-run": "STUDIO_SEND_DRY_RUN=true node --env-file-if-exists=.env server/node.ts",
-    "deploy": "npm run build && wrangler deploy"
+    "deploy": "npm run build && wrangler deploy",
+    "db:migrate": "wrangler d1 migrations apply STUDIO_DB --local",
+    "db:migrate:e2e": "wrangler d1 migrations apply STUDIO_DB --local --env e2e",
+    "db:migrate:prod": "wrangler d1 migrations apply STUDIO_DB --remote",
+    "db:console": "wrangler d1 execute STUDIO_DB --local --command",
+    "seed:generate": "node scripts/generate-seed-migration.mjs"
   },
   "dependencies": {
     "@codemirror/lang-html": "^6.4.12",

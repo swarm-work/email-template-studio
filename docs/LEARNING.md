@@ -131,6 +131,78 @@ runs. When the HTTP adapter arrives it runs the same suite; a difference in beha
 test rather than a bug report. If you write a second implementation of anything in this codebase,
 copy this pattern.
 
+## Migrations and optimistic concurrency (revision ≈ Apex SystemModstamp)
+
+Two ideas arrive together with the database. Both have direct Salesforce equivalents, which is the
+fastest way in.
+
+**Migrations are your change set, kept in the repository.** In an org you click fields into
+existence and then fight to get that change into the next sandbox. Here the schema is a folder of
+numbered SQL files:
+
+```
+migrations/0001_create_templates.sql        CREATE TABLE templates …
+migrations/0002_seed_starter_templates.sql  INSERT INTO templates …
+```
+
+`npm run db:migrate` applies the ones that have not run yet to the local database;
+`npm run db:migrate:prod` does the same to the real one. Wrangler keeps a small bookkeeping table of
+what it has applied, so running it twice is safe. Three rules worth internalising:
+
+1. **A migration is never edited once it has been applied anywhere.** If 0001 is wrong, 0003 fixes
+   it. Editing 0001 makes your database and everyone else's disagree while both claim to be at the
+   same version.
+2. **A migration is never rolled back.** "Undo" is the next migration.
+3. **A migration must be safe for the code that is already running.** Deploying is two steps —
+   migrate, then deploy — and between them the _old_ Worker is talking to the _new_ schema. Adding
+   a table or a nullable column is safe. Renaming a column is not: add the new one, write to both,
+   deploy, backfill, and drop the old one in a later release.
+
+**Optimistic concurrency is `SystemModstamp`, written out.** In Apex, if you read a record, sit on
+it, and update it after someone else has, the platform throws `UNABLE_TO_LOCK_ROW` /
+`ENTITY_IS_DELETED`-style errors, or `SystemModstamp` tells you it moved. The same problem exists
+here: two browser tabs, same template, both press Save.
+
+The studio's answer is one integer column:
+
+```sql
+-- migrations/0001_create_templates.sql
+revision INTEGER NOT NULL DEFAULT 1   -- bumps on EVERY write
+```
+
+and one `WHERE` clause (`server/d1TemplateStore.ts`):
+
+```sql
+UPDATE templates
+   SET current_version = current_version + 1, revision = revision + 1, …
+ WHERE id = ? AND revision = ?          -- ? is the revision the caller last read
+```
+
+If somebody else saved first, `revision` has moved on, the `WHERE` matches nothing, and SQLite
+reports `meta.changes === 0`. Nothing was written. The store then re-reads the row and the route
+answers `409 conflict` **with the server's current copy in the body**, so the UI can say "someone
+saved v4 two minutes ago" and offer a choice instead of silently throwing work away.
+
+Two numbers, two jobs, easy to confuse at first:
+
+| Column                      | Meaning                                               | Moves when                      |
+| --------------------------- | ----------------------------------------------------- | ------------------------------- |
+| `templates.current_version` | which row of `template_versions` is the live one      | a new version is saved          |
+| `templates.revision`        | the concurrency token: "has anything changed at all?" | **any** write, renames included |
+
+Renaming a template bumps `revision` and not `current_version`. That is the point: your stale save
+must be refused even though nobody touched the content.
+
+**Versions are append-only.** A save never updates a `template_versions` row; it inserts the next
+one. History is therefore a side effect of the design rather than a feature someone has to build,
+and "restore v2" is a read plus a save rather than a special code path. The price is storage: three
+saves of a 200 KB template is 600 KB of rows, and nothing prunes them yet (`docs/TECH_DEBT.md`).
+
+**Where to look.** `migrations/0001_create_templates.sql` is commented line by line.
+`server/templateStoreContract.ts` is the suite both store implementations pass — read the case named
+_"refuses a stale expectedRevision, writes nothing, and hands back the current template"_ and you
+have the whole idea in twenty lines.
+
 ## Suggested reading order through the code
 
 1. `src/domain/*` — the vocabulary (10 minutes).
@@ -138,10 +210,13 @@ copy this pattern.
 3. `src/infrastructure/render/renderTemplate.ts` then `compileTemplate.ts` and `evaluateTemplate.ts` — the pipeline in plain functions.
 4. `src/infrastructure/render/renderClient.ts` and `render.worker.ts` — the worker boundary.
 5. `src/presentation/studio/StudioPage.tsx` — how everything is composed.
-6. `e2e/studio.spec.ts` — the behaviours we promise, written as a user would experience them.
+6. `migrations/0001_create_templates.sql` then `server/templateStore.ts` — the shape of the data and the port over it.
+7. `server/templateRoutes.test.ts` — every HTTP rule the API promises, one case each.
+8. `e2e/studio.spec.ts` — the behaviours we promise, written as a user would experience them.
 
 ## Things worth practising
 
-- Add a fourth template: create `*.email.tsx`, a Zod schema and a registry entry; run `npm test` (the render test picks it up automatically).
+- Add a fourth template: create `*.email.tsx`, a Zod schema, an entry in `starterCatalog.json`, then `npm run seed:generate` and `npm test` (the render test and the seed drift test both pick it up).
+- Break the concurrency rule on purpose: comment out `AND revision = ?` in `server/d1TemplateStore.ts` and watch which contract test fails, and why.
 - Add a diagnostic: extend `buildDiagnostics.ts` and its test before touching the panel.
 - Change the debounce or timeout constants and watch the E2E tests react.

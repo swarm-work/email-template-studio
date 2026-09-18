@@ -74,8 +74,9 @@ describe('parseRecipientPolicy', () => {
     expect(parseRecipientPolicy('*')).toEqual({ policy: 'any', addresses: [] })
     expect(parseRecipientPolicy(' * ')).toEqual({ policy: 'any', addresses: [] })
     expect(parseRecipientPolicy('a@b.co')).toEqual({ policy: 'allow-list', addresses: ['a@b.co'] })
-    // ConfigError specifically: worker/index.ts only turns that class into the
-    // "server-misconfigured" 500; any other Error escapes as a bare crash.
+    // ConfigError specifically: worker/index.ts only treats that class as
+    // "sending is off, the rest of the API still works"; any other Error
+    // escapes as a bare crash.
     expect(() => parseRecipientPolicy('*, a@b.co')).toThrow(ConfigError)
     expect(() => parseRecipientPolicy('*, a@b.co')).toThrow(/either "\*" or a comma-separated list/)
     expect(() => parseRecipientPolicy('a@b.co,*')).toThrow(ConfigError)

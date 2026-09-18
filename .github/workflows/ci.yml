@@ -2,7 +2,9 @@
 #
 # check:  every push and pull request; typecheck, lint, format check, unit tests, production build, Playwright E2E.
 # deploy: pushes to main only, after check, and only when the CLOUDFLARE_API_TOKEN secret exists.
-#         Without the secret the job is skipped and deploys happen by hand with `npm run deploy`.
+#         Applies D1 migrations first, then deploys. Without the secret the job is skipped and
+#         releases happen by hand: `npm run db:migrate:prod && npm run deploy`.
+#         The token needs D1 Edit and R2 Edit as well as Workers Scripts Edit (docs/DEPLOYMENT.md).
 name: CI
 
 on:
@@ -58,6 +60,15 @@ jobs:
         if: env.HAS_TOKEN == 'true'
       - run: npm run build
         if: env.HAS_TOKEN == 'true'
+      # Migrations run BEFORE the deploy, and must stay backward compatible with
+      # the Worker version still serving traffic while this step runs.
+      - name: Apply D1 migrations
+        if: env.HAS_TOKEN == 'true'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          command: d1 migrations apply STUDIO_DB --remote
       - name: Deploy to Cloudflare
         if: env.HAS_TOKEN == 'true'
         uses: cloudflare/wrangler-action@v3

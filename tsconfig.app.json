@@ -10,6 +10,8 @@
     "module": "esnext",
     "types": ["vite/client"],
     "allowArbitraryExtensions": true,
+    // starterCatalog.json is imported as data by the starter registry.
+    "resolveJsonModule": true,
     "skipLibCheck": true,
 
     /* Bundler mode */

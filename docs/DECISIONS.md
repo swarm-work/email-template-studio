@@ -23,8 +23,11 @@ Each record: context, decision, alternatives, consequences. Versions are those i
 | 17  | Test recipients  | `SES_ALLOWED_RECIPIENTS` is a list **or** `*`; up to 10 typed addresses per send                                               | Domain allow-list, one request per address, per-send suppression pre-check (deferred)               |
 | 19  | Template kinds   | `TemplateRecord` discriminated union on `kind`; `EmailTemplate` = record + `validateProps`, assembled in infrastructure        | One flat type with nullable `source`/`document`; two unrelated types; `validateProps` on the record |
 | 20  | Template storage | `TemplateRepository` port; in-memory adapter now, HTTP/D1 adapter later; plain `fetch` + React state, no data-fetching library | TanStack Query now (FEATURE_PLAN #16); calling the API straight from components; localStorage store |
+| 21  | Persistence      | Cloudflare D1 (SQLite) reached with plain SQL behind a structural port; schema changes as wrangler migrations                  | Workers KV, a Durable Object with SQLite, Drizzle/Kysely, a hand-rolled migration runner            |
+| 22  | Concurrency      | Immutable version rows + a `revision` counter that bumps on every write; a stale write answers 409 with the server's copy      | Comparing `updated_at`, HTTP `If-Match`/ETag preconditions, last write wins                         |
+| 23  | Starter seeding  | Migration 0002 generated from the real `*.email.tsx` files and `starterCatalog.json`, with a drift test                        | Hand-written seed SQL, seeding at Worker start-up, keeping starters bundled and un-editable         |
 
-Decisions 21 onwards (Cloudflare Access, Rate Limiting binding, Worker Loaders) are proposed in `docs/PLAN.md` section 1 and get a numbered record here when the phase that uses them lands. ADR-18 belongs to the visual-editor package choice and lands with it; the JSON Schema props contract is part of ADR-19.
+Decisions 24 onwards (Cloudflare Access, Rate Limiting binding, Worker Loaders) are proposed in `docs/PLAN.md` section 1 and get a numbered record here when the phase that uses them lands. ADR-18 belongs to the visual-editor package choice and lands with it; the JSON Schema props contract is part of ADR-19.
 
 ## ADR-1 Framework: Vite SPA
 
@@ -92,6 +95,51 @@ Credentials move into `server/config.ts` as `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACC
 **Alternatives.** Calling the API from components: the component then owns retries, cancellation, error shapes and a mock server in every test. A generic `Store<T>` abstraction: more machinery than one entity needs, and it stops the interface from speaking in domain words (`convertToCode`, `saveVersion(expectedRevision)`). TanStack Query now: about 13 KB gzip and a second mental model (query keys, cache invalidation, `staleTime`) for what is currently **one list and five writes**, all of which invalidate the whole list anyway; it also has to be learned before it can be reviewed, and the reader of this codebase is learning React. It stays on the table for the day the studio has several screens sharing server data — the port is exactly the seam to put it behind.
 
 **Consequences.** The library screen now has four real states (`loading | error | empty | ready`) instead of assuming the array is there, and they are testable without a server. The in-memory store is lost on reload, so the studio still keeps edits in `sessionStorage` (ADR-10) and a "Save" that survives a refresh has to wait for phase 7b. Writes that go through `useTemplateLibrary` re-fetch the whole list, which is fine for tens of templates and would not be for thousands. The `version-conflict` failure carries the store's current copy, so the conflict dialog can offer "keep mine / discard mine" without a second request. Everything the repository hands out is deep-copied, in both directions, so nobody can reach into the store by keeping a reference — an HTTP adapter would serialise anyway, and the in-memory one must not be quietly more permissive.
+
+## ADR-21 Persistence: Cloudflare D1, plain SQL, wrangler migrations
+
+**Context.** Templates had no home outside the bundle: starters were a `const` array and edits lived in `sessionStorage` until the tab closed. The studio already deploys as one Cloudflare Worker (ADR-15), so whatever stores templates has to be reachable from workerd, from `vite preview` and from CI, and has to be something a Salesforce developer moving to full-stack can read without learning a second framework first.
+
+**Decision.** Cloudflare D1 — SQLite, with the queries written as SQL.
+
+- Two tables, `templates` and `template_versions`, created by `migrations/0001_create_templates.sql`. Schema changes are numbered migration files applied with `wrangler d1 migrations apply`; they are never rolled back, and every migration must stay readable by the Worker version still serving traffic while it runs.
+- `server/templateStore.ts` declares a **structural** `SqlDatabase` / `SqlStatement` pair that Cloudflare's `D1Database` satisfies by accident of shape. `server/` therefore still imports nothing platform-specific, and `InMemoryTemplateStore` can stand in for D1 in every test.
+- One Zod schema per table parses what comes back, so "the database returned something unexpected" is an error at the boundary rather than a strange bug three layers up.
+- **Every write is one `db.batch(...)`**, which D1 runs as a single transaction: a save either lands as `templates` row + version row, or not at all.
+
+**Alternatives.** _Workers KV_ is eventually consistent and has no queries: "list templates newest first" would become a hand-maintained index, and two people saving at once would silently lose one. _A Durable Object with SQLite_ gives strong consistency and transactions, but adds an actor model, migrations of its own and a second mental model, for a single-tenant tool with tens of rows. _An ORM (Drizzle, Kysely)_ would generate this SQL and add types, at the price of a schema DSL, a generation step and a layer between the reader and what actually runs; the eight queries here fit on two screens. _A hand-rolled migration runner_ would duplicate what wrangler already does, including the "which migrations have been applied" bookkeeping table.
+
+**Consequences.** `npm run db:migrate` is now part of setting the project up, and there is a real one-time `wrangler d1 create` step whose id has to be pasted into `wrangler.jsonc` (docs/DEPLOYMENT.md). The database is not a test fixture: `@cloudflare/vitest-pool-workers` still peer-requires Vitest 4 and this repo is on 5, so the D1 adapter's contract run uses Node's built-in SQLite driving the real migration file, and the D1 code path itself is proven by the Playwright suite and by hand (TECH_DEBT). Local D1, `vite preview` and the e2e environment all share `.wrangler/state/v3`, keyed by `database_id`, which is why `preview_database_id` is deliberately never set. Two facts the plan flagged as unverified were checked on local D1 on 2026-09-18 and recorded in DEPLOYMENT.md: `UPDATE ... RETURNING` works, and a 500 KB **bound parameter** is stored and read back intact (the 100 KB limit is on statement text, not on bound values).
+
+## ADR-22 Immutable versions + a revision counter for optimistic concurrency
+
+**Context.** Two people — or one person in two tabs — can open the same template and save. Without a rule, the second save silently overwrites the first, and the only evidence is a confused user. The studio also wants history: "what did v2 look like?" is a normal question about an email that has already been sent.
+
+**Decision.** Versions are append-only, and `templates.revision` is the concurrency token.
+
+- A save **inserts** a new `template_versions` row and bumps `templates.current_version`. Nothing ever updates a version row, so history is a side effect of saving rather than a feature bolted on.
+- `revision` bumps on **every** write, including a metadata-only `PATCH` that creates no version. The browser keeps the revision it last read (`baseRevision` in the draft) and sends it as `expectedRevision`.
+- The guard is in the SQL: `UPDATE templates SET ... WHERE id = ? AND revision = ?`. When it matches no row, `meta.changes` is 0, nothing was written, and the store re-reads the row so the `409` can carry the server's current copy — enough for the UI to say "someone saved v4 two minutes ago" without a second request.
+- The paired `INSERT ... SELECT` for the new version is guarded by `revision = ? + 1` **and** a `NOT EXISTS` clause on the version number, so a stale save that happens to be exactly one revision behind writes nothing instead of aborting the batch on a unique-index violation.
+
+**Alternatives.** _Comparing `updated_at`_ makes correctness depend on clock resolution: two saves in the same millisecond compare equal. _HTTP `If-Match` with an ETag_ is the same idea moved into headers; it is genuinely nicer for caches, but it spreads the rule across middleware, makes the 409 body awkward to populate, and hides the mechanism from a reader following the request through the code. (The read route still sends `ETag: W/"<revision>"`, so nothing stops a later phase adding preconditions on top.) _Last write wins_ is what this exists to prevent.
+
+**Consequences.** Every write path carries an `expectedRevision`, and phase 7b owes the UI a conflict dialog. `revision` and `version_number` are two different numbers on purpose — a rename moves one and not the other — which has to be explained once and then reads naturally. History grows without bound: three saves of a 200 KB template is 600 KB of rows, and no pruning exists yet (TECH_DEBT). A Salesforce developer already knows this pattern: it is `SystemModstamp` and the "record was modified" error, with the comparison written out where it can be read.
+
+## ADR-23 Starters seeded by a generated migration, with a drift test
+
+**Context.** The three starter templates are real React Email components: they are type-checked, unit-tested and rendered by the same pipeline as anything a user writes. Once templates live in a database they have to exist as rows too — and a row that is a stale copy of a file is a trap, because editing the file changes what the tests see and not what the database holds.
+
+**Decision.** Generate the seed migration from the files.
+
+- `src/infrastructure/templates/starterCatalog.json` holds the plain data (name, slug, description, category, tags, envelope, sample payload, JSON Schema, and which `*.email.tsx` file is the source). It is format-neutral so all three consumers can read it: the browser registry, `server/starterSeed.ts` and the generator script.
+- `npm run seed:generate` writes `migrations/0002_seed_starter_templates.sql`: plain INSERTs, `origin 'starter'`, `created_by 'seed'`, ids `tpl_<slug>`, history starting at version 1.
+- `server/seedMigration.test.ts` regenerates the SQL in memory and asserts it equals the committed file, then applies both migrations to an in-memory SQLite database and checks the three rows land. Editing a starter without regenerating fails CI.
+- `server/node.ts` seeds its in-memory store from the same `readStarterSeed()`, so there is one source of starter rows rather than two that drift.
+
+**Alternatives.** _Hand-written seed SQL_ is a second copy of every starter, escaped by hand, and nothing notices when it rots. _Seeding at Worker start-up_ means every cold start does write work, needs an "is it already seeded?" check, and quietly re-creates a starter someone deliberately deleted. _Keeping starters bundled and un-editable_ would mean two kinds of template with two code paths for the rest of the tool's life; making them ordinary rows costs one migration and removes that fork.
+
+**Consequences.** The generated file is committed and must not be edited by hand, which the header says in capital letters. `starterPropsSchemas.ts` is gone: its hand-written JSON Schema text now lives in the catalog as data, and `registry.test.ts` still regenerates it from the Zod schemas and fails on drift, so the reason it existed (never shipping `z.toJSONSchema` to the browser) still holds. The database starts every starter's history at v1 even where the browser fixture still carries an older made-up label like "v3"; that fiction disappears in phase 7b, when the app reads templates from the API instead of the registry. Each INSERT is checked against a 90 KB budget at generation time, well inside D1's 100 KB per-statement limit, so a starter that grows too large fails loudly rather than at `migrations apply` time.
 
 ## ADR-4 Motion: beUI selectively
 

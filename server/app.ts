@@ -18,6 +18,7 @@
  * behind a password gate (ADR-17).
  */
 import { Hono } from 'hono'
+import { HTTPException } from 'hono/http-exception'
 import { z } from 'zod'
 import type { Authenticator, Identity } from './auth.ts'
 import {
@@ -29,6 +30,11 @@ import {
 } from './auth.ts'
 import type { SendServerConfig } from './config.ts'
 import type { EmailSender, SenderPreflight } from './emailSender.ts'
+import { apiError } from './http.ts'
+import type { ObjectStore } from './objectStore.ts'
+import type { TemplateStore } from './templateStore.ts'
+import { registerTemplateRoutes } from './templateRoutes.ts'
+import { registerUploadRoutes } from './uploadRoutes.ts'
 
 export const MAX_HTML_BYTES = 500 * 1024
 /** Friendly cap, applied after de-duplication, so one send is one readable To header. */
@@ -98,6 +104,14 @@ export interface AppDependencies {
    * exist when there is no password to check.
    */
   readonly passwordGate?: { readonly password: string }
+  /**
+   * Where templates are stored. Optional, unlike `sender`, so the existing
+   * `createApp` call sites and tests compile unchanged; absent or null means
+   * the template routes answer 503 storage-unavailable while sending keeps working.
+   */
+  readonly templateStore?: TemplateStore | null
+  /** Where uploaded images are stored (R2 in the Worker). Absent or null -> uploads answer 503. */
+  readonly objectStore?: ObjectStore | null
   /** Injectable clock for tests. */
   readonly now?: () => number
 }
@@ -119,6 +133,8 @@ export function createApp({
     'No authenticator was configured for this server, so every API request is refused.',
   ),
   passwordGate,
+  templateStore = null,
+  objectStore = null,
   now = () => Date.now(),
 }: AppDependencies) {
   const app = new Hono<{ Variables: Variables }>()
@@ -153,6 +169,23 @@ export function createApp({
     }
     c.set('identity', result.identity)
     await next()
+  })
+
+  // Registered AFTER the two middlewares above, so every template and upload
+  // route already has a checked origin and a named caller. `GET /media/:key`
+  // lives outside /api/* and is deliberately public (see uploadRoutes.ts).
+  registerTemplateRoutes(app, { templateStore, now })
+  registerUploadRoutes(app, { objectStore })
+
+  // The last line of defence: anything a handler THROWS (a D1 outage, a row that
+  // does not parse, a duplicate primary key) would otherwise leave Hono's
+  // plain-text "Internal Server Error" - the one response the browser cannot
+  // parse with `apiErrorSchema`. The real error is logged here and never sent:
+  // a database message is no business of the browser's.
+  app.onError((error, c) => {
+    if (error instanceof HTTPException) return error.getResponse()
+    console.error('[api] unhandled error', error)
+    return apiError(c, 500, 'unexpected', 'Something went wrong on the server. Try again.')
   })
 
   if (passwordGate) {

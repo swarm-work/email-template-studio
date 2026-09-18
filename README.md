@@ -26,6 +26,7 @@ Requirements: Node.js 22 or newer (developed on Node 26.8) and npm (no pnpm/bun/
 
 ```bash
 npm install
+npm run db:migrate # create the local template database (once; see docs/DEPLOYMENT.md)
 npm run dev        # http://localhost:5173, API in the Cloudflare runtime (workerd), sending off
 
 # optional, for real test sends through Amazon SES (see docs/SENDING.md)
@@ -38,20 +39,24 @@ Deploy: `npm run deploy` (needs `npx wrangler login`; see `docs/DEPLOYMENT.md`).
 
 ## Scripts
 
-| Command              | What it does                                                                                              |
-| -------------------- | --------------------------------------------------------------------------------------------------------- |
-| `npm run dev`        | Start the Vite dev server with hot reload; `/api` runs in workerd via the Cloudflare plugin.              |
-| `npm run dev:node`   | Same, but `/api` is proxied to the Node send server (`npm run server`).                                   |
-| `npm run build`      | Generate Worker types, type-check (`tsc -b`) and build the client and the Worker into `dist/`.            |
-| `npm run preview`    | Serve the production build locally (workerd for `/api`). `preview:node` proxies to the Node server.       |
-| `npm run deploy`     | Build and deploy the Worker with wrangler.                                                                |
-| `npm test`           | Run unit and component tests once (Vitest).                                                               |
-| `npm run test:watch` | Run tests in watch mode.                                                                                  |
-| `npm run test:e2e`   | Run Playwright browser tests against the production build (needs `npx playwright install chromium` once). |
-| `npm run typecheck`  | Type-check without emitting files.                                                                        |
-| `npm run lint`       | Lint with oxlint (the linter the Vite template ships with).                                               |
-| `npm run format`     | Format with Prettier.                                                                                     |
-| `npm run check`      | Typecheck, lint, format check and unit tests in one go (the same gate CI runs).                           |
+| Command                   | What it does                                                                                              |
+| ------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `npm run dev`             | Start the Vite dev server with hot reload; `/api` runs in workerd via the Cloudflare plugin.              |
+| `npm run dev:node`        | Same, but `/api` is proxied to the Node send server (`npm run server`).                                   |
+| `npm run build`           | Generate Worker types, type-check (`tsc -b`) and build the client and the Worker into `dist/`.            |
+| `npm run preview`         | Serve the production build locally (workerd for `/api`). `preview:node` proxies to the Node server.       |
+| `npm run deploy`          | Build and deploy the Worker with wrangler.                                                                |
+| `npm test`                | Run unit and component tests once (Vitest).                                                               |
+| `npm run test:watch`      | Run tests in watch mode.                                                                                  |
+| `npm run test:e2e`        | Run Playwright browser tests against the production build (needs `npx playwright install chromium` once). |
+| `npm run typecheck`       | Type-check without emitting files.                                                                        |
+| `npm run lint`            | Lint with oxlint (the linter the Vite template ships with).                                               |
+| `npm run format`          | Format with Prettier.                                                                                     |
+| `npm run check`           | Typecheck, lint, format check and unit tests in one go (the same gate CI runs).                           |
+| `npm run db:migrate`      | Apply the SQL migrations to the **local** template database (`.wrangler/state/v3`).                       |
+| `npm run db:migrate:prod` | Apply them to the real Cloudflare D1 database. Always before `npm run deploy`.                            |
+| `npm run db:console`      | Run one SQL statement against the local database: `npm run db:console -- "SELECT * FROM templates"`.      |
+| `npm run seed:generate`   | Regenerate the starter-template seed migration after editing a starter.                                   |
 
 ## How it is put together
 

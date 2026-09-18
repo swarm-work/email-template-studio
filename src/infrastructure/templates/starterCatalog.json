@@ -1,0 +1,192 @@
+[
+  {
+    "slug": "welcome-verification",
+    "name": "Welcome & verification",
+    "description": "Sent after sign-up. Asks the user to confirm their email address before the account is activated.",
+    "category": "onboarding",
+    "status": "ready",
+    "tags": ["sign-up", "verification"],
+    "version": {
+      "number": 3,
+      "label": "v3",
+      "createdAt": "2026-08-21T09:30:00Z"
+    },
+    "createdAt": "2026-08-21T09:30:00Z",
+    "sourceFile": "welcome-verification.email.tsx",
+    "envelope": {
+      "subject": "Verify your email address",
+      "preheader": "",
+      "replyTo": ""
+    },
+    "samplePayload": {
+      "recipientName": "Ada",
+      "verificationUrl": "https://app.meridian.example/verify?token=sample-token",
+      "expiresInHours": 24,
+      "productName": "Meridian",
+      "supportEmail": "support@meridian.example"
+    },
+    "propsSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "recipientName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "verificationUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "expiresInHours": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "productName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "supportEmail": {
+          "type": "string",
+          "format": "email",
+          "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+        }
+      },
+      "required": ["recipientName", "verificationUrl", "expiresInHours", "productName", "supportEmail"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "slug": "password-reset",
+    "name": "Password reset",
+    "description": "Time-limited link to choose a new password, with optional request details for security context.",
+    "category": "security",
+    "status": "ready",
+    "tags": ["security", "account"],
+    "version": {
+      "number": 5,
+      "label": "v5",
+      "createdAt": "2026-09-02T14:05:00Z"
+    },
+    "createdAt": "2026-09-02T14:05:00Z",
+    "sourceFile": "password-reset.email.tsx",
+    "envelope": {
+      "subject": "Reset your password",
+      "preheader": "",
+      "replyTo": ""
+    },
+    "samplePayload": {
+      "recipientName": "Grace",
+      "resetUrl": "https://app.meridian.example/reset?token=sample-token",
+      "expiresInMinutes": 30,
+      "productName": "Meridian",
+      "requestIp": "203.0.113.42",
+      "requestLocation": "Manila, PH"
+    },
+    "propsSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "recipientName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "resetUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "expiresInMinutes": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "productName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requestIp": {
+          "type": "string"
+        },
+        "requestLocation": {
+          "type": "string"
+        }
+      },
+      "required": ["recipientName", "resetUrl", "expiresInMinutes", "productName"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "slug": "team-invitation",
+    "name": "Team invitation",
+    "description": "Invites a person to join a team with a specific role. Uses Row/Column layout.",
+    "category": "collaboration",
+    "status": "draft",
+    "tags": ["teams", "invitation"],
+    "version": {
+      "number": 1,
+      "label": "v1",
+      "createdAt": "2026-09-05T11:00:00Z"
+    },
+    "createdAt": "2026-09-05T11:00:00Z",
+    "sourceFile": "team-invitation.email.tsx",
+    "envelope": {
+      "subject": "You have been invited to join a team",
+      "preheader": "",
+      "replyTo": ""
+    },
+    "samplePayload": {
+      "inviteeName": "Linus",
+      "inviterName": "Margaret Hamilton",
+      "teamName": "Platform Core",
+      "role": "member",
+      "acceptUrl": "https://app.meridian.example/invitations/sample-token",
+      "expiresInDays": 7,
+      "productName": "Meridian"
+    },
+    "propsSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "inviteeName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "inviterName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "teamName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "role": {
+          "type": "string",
+          "enum": ["admin", "member", "viewer"]
+        },
+        "acceptUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "expiresInDays": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "productName": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "inviteeName",
+        "inviterName",
+        "teamName",
+        "role",
+        "acceptUrl",
+        "expiresInDays",
+        "productName"
+      ],
+      "additionalProperties": false
+    }
+  }
+]

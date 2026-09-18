@@ -1,18 +1,20 @@
 /**
  * The starter templates that ship with the studio.
  *
- * In the MVP templates live in this folder as real TSX files. Vite's `?raw`
- * import gives us the exact file text for the editor, while the same files
- * are also type-checked and unit-tested as normal React components.
+ * These records are now TWO things: the **seed input** that
+ * `scripts/generate-seed-migration.mjs` turns into `migrations/0002_seed_starter_templates.sql`,
+ * and the **fixtures** most unit tests build on. The metadata comes from
+ * `starterCatalog.json`; the source is the real TSX file next to it, pulled in
+ * with Vite's `?raw` so the same file is both editable text and a type-checked
+ * React component.
  *
- * Infrastructure layer: it may use Zod and Vite features. These records are
- * the seed for the persistent store and the fixtures the tests use; behaviour
- * (the props validator) is attached in templateMapper.ts.
+ * Infrastructure layer: it may use Zod and Vite features. Behaviour (the props
+ * validator) is attached in templateMapper.ts.
  */
 import { z } from 'zod'
 import { templateId, type PropsValidator, type TemplateId, type TemplateRecord } from '@/domain'
 import { zodPropsValidator } from '@/infrastructure/validation/zodPropsValidator'
-import { STARTER_PROPS_SCHEMA_TEXT } from './starterPropsSchemas'
+import { prettyJson, STARTER_CATALOG } from './starterCatalog'
 import welcomeVerificationSource from './welcome-verification.email.tsx?raw'
 import passwordResetSource from './password-reset.email.tsx?raw'
 import teamInvitationSource from './team-invitation.email.tsx?raw'
@@ -24,6 +26,24 @@ export const SAMPLE_PRODUCT_NAME = 'Meridian'
 
 /** Who the starters are attributed to: they are created by the seed, not a person. */
 const SEED_AUTHOR = 'seed'
+
+/** The TSX text of each starter, keyed by the `sourceFile` its catalog entry names. */
+const STARTER_SOURCES: Readonly<Record<string, string>> = {
+  'welcome-verification.email.tsx': welcomeVerificationSource,
+  'password-reset.email.tsx': passwordResetSource,
+  'team-invitation.email.tsx': teamInvitationSource,
+}
+
+/**
+ * The TSX text for one catalog entry. A typo in `sourceFile` is a mistake, not
+ * a template with no source: the server-side seed throws on it (readFileSync),
+ * and an empty starter here would only show up as a blank editor in the studio.
+ */
+function sourceFor(sourceFile: string, slug: string): string {
+  const source = STARTER_SOURCES[sourceFile]
+  if (!source) throw new Error(`Starter "${slug}" names an unknown sourceFile: ${sourceFile}`)
+  return source
+}
 
 const welcomeVerificationSchema = z.strictObject({
   recipientName: z.string().min(1, 'Required'),
@@ -52,104 +72,29 @@ const teamInvitationSchema = z.strictObject({
   productName: z.string().min(1, 'Required'),
 })
 
-function pretty(value: unknown): string {
-  return `${JSON.stringify(value, null, 2)}\n`
-}
-
-export const STARTER_TEMPLATES: readonly TemplateRecord[] = [
-  {
-    kind: 'code',
-    metadata: {
-      id: templateId('welcome-verification'),
-      name: 'Welcome & verification',
-      slug: 'welcome-verification',
-      description:
-        'Sent after sign-up. Asks the user to confirm their email address before the account is activated.',
-      category: 'onboarding',
-      status: 'ready',
-      version: { number: 3, label: 'v3', createdAt: '2026-08-21T09:30:00Z' },
-      revision: 1,
-      tags: ['sign-up', 'verification'],
-      origin: 'starter',
-      createdBy: SEED_AUTHOR,
-      createdAt: '2026-08-21T09:30:00Z',
-      updatedBy: SEED_AUTHOR,
-      updatedAt: '2026-08-21T09:30:00Z',
-    },
-    envelope: { subject: 'Verify your email address', preheader: '', replyTo: '' },
-    source: welcomeVerificationSource,
-    samplePayloadText: pretty({
-      recipientName: 'Ada',
-      verificationUrl: 'https://app.meridian.example/verify?token=sample-token',
-      expiresInHours: 24,
-      productName: SAMPLE_PRODUCT_NAME,
-      supportEmail: 'support@meridian.example',
-    }),
-    propsSchemaText: STARTER_PROPS_SCHEMA_TEXT['welcome-verification'],
+export const STARTER_TEMPLATES: readonly TemplateRecord[] = STARTER_CATALOG.map((entry) => ({
+  kind: 'code',
+  source: sourceFor(entry.sourceFile, entry.slug),
+  metadata: {
+    id: templateId(entry.slug),
+    name: entry.name,
+    slug: entry.slug,
+    description: entry.description,
+    category: entry.category,
+    status: entry.status,
+    version: entry.version,
+    revision: 1,
+    tags: entry.tags,
+    origin: 'starter',
+    createdBy: SEED_AUTHOR,
+    createdAt: entry.createdAt,
+    updatedBy: SEED_AUTHOR,
+    updatedAt: entry.createdAt,
   },
-  {
-    kind: 'code',
-    metadata: {
-      id: templateId('password-reset'),
-      name: 'Password reset',
-      slug: 'password-reset',
-      description:
-        'Time-limited link to choose a new password, with optional request details for security context.',
-      category: 'security',
-      status: 'ready',
-      version: { number: 5, label: 'v5', createdAt: '2026-09-02T14:05:00Z' },
-      revision: 1,
-      tags: ['security', 'account'],
-      origin: 'starter',
-      createdBy: SEED_AUTHOR,
-      createdAt: '2026-09-02T14:05:00Z',
-      updatedBy: SEED_AUTHOR,
-      updatedAt: '2026-09-02T14:05:00Z',
-    },
-    envelope: { subject: 'Reset your password', preheader: '', replyTo: '' },
-    source: passwordResetSource,
-    samplePayloadText: pretty({
-      recipientName: 'Grace',
-      resetUrl: 'https://app.meridian.example/reset?token=sample-token',
-      expiresInMinutes: 30,
-      productName: SAMPLE_PRODUCT_NAME,
-      requestIp: '203.0.113.42',
-      requestLocation: 'Manila, PH',
-    }),
-    propsSchemaText: STARTER_PROPS_SCHEMA_TEXT['password-reset'],
-  },
-  {
-    kind: 'code',
-    metadata: {
-      id: templateId('team-invitation'),
-      name: 'Team invitation',
-      slug: 'team-invitation',
-      description: 'Invites a person to join a team with a specific role. Uses Row/Column layout.',
-      category: 'collaboration',
-      status: 'draft',
-      version: { number: 1, label: 'v1', createdAt: '2026-09-05T11:00:00Z' },
-      revision: 1,
-      tags: ['teams', 'invitation'],
-      origin: 'starter',
-      createdBy: SEED_AUTHOR,
-      createdAt: '2026-09-05T11:00:00Z',
-      updatedBy: SEED_AUTHOR,
-      updatedAt: '2026-09-05T11:00:00Z',
-    },
-    envelope: { subject: 'You have been invited to join a team', preheader: '', replyTo: '' },
-    source: teamInvitationSource,
-    samplePayloadText: pretty({
-      inviteeName: 'Linus',
-      inviterName: 'Margaret Hamilton',
-      teamName: 'Platform Core',
-      role: 'member',
-      acceptUrl: 'https://app.meridian.example/invitations/sample-token',
-      expiresInDays: 7,
-      productName: SAMPLE_PRODUCT_NAME,
-    }),
-    propsSchemaText: STARTER_PROPS_SCHEMA_TEXT['team-invitation'],
-  },
-]
+  envelope: entry.envelope,
+  samplePayloadText: prettyJson(entry.samplePayload),
+  propsSchemaText: prettyJson(entry.propsSchema),
+}))
 
 /**
  * The Zod schemas behind the starters, keyed by **slug**. Exported for

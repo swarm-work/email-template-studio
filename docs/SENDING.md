@@ -26,6 +26,8 @@ The only difference between the runtimes is where the variables come from: `.env
 
 `STUDIO_RUNTIME=node` in `.env` makes the Node runtime the default for `npm run dev` on that machine. The deployed Worker is described in `docs/DEPLOYMENT.md`.
 
+The Node server keeps templates **in memory**, seeded from the same starters migration 0002 writes into D1: restarting it loses every edit, and its startup banner says so. `npm run dev` runs the Worker against the real local D1 instead. Image uploads need R2, which only the Worker has, so `POST /api/uploads` answers `503` on the Node path.
+
 ## Guards
 
 | Guard                 | Where                      | Effect                                                                                                                        |

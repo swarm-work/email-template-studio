@@ -34,6 +34,40 @@ export const MAX_NOTE_LENGTH = 200
  */
 export const STUDIO_API_HEADER = 'x-studio-request'
 
+/**
+ * Image uploads for visual templates (`POST /api/uploads`).
+ *
+ * 2 MB is generous for an email image and small enough that a Worker can hold
+ * the whole body in memory. The allow-list is four formats every mail client
+ * renders; SVG is deliberately absent, because an SVG can carry script.
+ */
+export const MAX_UPLOAD_BYTES = 2_000_000
+
+/** Declared content type -> the extension the stored key gets. */
+export const UPLOAD_CONTENT_TYPES: Readonly<Record<string, string>> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+}
+
+/** The form field `POST /api/uploads` reads the file from. */
+export const UPLOAD_FIELD_NAME = 'file'
+
+/** The shape of a stored asset key, also enforced by `GET /media/:key`. */
+export const UPLOAD_KEY_PATTERN = /^img_[0-9a-f-]{36}\.(png|jpe?g|gif|webp)$/
+
+/**
+ * Where an uploaded image is served from. NOT `/assets/`: Vite builds the
+ * studio's own JS, CSS and fonts into that prefix, and sharing it would mean
+ * every static file had to travel through the Worker. Nothing else emits
+ * `/media/`, so the Worker only ever sees a real image request.
+ */
+export const MEDIA_PATH_PREFIX = '/media/'
+
+/** `{ url }` - absolute, because an email client has no page to resolve a relative src against. */
+export const uploadResponseSchema = z.object({ url: z.url() })
+
 export const templateKindSchema = z.enum(['code', 'visual'])
 export const templateOriginSchema = z.enum(['user', 'starter'])
 export const templateCategorySchema = z.enum([
@@ -82,6 +116,26 @@ function boundedText(maxBytes: number, label: string) {
     .refine((value) => byteLength(value) <= maxBytes, `${label} is larger than ${maxBytes} bytes`)
 }
 
+/** True for text that parses as a JSON object (not an array, not a bare value). */
+function isJsonObjectText(value: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(value)
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * A capped string that must also be a JSON object. Both props columns are
+ * documented as JSON, and a corrupt props schema fails SILENTLY downstream (the
+ * validator falls back to "any object" and nobody is told), so the check belongs
+ * here at the edge where it can still be a 400 naming the field.
+ */
+function jsonObjectText(maxBytes: number, label: string) {
+  return boundedText(maxBytes, label).refine(isJsonObjectText, `${label} must be a JSON object`)
+}
+
 export const envelopeSchema = z.object({
   subject: z.string().max(MAX_SUBJECT_LENGTH),
   preheader: z.string().max(MAX_PREHEADER_LENGTH),
@@ -106,8 +160,8 @@ const versionBodyBase = {
   envelope: envelopeSchema,
   html: boundedText(MAX_HTML_BYTES, 'The exported HTML'),
   text: boundedText(MAX_TEXT_BYTES, 'The plain text'),
-  propsSample: boundedText(MAX_PROPS_BYTES, 'The sample props'),
-  propsSchema: boundedText(MAX_PROPS_BYTES, 'The props schema'),
+  propsSample: jsonObjectText(MAX_PROPS_BYTES, 'The sample props'),
+  propsSchema: jsonObjectText(MAX_PROPS_BYTES, 'The props schema'),
   note: z.string().max(MAX_NOTE_LENGTH).default(''),
 }
 
@@ -133,7 +187,14 @@ export const versionBodySchema = z
 
 export const tagsSchema = z.array(z.string().min(1).max(MAX_TAG_LENGTH)).max(MAX_TAGS)
 
-export const createTemplateRequest = z.object({
+/**
+ * The four request bodies are `strictObject`: an unknown key is a 400 naming the
+ * key, not something Zod quietly drops. A PATCH of `{ tittle: 'x' }` would
+ * otherwise "succeed", change nothing and still bump the revision, invalidating
+ * every other tab's `expectedRevision`. (`versionBodySchema` stays permissive:
+ * `templateVersionSchema` intersects it with response-only fields below.)
+ */
+export const createTemplateRequest = z.strictObject({
   name: z.string().min(1).max(MAX_NAME_LENGTH),
   slug: slugSchema.optional(),
   description: z.string().max(MAX_DESCRIPTION_LENGTH).default(''),
@@ -142,12 +203,12 @@ export const createTemplateRequest = z.object({
   initialVersion: versionBodySchema,
 })
 
-export const saveVersionRequest = z.object({
+export const saveVersionRequest = z.strictObject({
   expectedRevision: z.number().int().nonnegative(),
   version: versionBodySchema,
 })
 
-export const updateMetadataRequest = z.object({
+export const updateMetadataRequest = z.strictObject({
   expectedRevision: z.number().int().nonnegative(),
   name: z.string().min(1).max(MAX_NAME_LENGTH).optional(),
   slug: slugSchema.optional(),
@@ -157,13 +218,13 @@ export const updateMetadataRequest = z.object({
   tags: tagsSchema.optional(),
 })
 
-export const convertToCodeRequest = z.object({
+export const convertToCodeRequest = z.strictObject({
   expectedRevision: z.number().int().nonnegative(),
   source: boundedText(MAX_SOURCE_BYTES, 'The source'),
   html: boundedText(MAX_HTML_BYTES, 'The exported HTML'),
   text: boundedText(MAX_TEXT_BYTES, 'The plain text'),
-  propsSample: boundedText(MAX_PROPS_BYTES, 'The sample props'),
-  propsSchema: boundedText(MAX_PROPS_BYTES, 'The props schema'),
+  propsSample: jsonObjectText(MAX_PROPS_BYTES, 'The sample props'),
+  propsSchema: jsonObjectText(MAX_PROPS_BYTES, 'The props schema'),
   note: z.string().max(MAX_NOTE_LENGTH).default(''),
 })
 
@@ -213,11 +274,16 @@ export const templateResponse = z.object({ template: templateDetailSchema })
 export const versionListResponse = z.object({ versions: z.array(versionSummarySchema) })
 export const deletedResponse = z.object({ status: z.literal('deleted'), id: z.string().min(1) })
 
-/** Mirrored by RepositoryFailure in the application layer. */
+/**
+ * Mirrored by RepositoryFailure in the application layer. `forbidden-origin` is
+ * the 403 the Host/Origin middleware emits (`server/app.ts`); it is listed here
+ * so that body parses too, and the repository maps it onto plain `forbidden`.
+ */
 export const apiErrorCode = z.enum([
   'bad-request',
   'unauthenticated',
   'forbidden',
+  'forbidden-origin',
   'not-found',
   'conflict',
   'slug-taken',
@@ -249,3 +315,4 @@ export type TemplateDetailDto = z.infer<typeof templateDetailSchema>
 export type VersionSummaryDto = z.infer<typeof versionSummarySchema>
 export type ApiErrorCode = z.infer<typeof apiErrorCode>
 export type ApiError = z.infer<typeof apiErrorSchema>
+export type UploadResponse = z.infer<typeof uploadResponseSchema>

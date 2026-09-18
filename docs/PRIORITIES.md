@@ -87,7 +87,7 @@ Sizes: S is a day or less, M about a week, L two to three weeks, for one develop
 
 ### 3.5 Make local development work again
 
-**Why.** `.dev.vars` spells the AWS keys in lowercase; `server/config.ts` only knows the uppercase names, so with sending enabled and dry-run off every `/api/*` call returns 500 `server-misconfigured`. The password gate cannot be tested locally either. The dangerous wrong fix is reaching for the production key.
+**Why.** `.dev.vars` spells the AWS keys in lowercase; `server/config.ts` only knows the uppercase names, so with sending enabled and dry-run off the send routes report a misconfigured server (before phase 7a that was a 500 on every `/api/*` call; the Worker now switches sending off and leaves the rest of the API working). The password gate cannot be tested locally either. The dangerous wrong fix is reaching for the production key.
 
 **How.** Uppercase `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` in `.dev.vars`, add `STUDIO_DEV_IDENTITY=echo@swarm.work`, set `STUDIO_SEND_DRY_RUN=true` for day-to-day work. Then `curl localhost:5173/api/send-test/status` should return 200 with your identity. Make the failure explain itself: in `server/config.ts`, detect a lowercase `aws_access_key_id` and throw a `ConfigError` naming the uppercase spelling. Update `.dev.vars.example` and the README quick start.
 

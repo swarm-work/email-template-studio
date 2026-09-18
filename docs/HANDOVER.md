@@ -108,7 +108,9 @@ The deploy job runs on every push to `main`, so `main` is production. Add a rule
 
 # Part B. Cloudflare
 
-Today: Worker `email-template-studio` on the personal account `0f95923f7c5505d2e3261d3a788d68e0`, at `https://email-template-studio.jerichodelrosario35.workers.dev`, sending disabled, no data.
+Today: Worker `email-template-studio` on the personal account `d0fa6b3d72170539438800a907ec5323` (the id `wrangler.jsonc` pins), at `https://email-template-studio.jerichodelrosario35.workers.dev`.
+
+**There is data now.** Templates live in a Cloudflare D1 database and uploaded images in an R2 bucket, both on that same account (ADR-21). Moving accounts therefore means moving data: export the database, create it on the new account, apply migrations, import, and copy the R2 objects. The exact commands are in "Moving to the production account" in `docs/DEPLOYMENT.md`. Do the move during a short freeze of edits.
 
 ## B1. Get into the company account
 
