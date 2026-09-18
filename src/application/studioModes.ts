@@ -34,3 +34,18 @@ export function defaultMode(kind: TemplateKind): StudioMode {
 export function clampMode(kind: TemplateKind, mode: StudioMode): StudioMode {
   return availableModes(kind).includes(mode) ? mode : defaultMode(kind)
 }
+
+/**
+ * Where ⌘P should go next.
+ *
+ * Preview is a round trip, not a destination: the first press leaves the editor
+ * you were in, the second press brings you back to it. `returnMode` is the mode
+ * the studio came from, so this stays a pure function of two values and the
+ * component only has to remember one of them.
+ */
+export function nextModeForPreviewToggle(mode: StudioMode, returnMode: StudioMode): StudioMode {
+  if (mode !== 'preview') return 'preview'
+  // Coming back to "preview" would be a press that does nothing, so a return
+  // mode that is itself preview falls back to the editor for this kind.
+  return returnMode === 'preview' ? 'code' : returnMode
+}

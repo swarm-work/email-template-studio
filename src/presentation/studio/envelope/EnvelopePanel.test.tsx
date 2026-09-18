@@ -4,7 +4,6 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { SUBJECT_LENGTH_LIMIT, type TemplateEnvelope } from '@/domain'
-import { NoSendEmailProvider } from '@/infrastructure/providers/emailProvider'
 import { STARTER_TEMPLATES } from '@/infrastructure/templates/registry'
 import { toEmailTemplate } from '@/infrastructure/templates/templateMapper'
 import { EnvelopePanel } from './EnvelopePanel'
@@ -21,7 +20,7 @@ function renderPanel(envelope: Partial<TemplateEnvelope> = {}, onChange = vi.fn(
         dirty={false}
         onChange={onChange}
         onReset={() => {}}
-        provider={new NoSendEmailProvider()}
+        from={null}
       />
     </TooltipProvider>,
   )
@@ -88,7 +87,7 @@ describe('EnvelopePanel', () => {
           dirty={false}
           onChange={vi.fn()}
           onReset={() => {}}
-          provider={new NoSendEmailProvider()}
+          from={null}
         />
       </TooltipProvider>,
     )

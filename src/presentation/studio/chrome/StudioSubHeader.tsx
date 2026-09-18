@@ -35,6 +35,11 @@ export interface StudioSubHeaderProps {
   onSendTest: () => void
   onShowShortcuts: () => void
   onBackToLibrary: () => void
+  /** Saves the rendered HTML / plain text as a file; carried by the overflow menu. */
+  onDownloadHtml: () => void
+  onDownloadText: () => void
+  /** Why the two downloads cannot be used; `undefined` means they can. */
+  downloadReason?: string
 }
 
 export function StudioSubHeader({
@@ -50,6 +55,9 @@ export function StudioSubHeader({
   onSendTest,
   onShowShortcuts,
   onBackToLibrary,
+  onDownloadHtml,
+  onDownloadText,
+  downloadReason,
 }: StudioSubHeaderProps) {
   return (
     <header className="bg-card/85 sticky top-0 z-30 flex min-h-[52px] min-w-0 shrink-0 flex-wrap items-center gap-2 border-b px-4 py-1.5 backdrop-blur-sm">
@@ -77,6 +85,9 @@ export function StudioSubHeader({
           status={template.metadata.status}
           onSendTest={onSendTest}
           onShowShortcuts={onShowShortcuts}
+          onDownloadHtml={onDownloadHtml}
+          onDownloadText={onDownloadText}
+          downloadReason={downloadReason}
         />
       </div>
     </header>

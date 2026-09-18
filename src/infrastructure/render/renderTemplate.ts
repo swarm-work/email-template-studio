@@ -45,8 +45,15 @@ export async function renderTemplate(source: string, props: PreviewPayload): Pro
     const element = React.createElement(Component, props)
     // `pretty: false` keeps the worker bundle free of the optional formatter.
     const html = await render(element, { pretty: false })
-    // The plain-text part is rendered by a later milestone; '' until then.
-    return { ok: true, html, text: '', durationMs: Math.round(performance.now() - startedAt) }
+    // The same element rendered again, this time as the plain-text alternative
+    // part every real email carries. It is done here, in the same worker
+    // message, so that one request produces one `RenderResult` holding both
+    // parts: the preview, the size checks and the send then never disagree
+    // about which HTML the text belongs to. Its cost (measured at roughly a
+    // third of the HTML render) is inside `durationMs` on purpose — that
+    // number is what one render of this template costs the studio.
+    const text = await render(element, { plainText: true })
+    return { ok: true, html, text, durationMs: Math.round(performance.now() - startedAt) }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     const detail = error instanceof Error ? error.stack : undefined

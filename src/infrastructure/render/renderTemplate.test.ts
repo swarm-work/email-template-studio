@@ -35,6 +35,20 @@ describe('renderTemplate', () => {
     expect(text).toContain('expires in 12 hours')
   })
 
+  it('renders a plain-text part next to the HTML', async () => {
+    const template = STARTER_TEMPLATES[0]
+    const props = JSON.parse(template.samplePayloadText) as Record<string, unknown>
+    const result = await renderTemplate(templateSource(template), props)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    // The words of the template are there (the heading is upper-cased by its style)...
+    expect(result.text).toMatch(/welcome, ada/i)
+    expect(result.text).toContain('app.meridian.example/verify')
+    // ...and no markup is: this is the alternative part, not a second copy of the HTML.
+    expect(result.text).not.toContain('<')
+    expect(result.text).not.toMatch(/<\/?[a-z]/i)
+  })
+
   it('supports both default and namespace React imports', async () => {
     const source = `
       import React from 'react'

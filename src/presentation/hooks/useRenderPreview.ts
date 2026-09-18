@@ -20,6 +20,8 @@ export interface RenderPreviewState {
   readonly result: RenderResult | null
   /** HTML of the most recent SUCCESSFUL render, kept while newer renders fail. */
   readonly html: string | null
+  /** Plain-text part of that same successful render; null before the first one. */
+  readonly text: string | null
   readonly renderedAt: Date | null
   /** Forces a re-render even if nothing changed (used by the Refresh button). */
   readonly refresh: () => void
@@ -34,6 +36,8 @@ interface Completed {
 interface LastGood {
   readonly resetKey: string
   readonly html: string
+  /** Kept beside the HTML so the two parts on screen always come from one render. */
+  readonly text: string
   readonly renderedAt: Date
 }
 
@@ -62,7 +66,9 @@ export function useRenderPreview(
       void renderer.render(source, props).then((result) => {
         if (latestRequest.current !== requestKey) return // superseded by a newer request
         setCompleted({ requestKey, resetKey, result })
-        if (result.ok) setLastGood({ resetKey, html: result.html, renderedAt: new Date() })
+        if (result.ok) {
+          setLastGood({ resetKey, html: result.html, text: result.text, renderedAt: new Date() })
+        }
       })
     }, debounceMs)
     return () => clearTimeout(timer)
@@ -82,6 +88,7 @@ export function useRenderPreview(
     status,
     result: currentCompleted?.result ?? null,
     html: currentGood?.html ?? null,
+    text: currentGood?.text ?? null,
     renderedAt: currentGood?.renderedAt ?? null,
     refresh,
   }

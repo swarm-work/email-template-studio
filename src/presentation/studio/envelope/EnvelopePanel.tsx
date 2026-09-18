@@ -7,7 +7,7 @@
  * keeps no copy of the text, which is why typing here can never disagree with
  * what the preview and the send dialog use.
  */
-import { useEffect, useId, useState } from 'react'
+import { useId, useState } from 'react'
 import { Check, HelpCircle, RotateCcw, TriangleAlert } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
@@ -21,7 +21,6 @@ import {
   type TemplateEnvelope,
   type TemplateMetadata,
 } from '@/domain'
-import type { EmailProvider } from '@/infrastructure/providers/emailProvider'
 import { ReasonedButton } from '@/presentation/shared/ReasonedButton'
 import { StatusBadge } from '@/presentation/shared/StatusBadge'
 import { cn } from '@/lib/utils'
@@ -45,22 +44,18 @@ export interface EnvelopePanelProps {
   dirty: boolean
   onChange: (envelope: TemplateEnvelope) => void
   onReset: () => void
-  /** The send server owns the From identity; it is read from here, never typed. */
-  provider: EmailProvider
+  /**
+   * The send server's From identity, or null while it is unknown. Resolved once
+   * by the studio and passed in, so this panel and the preview's summary can
+   * never show different senders.
+   */
+  from: string | null
 }
 
-export function EnvelopePanel({
-  envelope,
-  metadata,
-  dirty,
-  onChange,
-  onReset,
-  provider,
-}: EnvelopePanelProps) {
+export function EnvelopePanel({ envelope, metadata, dirty, onChange, onReset, from }: EnvelopePanelProps) {
   const headingId = useId()
   const fieldId = useId()
   const [open, setOpen] = useState(true)
-  const fromIdentity = useFromIdentity(provider)
 
   const subjectState = subjectLengthState(envelope.subject)
   const replyToError = replyToProblem(envelope.replyTo)
@@ -158,7 +153,7 @@ export function EnvelopePanel({
                 aria-live="off"
                 className="bg-muted/60 text-muted-foreground flex h-9 w-full min-w-0 items-center truncate rounded-md px-2.5 font-mono text-xs"
               >
-                {fromIdentity ?? '—'}
+                {from ?? '—'}
               </output>
             </EnvelopeField>
 
@@ -242,21 +237,4 @@ function replyToProblem(replyTo: string): string | undefined {
   if (replyTo.trim() === '') return undefined
   const { addresses, invalid } = parseRecipientList(replyTo)
   return invalid.length > 0 || addresses.length !== 1 ? 'Enter a valid email address.' : undefined
-}
-
-/** The address the send server sends from, or null while it is not connected. */
-function useFromIdentity(provider: EmailProvider): string | null {
-  const [from, setFrom] = useState<string | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-    void provider.getStatus().then((status) => {
-      if (!cancelled && status.connected) setFrom(status.from)
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [provider])
-
-  return from
 }

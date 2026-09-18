@@ -19,7 +19,7 @@ import type { TemplateKind, TemplateStatus } from '@/domain'
 import { ReasonedMenuItem } from '@/presentation/shared/ReasonedButton'
 
 const SAVED_TEMPLATES_REASON = 'Coming with saved templates.'
-const NEXT_STEP_REASON = 'Coming in the next step.'
+const CONVERT_REASON = 'Coming with the visual editor.'
 
 export interface StudioOverflowMenuProps {
   kind: TemplateKind
@@ -27,14 +27,27 @@ export interface StudioOverflowMenuProps {
   /** Opens the send-test dialog; the menu carries it on narrow screens. */
   onSendTest: () => void
   onShowShortcuts: () => void
+  /** Saves the last render as a file. */
+  onDownloadHtml: () => void
+  onDownloadText: () => void
+  /** Why the downloads cannot be used; `undefined` means they can. */
+  downloadReason?: string
 }
 
-export function StudioOverflowMenu({ kind, status, onSendTest, onShowShortcuts }: StudioOverflowMenuProps) {
-  // Two sentences cover every unavailable item, so two sr-only nodes do too.
-  // They live outside the menu: anything inside a menu item becomes part of
-  // that item's accessible name.
+export function StudioOverflowMenu({
+  kind,
+  status,
+  onSendTest,
+  onShowShortcuts,
+  onDownloadHtml,
+  onDownloadText,
+  downloadReason,
+}: StudioOverflowMenuProps) {
+  // The reason sentences live outside the menu: anything inside a menu item
+  // becomes part of that item's accessible name.
   const savedReasonId = useId()
-  const nextStepReasonId = useId()
+  const convertReasonId = useId()
+  const downloadReasonId = useId()
 
   return (
     <>
@@ -58,18 +71,18 @@ export function StudioOverflowMenu({ kind, status, onSendTest, onShowShortcuts }
             {status === 'ready' ? 'Mark as draft' : 'Mark as ready'}
           </ReasonedMenuItem>
           <DropdownMenuSeparator />
-          <ReasonedMenuItem reason={NEXT_STEP_REASON} reasonId={nextStepReasonId}>
+          <ReasonedMenuItem reason={downloadReason} reasonId={downloadReasonId} onSelect={onDownloadHtml}>
             <Download aria-hidden="true" />
             Download HTML
           </ReasonedMenuItem>
-          <ReasonedMenuItem reason={NEXT_STEP_REASON} reasonId={nextStepReasonId}>
+          <ReasonedMenuItem reason={downloadReason} reasonId={downloadReasonId} onSelect={onDownloadText}>
             <Download aria-hidden="true" />
             Download plain text
           </ReasonedMenuItem>
           {kind === 'visual' ? (
             <>
               <DropdownMenuSeparator />
-              <ReasonedMenuItem reason={NEXT_STEP_REASON} reasonId={nextStepReasonId}>
+              <ReasonedMenuItem reason={CONVERT_REASON} reasonId={convertReasonId}>
                 <FileCode2 aria-hidden="true" />
                 Convert to code template…
               </ReasonedMenuItem>
@@ -85,9 +98,14 @@ export function StudioOverflowMenu({ kind, status, onSendTest, onShowShortcuts }
       <span id={savedReasonId} className="sr-only">
         {SAVED_TEMPLATES_REASON}
       </span>
-      <span id={nextStepReasonId} className="sr-only">
-        {NEXT_STEP_REASON}
+      <span id={convertReasonId} className="sr-only">
+        {CONVERT_REASON}
       </span>
+      {downloadReason === undefined ? null : (
+        <span id={downloadReasonId} className="sr-only">
+          {downloadReason}
+        </span>
+      )}
     </>
   )
 }

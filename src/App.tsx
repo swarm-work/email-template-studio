@@ -21,6 +21,10 @@ export default function App() {
   const repository = useMemo(() => createTemplateRepository(), [])
   const store = useMemo(() => createSessionStore(getBrowserSessionStorage()), [])
   const [activePage, setActivePage] = useState<ScreenPage>('templates')
+  // The studio with a template open is a full-height app screen (one viewport,
+  // internal scrollers); every other screen is an ordinary page that scrolls.
+  // The shell is rendered here, above the routes, so the route has to say which.
+  const [editorOpen, setEditorOpen] = useState(false)
 
   // The header is rendered once, outside the page switch, so it never remounts.
   // That means the numbers it shows have to live here rather than in a page.
@@ -63,6 +67,7 @@ export default function App() {
             store={store}
             provider={emailProvider}
             onRenderTime={onRenderTime}
+            onEditorOpenChange={setEditorOpen}
           />
         )
     }
@@ -74,7 +79,7 @@ export default function App() {
           needs a caller it can name, so the gate belongs outside the shell. */}
       <PasswordGate>
         <AppShell
-          density="page"
+          density={activePage === 'templates' && editorOpen ? 'app' : 'page'}
           header={
             <GlobalHeader
               workspace={WORKSPACE}

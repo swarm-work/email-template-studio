@@ -7,7 +7,7 @@
  * children are handed `onOpenTemplate` / `onBackToLibrary` callbacks — so
  * swapping in a real router later touches only this file.
  */
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -31,15 +31,32 @@ export interface TemplatesRouteProps {
   provider: EmailProvider
   /** Reports how long the last preview render took, for the header's pill. */
   onRenderTime: (ms: number | null) => void
+  /** Tells the shell whether the full-height editor is open. */
+  onEditorOpenChange: (open: boolean) => void
 }
 
-export function TemplatesRoute({ repository, renderer, store, provider, onRenderTime }: TemplatesRouteProps) {
+export function TemplatesRoute({
+  repository,
+  renderer,
+  store,
+  provider,
+  onRenderTime,
+  onEditorOpenChange,
+}: TemplatesRouteProps) {
   const library = useTemplateLibrary(repository)
   // The app always lands on the library; the view is state, not a saved setting.
   const [view, setView] = useState<StudioView>({ kind: 'library' })
 
   const openTemplate = useCallback((id: TemplateId) => setView({ kind: 'editor', templateId: id }), [])
   const backToLibrary = useCallback(() => setView({ kind: 'library' }), [])
+
+  // The shell owns the page shape (`density`), so the view has to report it.
+  // The cleanup matters: navigating to another screen closes the editor too.
+  const editorOpen = view.kind === 'editor'
+  useEffect(() => {
+    onEditorOpenChange(editorOpen)
+    return () => onEditorOpenChange(false)
+  }, [editorOpen, onEditorOpenChange])
 
   if (library.state.kind === 'loading') return <LibrarySkeleton />
   if (library.state.kind === 'error') {

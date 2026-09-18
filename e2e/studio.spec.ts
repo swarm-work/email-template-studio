@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { expect, test, type Page } from '@playwright/test'
 
 const WELCOME = 'Welcome & verification'
@@ -32,6 +33,13 @@ function payloadPanel(page: Page) {
 function previewPanel(page: Page) {
   return page.getByRole('region', { name: 'Preview', exact: true })
 }
+/** The scaled-down copy of the preview in the code rail. */
+function thumbnailPanel(page: Page) {
+  return page.getByRole('region', { name: 'Live preview', exact: true })
+}
+function modeButton(page: Page, name: string) {
+  return page.getByRole('group', { name: 'Editing mode' }).getByRole('button', { name, exact: true })
+}
 function envelopePanel(page: Page) {
   return page.getByRole('region', { name: 'Envelope & dispatch' })
 }
@@ -61,6 +69,29 @@ async function openTemplate(page: Page, name: string) {
   await expect(libraryHeading(page)).toBeVisible()
   await templateCard(page, name).click()
   await expect(editorHeading(page, name)).toBeVisible()
+}
+
+/** Preview is its own mode now: everything about the iframe starts here. */
+async function openPreview(page: Page) {
+  await modeButton(page, 'Preview').click()
+  await expect(previewPanel(page)).toBeVisible()
+}
+
+/** Back to the code editor, the way the mode toggle does it. */
+async function openCode(page: Page) {
+  await modeButton(page, 'Code').click()
+  await expect(sourcePanel(page)).toBeVisible()
+}
+
+/**
+ * Waits for the render pipeline in CODE mode, where the editor's own banner is
+ * the signal — used by tests that must not leave the editor to know a render
+ * finished.
+ */
+async function waitForRender(page: Page) {
+  await expect(sourcePanel(page).getByText('Compiled and rendered without errors.')).toBeVisible({
+    timeout: FIRST_RENDER_TIMEOUT,
+  })
 }
 
 /** The "Templates /" crumb in the studio sub-header. */
@@ -138,6 +169,7 @@ test('library search narrows the grid and can be cleared', async ({ page }) => {
 
 test('renders the default template in the isolated preview frame', async ({ page }) => {
   await openTemplate(page, WELCOME)
+  await openPreview(page)
   await expect(previewBody(page)).toContainText('Welcome, Ada', { timeout: FIRST_RENDER_TIMEOUT })
   await expect(previewPanel(page).getByText('Up to date')).toBeVisible()
 
@@ -171,7 +203,7 @@ test('the source editor scrolls inside a bounded height', async ({ page }) => {
 
 test('payload edits update the preview and are validated separately from JSON syntax', async ({ page }) => {
   await openTemplate(page, WELCOME)
-  await expect(previewBody(page)).toContainText('Welcome, Ada', { timeout: FIRST_RENDER_TIMEOUT })
+  await waitForRender(page)
 
   await replacePayload(
     page,
@@ -187,16 +219,24 @@ test('payload edits update the preview and are validated separately from JSON sy
       2,
     ),
   )
-  await expect(previewBody(page)).toContainText('Welcome, Zed', { timeout: FIRST_RENDER_TIMEOUT })
   await expect(payloadPanel(page).getByText('JSON valid')).toBeVisible()
+  // Checking the picture means going to Preview, the way a person would.
+  await openPreview(page)
+  await expect(previewBody(page)).toContainText('Welcome, Zed', { timeout: FIRST_RENDER_TIMEOUT })
+  await openCode(page)
 
   // Schema-invalid: wrong type, reported by field path.
   await replaceEditorText(page, PAYLOAD_LABEL, '{"recipientName": "Zed", "expiresInHours": "soon"}')
   await expect(payloadPanel(page).getByText('Schema invalid')).toBeVisible()
   await expect(payloadPanel(page).getByText('expiresInHours', { exact: true })).toBeVisible()
-  await expect(page.getByText('Preview paused. Fix the preview payload to continue rendering.')).toBeVisible()
+
+  await openPreview(page)
+  await expect(
+    previewPanel(page).getByText('Preview paused. Fix the preview payload to continue rendering.'),
+  ).toBeVisible()
   // The last good preview is kept on screen.
   await expect(previewBody(page)).toContainText('Welcome, Zed')
+  await openCode(page)
 
   // Invalid JSON is a different failure mode.
   await replaceEditorText(page, PAYLOAD_LABEL, '{"recipientName": ')
@@ -206,16 +246,20 @@ test('payload edits update the preview and are validated separately from JSON sy
   await payloadPanel(page).getByRole('button', { name: 'Reset' }).click()
   await page.getByRole('button', { name: 'Reset payload' }).click()
   await expect(payloadPanel(page).getByText('JSON valid')).toBeVisible()
+  await openPreview(page)
   await expect(previewBody(page)).toContainText('Welcome, Ada', { timeout: FIRST_RENDER_TIMEOUT })
 })
 
 test('source errors are reported without crashing and reset restores the original', async ({ page }) => {
   await openTemplate(page, WELCOME)
-  await expect(previewBody(page)).toContainText('Welcome, Ada', { timeout: FIRST_RENDER_TIMEOUT })
+  await waitForRender(page)
 
   await replaceEditorText(page, WELCOME_SOURCE_LABEL, 'export default function Broken() {\n  return <p>\n}\n')
   await expect(sourcePanel(page).getByText('Compile error')).toBeVisible({ timeout: FIRST_RENDER_TIMEOUT })
+  // The preview still shows the last good render, and says so.
+  await openPreview(page)
   await expect(previewPanel(page).getByText('Showing last good render')).toBeVisible()
+  await openCode(page)
 
   await replaceEditorText(
     page,
@@ -239,7 +283,7 @@ test('source errors are reported without crashing and reset restores the origina
 
 test('an infinite loop is stopped by the worker timeout and the studio recovers', async ({ page }) => {
   await openTemplate(page, WELCOME)
-  await expect(previewBody(page)).toContainText('Welcome, Ada', { timeout: FIRST_RENDER_TIMEOUT })
+  await waitForRender(page)
 
   await replaceEditorText(
     page,
@@ -254,12 +298,14 @@ test('an infinite loop is stopped by the worker timeout and the studio recovers'
     WELCOME_SOURCE_LABEL,
     "import { Html, Text } from '@react-email/components'\nexport default function Fine() { return <Html><Text>Recovered fine</Text></Html> }\n",
   )
+  await waitForRender(page)
+  await openPreview(page)
   await expect(previewBody(page)).toContainText('Recovered fine', { timeout: FIRST_RENDER_TIMEOUT })
 })
 
 test('network globals are unavailable inside the render worker', async ({ page }) => {
   await openTemplate(page, WELCOME)
-  await expect(previewBody(page)).toContainText('Welcome, Ada', { timeout: FIRST_RENDER_TIMEOUT })
+  await waitForRender(page)
   await replaceEditorText(
     page,
     WELCOME_SOURCE_LABEL,
@@ -271,7 +317,7 @@ test('network globals are unavailable inside the render worker', async ({ page }
 
 test('drafts survive switching templates and reloading the page', async ({ page }) => {
   await openTemplate(page, WELCOME)
-  await expect(previewBody(page)).toContainText('Welcome, Ada', { timeout: FIRST_RENDER_TIMEOUT })
+  await waitForRender(page)
   await replacePayload(page, '{"recipientName": "Draft Person"}')
   await expect(payloadPanel(page).getByText('Schema invalid')).toBeVisible()
 
@@ -281,7 +327,7 @@ test('drafts survive switching templates and reloading the page', async ({ page 
   await expect(templateCard(page, PASSWORD_RESET)).not.toContainText('Modified')
 
   await openTemplate(page, PASSWORD_RESET)
-  await expect(previewBody(page)).toContainText('Reset your password', { timeout: FIRST_RENDER_TIMEOUT })
+  await waitForRender(page)
 
   await page.reload()
   await openTemplate(page, WELCOME)
@@ -291,6 +337,7 @@ test('drafts survive switching templates and reloading the page', async ({ page 
 
 test('device toggle changes the preview viewport', async ({ page }) => {
   await openTemplate(page, WELCOME)
+  await openPreview(page)
   const iframe = page.locator('iframe[title^="Email preview"]')
   await expect(iframe).toBeVisible({ timeout: FIRST_RENDER_TIMEOUT })
   const desktopWidth = await iframe.evaluate((element) => element.getBoundingClientRect().width)
@@ -320,9 +367,15 @@ test('neither the library nor the editor scrolls sideways at any supported width
     // panels rather than for a finished render (which depends on the worker).
     await openTemplate(page, WELCOME)
     await expect(sourcePanel(page)).toBeVisible()
-    await expect(previewPanel(page)).toBeVisible()
     const editor = await overflow()
     expect(editor.scrollWidth, `editor at ${width}px`).toBeLessThanOrEqual(editor.clientWidth)
+
+    // Preview mode is a second layout at every width, and the widest thing in
+    // it (a 680 px mail frame) is exactly what would push a page sideways.
+    await openPreview(page)
+    const preview = await overflow()
+    expect(preview.scrollWidth, `preview at ${width}px`).toBeLessThanOrEqual(preview.clientWidth)
+    await openCode(page)
 
     // The chrome added in phase 3: each band has to end inside the viewport.
     // The strips themselves may scroll internally; the page never does.
@@ -361,6 +414,16 @@ test('the editors keep their undo history and their gutters across a tab switch'
     .evaluate((element) => element.getBoundingClientRect().width)
   expect(gutterWidth).toBeGreaterThan(0)
 
+  // Preview mode hides the editors the same way a tab switch does, so the round
+  // trip through it has to end with a measured gutter as well.
+  await openPreview(page)
+  await openCode(page)
+  const gutterAfterPreview = await sourcePanel(page)
+    .locator('.cm-gutters')
+    .first()
+    .evaluate((element) => element.getBoundingClientRect().width)
+  expect(gutterAfterPreview).toBeGreaterThan(0)
+
   await source.click()
   await page.keyboard.press('ControlOrMeta+Z')
   await expect(source).not.toContainText('// scratch note')
@@ -377,8 +440,8 @@ test('a primitive chip inserts a React Email element at the cursor', async ({ pa
 })
 
 test('the keyboard shortcuts are registered and explain what is not built yet', async ({ page }) => {
-  // ⌘P is registered as a no-op until preview mode exists, and the point of
-  // registering it now is that the browser's print dialog never opens.
+  // ⌘P belongs to the studio: it opens Preview, and the browser's own print
+  // dialog never gets the chance.
   await page.addInitScript(() => {
     const flags = window as unknown as { __printed: number }
     flags.__printed = 0
@@ -390,7 +453,10 @@ test('the keyboard shortcuts are registered and explain what is not built yet', 
   await openTemplate(page, WELCOME)
 
   await page.keyboard.press('ControlOrMeta+P')
+  await expect(previewPanel(page)).toBeVisible()
   expect(await page.evaluate(() => (window as unknown as { __printed: number }).__printed)).toBe(0)
+  await page.keyboard.press('ControlOrMeta+P')
+  await expect(sourcePanel(page)).toBeVisible()
 
   // Saving needs somewhere to save to, so ⌘S answers with the button's reason.
   await page.keyboard.press('ControlOrMeta+S')
@@ -419,27 +485,34 @@ test('the envelope panel counts the subject against the 78 character recommendat
   await expect(envelope.getByText('Most clients truncate subjects past 78 characters.')).toBeHidden()
 })
 
-test('the mode toggle shows every mode and says which are not reachable yet', async ({ page }) => {
+test('the mode toggle reaches Code and Preview and explains Visual', async ({ page }) => {
   await openTemplate(page, WELCOME)
   const modes = page.getByRole('group', { name: 'Editing mode' })
   await expect(modes.getByRole('button')).toHaveCount(3)
-  await expect(modes.getByRole('button', { name: 'Code' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(modeButton(page, 'Code')).toHaveAttribute('aria-pressed', 'true')
 
-  const preview = modes.getByRole('button', { name: 'Preview' })
-  await expect(preview).toHaveAttribute('aria-disabled', 'true')
+  const visual = modeButton(page, 'Visual')
+  await expect(visual).toHaveAttribute('aria-disabled', 'true')
   // Playwright treats aria-disabled as "not enabled" and would wait forever.
   // A real pointer is not stopped by it, which is the whole point of the
   // pattern: the click is answered with the reason instead of being swallowed.
-  await preview.click({ force: true })
-  await expect(toast(page, 'Coming in the next step.')).toBeVisible()
-  // Still in code mode: the editor is where it was.
+  await visual.click({ force: true })
+  await expect(
+    toast(page, 'This template is written in TSX. Visual editing is only available for visual templates.'),
+  ).toBeVisible()
   await expect(sourcePanel(page)).toBeVisible()
+
+  // Preview is reachable, and pressing it swaps which workspace is on screen.
+  await openPreview(page)
+  await expect(modeButton(page, 'Preview')).toHaveAttribute('aria-pressed', 'true')
+  await expect(sourcePanel(page)).toBeHidden()
+  await openCode(page)
+  await expect(previewPanel(page)).toBeHidden()
 })
 
-test('a stored preview mode cannot lock the toggle out of Code', async ({ page }) => {
-  // 'preview' is a legal mode for a code template, so the session schema keeps
-  // it; until phase 4 renders it, the toggle must still press the workspace
-  // that is actually on screen rather than the one that was stored.
+test('a stored preview mode opens the studio in Preview', async ({ page }) => {
+  // 'preview' is a legal mode for a code template and the session schema keeps
+  // it, so a reload lands back in the workspace that was left open.
   await page.evaluate(() => {
     sessionStorage.setItem(
       'email-template-studio:v1',
@@ -454,11 +527,151 @@ test('a stored preview mode cannot lock the toggle out of Code', async ({ page }
   await page.reload()
   await openTemplate(page, WELCOME)
 
-  const modes = page.getByRole('group', { name: 'Editing mode' })
-  await expect(modes.getByRole('button', { name: 'Code' })).toHaveAttribute('aria-pressed', 'true')
-  await expect(modes.getByRole('button', { name: 'Code' })).not.toHaveAttribute('aria-disabled', 'true')
-  await expect(modes.getByRole('button', { name: 'Preview' })).toHaveAttribute('aria-disabled', 'true')
+  await expect(modeButton(page, 'Preview')).toHaveAttribute('aria-pressed', 'true')
+  await expect(previewPanel(page)).toBeVisible()
+  await expect(sourcePanel(page)).toBeHidden()
+
+  // Code is one press away, and nothing about it is disabled.
+  await expect(modeButton(page, 'Code')).not.toHaveAttribute('aria-disabled', 'true')
+  await openCode(page)
+})
+
+test('the open editor is exactly one viewport tall and scrolls inside itself', async ({ page }) => {
+  await openTemplate(page, WELCOME)
   await expect(sourcePanel(page)).toBeVisible()
+
+  // Density 'app': from `lg` up the shell is `h-dvh` and every scrollbar is
+  // internal, so the document itself must have nothing to scroll.
+  const page_ = await page.evaluate(() => ({
+    scrollHeight: document.documentElement.scrollHeight,
+    clientHeight: document.documentElement.clientHeight,
+  }))
+  expect(page_.scrollHeight).toBeLessThanOrEqual(page_.clientHeight + 1)
+
+  // The status bar is pinned at the bottom of the editor, above the footer,
+  // without anyone having to scroll to it.
+  const bar = await statusBar(page).boundingBox()
+  expect(bar).not.toBeNull()
+  expect(bar!.y + bar!.height).toBeLessThanOrEqual(900)
+
+  // Back on the library the page scrolls normally again.
+  await backToLibrary(page)
+  await expect(libraryHeading(page)).toBeVisible()
+})
+
+test('⌘P moves focus into the preview, announces it, and Escape comes back', async ({ page }) => {
+  await openTemplate(page, WELCOME)
+  await waitForRender(page)
+
+  await page.keyboard.press('ControlOrMeta+P')
+  await expect(previewPanel(page)).toBeVisible()
+  // Focus follows the mode, so the next Tab starts inside the preview.
+  await expect(previewPanel(page)).toBeFocused()
+  await expect(page.getByRole('status').filter({ hasText: 'Preview mode. Read only.' })).toBeAttached()
+
+  // Escape inside the preview returns to the editor it came from.
+  await page.keyboard.press('Escape')
+  await expect(sourcePanel(page)).toBeVisible()
+  await expect(modeButton(page, 'Code')).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByRole('status').filter({ hasText: 'Code editor.' })).toBeAttached()
+})
+
+test('the plain-text part is real text, in the editor tab and in the preview', async ({ page }) => {
+  await openTemplate(page, WELCOME)
+  await waitForRender(page)
+
+  await openEditorTab(page, 'Plain text')
+  await expect(page.getByLabel('Plain text (read only)')).toContainText('WELCOME, ADA')
+  await expect(statusBar(page)).toContainText('Plain text ready')
+
+  await openPreview(page)
+  // Only the selected tab is in the tab order, so the arrow keys are the one
+  // keyboard route to the other panel — the same as the editor's tab strip.
+  await previewPanel(page).getByRole('tab', { name: 'Rendered', exact: true }).focus()
+  await page.keyboard.press('ArrowRight')
+  const plainTab = previewPanel(page).getByRole('tab', { name: 'Plain text', exact: true })
+  await expect(plainTab).toHaveAttribute('aria-selected', 'true')
+  await expect(plainTab).toBeFocused()
+  const plain = previewPanel(page).getByLabel('Plain text part (read only)')
+  const contents = await plain.innerText()
+  expect(contents).toMatch(/welcome, ada/i)
+  // An alternative part is text, not a second copy of the markup.
+  expect(contents).not.toContain('<')
+})
+
+test('the code rail shows a decorative thumbnail that preview mode takes over', async ({ page }) => {
+  await openTemplate(page, WELCOME)
+  await waitForRender(page)
+
+  const thumbnail = thumbnailPanel(page)
+  await expect(thumbnail).toBeVisible()
+  const frame = thumbnail.locator('iframe')
+  await expect(frame).toHaveAttribute('aria-hidden', 'true')
+  await expect(frame).toHaveAttribute('tabindex', '-1')
+  await expect(frame).toHaveAttribute('title', '')
+  await expect(thumbnail.getByText(/of 680 px\. ⌘P opens the full preview\./)).toBeVisible()
+
+  // The button is the accessible route to the same picture...
+  await thumbnail.getByRole('button', { name: 'Open full preview' }).click()
+  await expect(previewPanel(page)).toBeVisible()
+  // ...and because pressing it destroys the button, focus has to land on the
+  // preview rather than fall back to <body>.
+  await expect(previewPanel(page)).toBeFocused()
+  // ...and the thumbnail is not mounted at all while preview mode has it.
+  await expect(thumbnailPanel(page)).toHaveCount(0)
+})
+
+test('switching modes costs no render', async ({ page }) => {
+  await openTemplate(page, WELCOME)
+  await waitForRender(page)
+
+  const report = page.getByRole('region', { name: 'Render report' })
+  const before = await report.getByText(/^\d+ ms$/).textContent()
+
+  await openPreview(page)
+  const renderedAt = await previewPanel(page).locator('time').textContent()
+  await openCode(page)
+
+  // One render feeds the preview, the thumbnail and the size checks (ADR-25),
+  // so a mode round trip cannot produce a new measurement.
+  expect(await report.getByText(/^\d+ ms$/).textContent()).toBe(before)
+  await openPreview(page)
+  expect(await previewPanel(page).locator('time').textContent()).toBe(renderedAt)
+})
+
+test('the preview downloads the rendered HTML and the plain text', async ({ page }) => {
+  await openTemplate(page, WELCOME)
+  await waitForRender(page)
+  await openPreview(page)
+
+  const [htmlDownload] = await Promise.all([
+    page.waitForEvent('download'),
+    previewPanel(page).getByRole('button', { name: 'Download HTML' }).click(),
+  ])
+  expect(htmlDownload.suggestedFilename()).toBe('welcome-verification.html')
+  const htmlPath = await htmlDownload.path()
+  expect(htmlPath).not.toBeNull()
+  const html = readFileSync(htmlPath!, 'utf8')
+  expect(html.length).toBeGreaterThan(0)
+  expect(html).toContain('<html')
+
+  const [textDownload] = await Promise.all([
+    page.waitForEvent('download'),
+    previewPanel(page).getByRole('button', { name: 'Download plain text' }).click(),
+  ])
+  expect(textDownload.suggestedFilename()).toBe('welcome-verification.txt')
+  const textPath = await textDownload.path()
+  expect(textPath).not.toBeNull()
+  const text = readFileSync(textPath!, 'utf8')
+  expect(text.length).toBeGreaterThan(0)
+  expect(text).not.toContain('<')
+
+  // The same two actions live in the overflow menu, and they work there too.
+  await page.getByRole('button', { name: 'More actions' }).click()
+  const item = page.getByRole('menuitem', { name: 'Download HTML' })
+  await expect(item).not.toHaveAttribute('aria-disabled', 'true')
+  const [menuDownload] = await Promise.all([page.waitForEvent('download'), item.click()])
+  expect(menuDownload.suggestedFilename()).toBe('welcome-verification.html')
 })
 
 test('API keys page generates a mock key and adds a webhook endpoint', async ({ page }) => {
@@ -486,7 +699,7 @@ test('API keys page generates a mock key and adds a webhook endpoint', async ({ 
 
 test('send test email goes through the API in dry-run mode', async ({ page }) => {
   await openTemplate(page, WELCOME)
-  await expect(previewBody(page)).toContainText('Welcome, Ada', { timeout: FIRST_RENDER_TIMEOUT })
+  await waitForRender(page)
 
   await actionsToolbar(page).getByRole('button', { name: 'Send test' }).click()
   const sendDialog = page.getByRole('dialog', { name: 'Send test email' })

@@ -134,10 +134,35 @@ banner. Format / Copy / Reset sit at the right end of the tab strip, not on the 
 `CompileInfoStrip` also carries the sandbox's one hard rule — `Imports limited to react and
 @react-email/components` — next to the sucrase note, so it is readable before the render error says it.
 
-**Right rail** — Props payload, the render report with its twelve-point sparkline, Diagnostics and the
-shortcuts card. The preview thumbnail's slot is left empty on purpose until phase 4. The card's
+**Right rail** — Props payload, the **live preview thumbnail**, the render report with its
+twelve-point sparkline, Diagnostics and the shortcuts card. The card's
 Format and Reset are the same `ReasonedButton`s, with the same sentences, as the tab strip's: the two
 copies of one action are on screen together, so they cannot be allowed to behave differently.
+
+**Preview mode** (`preview/PreviewWorkspace`) — the third workspace, reached with the mode toggle or
+⌘P. It is the same region name as before (`Preview`) and the same isolation: `iframe sandbox=""` plus
+the CSP meta tag `buildPreviewDocument` injects, a `tabIndex={0}` frame with a real title and an
+sr-only **Skip preview** link in front of it. Band by band: `PreviewToolbar` (the heading, an echo of
+the device the sub-header chose, the render badge, `Rendered <time>`, **Refresh**, **Download HTML**,
+**Download plain text**), `EnvelopeSummary` (Subject and Preheader from the draft, From from the send
+server, To = the fixed sample recipient `Ada Lovelace <ada@example.com>`), tabs `Rendered | Plain
+text` (both panels stay mounted, ADR-24), the dot-grid stage, and Diagnostics underneath — the same
+panel the code rail carries, because the reasons a preview is wrong belong next to the preview.
+
+Entering preview mode moves focus to the region (`tabIndex={-1}`, `focus({ preventScroll: true })`),
+one hidden `role="status"` announces _"Preview mode. Read only."_ / _"Code editor."_, and **Escape**
+inside the region goes back to the editor you came from — ⌘P is a round trip, not a destination.
+
+**Preview thumbnail** (`code/PreviewThumbnail`) — the same document string, 40 % of the size. The
+recipe is worth writing down: the email is rendered at its real 680 px and the whole iframe is scaled
+with `transform: scale(w/680)` + `transform-origin: top left`, because an iframe lays its content out
+against its own width — making it narrower would reflow the email instead of zooming out. A scaled
+element still occupies its **unscaled** box in the flow, so the inner wrapper is `absolute` inside a
+`h-[280px] overflow-hidden relative` box, and the box is what decides the card's height. The scale
+comes from `useScaledFrame` (a `ResizeObserver`, clamped 0.2–1, three decimals). The frame itself is
+decoration: `aria-hidden="true"`, `tabIndex={-1}`, `title=""`, `pointer-events-none`, with the
+**Open full preview** button as the one accessible route in and the caption _"Scaled to 41% of 680 px.
+⌘P opens the full preview."_ saying what you are looking at. It is not mounted in preview mode.
 
 **Status bar** (`chrome/StudioStatusBar`) — `h-8`, `overflow-x-auto` with `shrink-0` segments and
 `tabular-nums`: `Draft · v3`, the kind, `HTML export 14.2 KB`, the plain-text state, the Gmail budget,
@@ -175,7 +200,13 @@ Short, direct, sentence case. Say what happened and what to do next. Examples us
 - "Put the cursor in template.tsx to insert a primitive." (primitives row on another tab)
 - "Compiled with Sucrase — types are stripped, not checked." (compile strip)
 - "Gmail hides everything past about 102 KB behind a 'View entire message' link." (status bar tooltip)
-- "Coming with saved templates." (Save, rename, mark as ready) · "Coming in the next step." (modes, downloads)
+- "Coming with saved templates." (Save, rename, mark as ready) · "Coming with the visual editor." (convert)
+- "This template is written in TSX. Visual editing is only available for visual templates." (mode toggle)
+- "Nothing rendered yet." (both downloads, the thumbnail and the plain-text panel before the first render; one exported constant in `studio/preview/previewStatus.ts`)
+- "The visual canvas is not built yet. Preview mode shows what this template renders to." (a visual template's editor area, until phase 5)
+- "Scaled to 41% of 680 px. ⌘P opens the full preview." (thumbnail caption) · "Open full preview"
+- "Preview mode. Read only." / "Code editor." (the hidden live region that announces a mode change)
+- "Plain text ready" / "Plain text —" (status bar) · "No preheader text." (envelope summary)
 
 ## Motion rules
 

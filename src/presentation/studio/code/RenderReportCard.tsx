@@ -14,7 +14,7 @@ import { Sparkline } from './Sparkline'
 export interface RenderReportCardProps {
   /** HTML of the last successful render; null before the first one. */
   html: string | null
-  /** Plain-text part of the last successful render; '' until the worker renders it. */
+  /** Plain-text part of the last successful render; '' before the first one. */
   text: string
   /** How many props the payload validated, or null when it is invalid. */
   propsCount: number | null
@@ -39,7 +39,7 @@ export function RenderReportCard({ html, text, propsCount, durationMs, history }
       </div>
       <dl className="divide-y">
         <Row label="Rendered HTML" value={htmlBytes === null ? '—' : formatBytes(htmlBytes)} />
-        <Row label="Plain text" value={textBytes === null ? 'next step' : formatBytes(textBytes)} />
+        <Row label="Plain text" value={textBytes === null ? '—' : formatBytes(textBytes)} />
         <Row label="Approx. email size" value={htmlBytes === null ? '—' : formatBytes(approx)} />
         <Row label="Props validated" value={propsCount === null ? '—' : String(propsCount)} />
         <Row label="Render time" value={durationMs === null ? '—' : `${Math.round(durationMs)} ms`} />

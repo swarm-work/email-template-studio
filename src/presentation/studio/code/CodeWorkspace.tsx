@@ -5,7 +5,7 @@
  * the chrome itself (which reset is being confirmed). Everything about the
  * template lives in the draft; nothing is copied into local state here.
  */
-import { useRef, useState } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import {
   AlertDialog,
@@ -47,6 +47,8 @@ export interface CodeWorkspaceProps {
   onResetPayload: () => void
   /** HTML of the last successful render; null before the first one. */
   html: string | null
+  /** Plain-text part of that same render; null before the first one. */
+  text: string | null
   renderStatus: RenderStatus
   renderResult: RenderResult | null
   /** Durations of the last twelve successful renders, oldest first. */
@@ -56,6 +58,10 @@ export interface CodeWorkspaceProps {
   /** Formats one tab's text; the same function ⌘⇧F calls. */
   onFormat: (tab: EditorTabId) => void
   diagnostics: readonly DiagnosticItem[]
+  /** The live preview card for the right rail; null while preview mode has it. */
+  previewThumbnail?: ReactNode
+  /** False while preview mode is showing: the editors are hidden, not unmounted. */
+  active?: boolean
 }
 
 export function CodeWorkspace({
@@ -70,6 +76,7 @@ export function CodeWorkspace({
   payloadDirty,
   onResetPayload,
   html,
+  text: renderedText,
   renderStatus,
   renderResult,
   renderHistory,
@@ -77,12 +84,16 @@ export function CodeWorkspace({
   onActiveTabChange,
   onFormat,
   diagnostics,
+  previewThumbnail,
+  active = true,
 }: CodeWorkspaceProps) {
   const tsxEditorRef = useRef<CodeEditorHandle>(null)
   const [confirmReset, setConfirmReset] = useState<'tsx' | 'props' | null>(null)
 
   const fileName = fileNameFor(template.kind, template.metadata.slug)
-  const text = renderResult?.ok ? renderResult.text : ''
+  // The plain-text part of the last GOOD render, so the tab keeps showing
+  // something real while a newer edit fails to compile — exactly like the HTML.
+  const text = renderedText ?? ''
   const durationMs = renderResult?.ok ? renderResult.durationMs : null
   const content = contentFor(activeTab, { source, payloadText, html, text })
   const readOnlyTab = activeTab === 'html' || activeTab === 'text'
@@ -124,6 +135,7 @@ export function CodeWorkspace({
             activeTab={activeTab}
             onTabChange={onActiveTabChange}
             tsxEditorRef={tsxEditorRef}
+            visible={active}
             actions={
               <>
                 <ReasonedButton
@@ -168,9 +180,7 @@ export function CodeWorkspace({
             onFormat={() => onFormat('props')}
             onReset={() => setConfirmReset('props')}
           />
-          {/* The live preview thumbnail belongs here; it arrives with preview
-              mode in phase 4, and an empty box in the meantime would be a
-              placeholder pretending to be a feature. */}
+          {previewThumbnail}
           <RenderReportCard
             html={html}
             text={text}

@@ -7,7 +7,7 @@
  * (docs/DESIGN.md).
  */
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import type { EmailTemplate, RenderResult } from '@/domain'
+import type { EmailTemplate } from '@/domain'
 import { StatusDot } from '@/presentation/shared/StatusBadge'
 import { templateStatusLabel } from '@/presentation/shared/templateStatus'
 import {
@@ -24,15 +24,14 @@ export interface StudioStatusBarProps {
   template: EmailTemplate
   /** HTML of the last successful render; null before the first one. */
   html: string | null
-  /** The last finished render, used for the plain-text part. */
-  result: RenderResult | null
+  /** Plain-text part of that same render; null before the first one. */
+  text: string | null
 }
 
-export function StudioStatusBar({ template, html, result }: StudioStatusBarProps) {
+export function StudioStatusBar({ template, html, text }: StudioStatusBarProps) {
   const { metadata } = template
-  const text = result?.ok ? result.text : ''
   const htmlBytes = html === null ? 0 : byteLength(html)
-  const approxBytes = htmlBytes + byteLength(text)
+  const approxBytes = htmlBytes + (text === null ? 0 : byteLength(text))
   const overLimit = isOverGmailLimit(approxBytes)
 
   return (
@@ -51,9 +50,9 @@ export function StudioStatusBar({ template, html, result }: StudioStatusBarProps
         HTML export {html === null ? '—' : formatBytes(htmlBytes)}
       </span>
       <Separator />
-      {/* Code templates get their plain-text part from the render worker in the
-          next step; saying so is more honest than showing "0 B". */}
-      <span className="shrink-0">{text === '' ? 'Plain text · next step' : 'Plain text ready'}</span>
+      {/* The worker renders the plain-text part beside the HTML, so this is a
+          fact about the render on screen, not a promise. */}
+      <span className="shrink-0">{text === null ? 'Plain text —' : 'Plain text ready'}</span>
       <Separator />
       <Tooltip>
         <TooltipTrigger asChild>

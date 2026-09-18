@@ -263,6 +263,58 @@ number sprinkled through the UI.
 can a screen-reader user. Read `EnvelopePanel.test.tsx` next to the component: every assertion in it
 is a sentence about the product, not about the DOM.
 
+## `useMemo`: why one render feeds two views
+
+Phase 4 put the same email on screen twice: full size in Preview mode (⌘P) and postage-stamp size in
+the code rail. In Apex you would not query the same record twice on one page; in React the equivalent
+mistake is easy to make by accident, because each component _looks_ independent.
+
+**What a render costs here.** Every preview is a message to a Web Worker that compiles TSX with
+sucrase and runs React Email over it. Tens of milliseconds, a couple of megabytes of bundle, and a
+number the studio shows you (`Render time`). Doing it twice for one email would be silly — and worse,
+the two results could differ, so the report would be measuring something other than what you see.
+
+**The shape of the fix.** One render, one string, two readers:
+
+```tsx
+// StudioPage.tsx — built once per successful render
+const previewDocument = useMemo(
+  () => (preview.html === null ? null : buildPreviewDocument(preview.html)),
+  [preview.html],
+)
+```
+
+`useMemo(fn, deps)` means: run `fn` now, then hand back that same value on every later render until
+something in `deps` changes. Here `deps` is the HTML of the last good render, so the CSP wrapper is
+built once per render rather than once per repaint — and, crucially, **both** consumers are handed
+the identical string:
+
+```tsx
+<PreviewWorkspace document={previewDocument} … />   // preview mode
+<PreviewThumbnail document={previewDocument} … />   // the code rail
+```
+
+Three things follow, and they are the reason the code is written this way:
+
+1. **Placement is the decision.** The memo lives in `StudioPage`, the one component that has both
+   children. A `useMemo` inside `PreviewWorkspace` would be per-component memory, and the thumbnail
+   would still build its own copy.
+2. **`useMemo` is a cache, not a guarantee.** React may throw a memoised value away. It is a
+   performance tool, so nothing may _depend_ on it running exactly once; here it only saves work.
+3. **Identity is what stops the iframe reloading.** An iframe re-parses its `srcDoc` whenever the
+   string changes. Same render, same string, same identity, no reload — which is why switching modes
+   is instant and why the end-to-end test _"switching modes costs no render"_ can assert that
+   `Render time` and `Rendered <time>` do not move.
+
+**What is not memoised.** Anything cheap. `Math.round(scale * 100)` in the thumbnail's caption is not
+worth a cache entry; the rule of thumb is to memoise what is expensive to compute or what has to keep
+its identity (objects and arrays passed to children), and leave arithmetic alone.
+
+**Where to look.** `src/presentation/studio/StudioPage.tsx` (the memo and the two consumers),
+`src/presentation/hooks/useScaledFrame.ts` (a `ResizeObserver` reduced to one number, rounded to three
+decimals so a sub-pixel wobble does not re-render), and ADR-25 in `docs/DECISIONS.md` for the decision
+itself.
+
 ## Suggested reading order through the code
 
 1. `src/domain/*` — the vocabulary (10 minutes).

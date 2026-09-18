@@ -5,7 +5,8 @@
  * ones are `hidden` + `inert`, so switching tabs never destroys an editor —
  * which is what would throw away its undo history. The cost is that a hidden
  * editor measures itself as zero pixels wide, so `refreshKey` asks the visible
- * one to measure again whenever the tab changes.
+ * one to measure again whenever it could have been hidden: when the tab changes,
+ * and when the whole workspace comes back from preview mode.
  */
 import type { ReactNode, Ref } from 'react'
 import { CodeEditor, type CodeEditorHandle } from '@/presentation/shared/CodeEditor'
@@ -21,7 +22,7 @@ export interface EditorPanelProps {
   onPayloadChange: (text: string) => void
   /** HTML of the last successful render; null before the first one. */
   html: string | null
-  /** Plain-text part of the last successful render; '' until the worker renders it. */
+  /** Plain-text part of the last successful render; '' before the first one. */
   text: string
   activeTab: EditorTabId
   onTabChange: (tab: EditorTabId) => void
@@ -32,6 +33,11 @@ export interface EditorPanelProps {
   /** Lets the primitives row insert into the TSX editor. */
   tsxEditorRef?: Ref<CodeEditorHandle>
   baseId: string
+  /**
+   * False while another workspace (preview) is showing, which puts every editor
+   * at `display: none`. Flipping it back is what triggers the re-measure.
+   */
+  visible?: boolean
 }
 
 export function EditorPanel({
@@ -48,7 +54,12 @@ export function EditorPanel({
   footer,
   tsxEditorRef,
   baseId,
+  visible = true,
 }: EditorPanelProps) {
+  // One key for both ways an editor can have been hidden; CodeMirror measures
+  // again whenever it changes.
+  const refreshKey = `${visible ? 'shown' : 'hidden'}:${activeTab}`
+
   return (
     <section
       aria-labelledby={`${baseId}-heading`}
@@ -67,7 +78,7 @@ export function EditorPanel({
           language="tsx"
           label={`Template source for ${fileName}`}
           className="h-[420px]"
-          refreshKey={activeTab}
+          refreshKey={refreshKey}
         />
       </TabPanel>
       <TabPanel baseId={baseId} tab="props" activeTab={activeTab}>
@@ -77,7 +88,7 @@ export function EditorPanel({
           language="json"
           label="Preview payload JSON"
           className="h-[420px]"
-          refreshKey={activeTab}
+          refreshKey={refreshKey}
         />
       </TabPanel>
       <TabPanel baseId={baseId} tab="html" activeTab={activeTab}>
@@ -87,7 +98,7 @@ export function EditorPanel({
           label="Compiled HTML (read only)"
           readOnly
           className="h-[420px]"
-          refreshKey={activeTab}
+          refreshKey={refreshKey}
         />
       </TabPanel>
       <TabPanel baseId={baseId} tab="text" activeTab={activeTab}>
@@ -97,7 +108,7 @@ export function EditorPanel({
           label="Plain text (read only)"
           readOnly
           className="h-[420px]"
-          refreshKey={activeTab}
+          refreshKey={refreshKey}
         />
       </TabPanel>
 

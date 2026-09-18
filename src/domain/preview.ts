@@ -77,7 +77,7 @@ export type RenderResult =
   | {
       readonly ok: true
       readonly html: string
-      /** Plain-text alternative part. '' until the plain-text render lands. */
+      /** Plain-text alternative part, rendered beside the HTML by the same pipeline. */
       readonly text: string
       readonly durationMs: number
     }
