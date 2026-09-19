@@ -66,6 +66,12 @@ export interface StudioActions {
    * fallen behind keeps its conflict (see `studioState.ts`).
    */
   markMetadataSaved(record: TemplateRecord, expectedRevision: number): void
+  /**
+   * The server converted this visual template to a code one. The draft is
+   * DROPPED rather than rebased: the document it holds describes a template
+   * that no longer exists (ADR-28).
+   */
+  markConverted(record: TemplateRecord): void
 }
 
 export interface UseStudioResult {
@@ -122,6 +128,7 @@ export function useStudio({ templates, store, selectedId = null }: UseStudioOpti
       markSaved: (record) => dispatch({ type: 'template-saved', record }),
       markMetadataSaved: (record, expectedRevision) =>
         dispatch({ type: 'metadata-saved', record, expectedRevision }),
+      markConverted: (record) => dispatch({ type: 'template-converted', record }),
     }),
     [id, template],
   )

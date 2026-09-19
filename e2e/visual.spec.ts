@@ -12,8 +12,14 @@ import { expect, test, type Page } from '@playwright/test'
 const PRODUCT_LAUNCH = 'Product launch'
 const WELCOME = 'Welcome & verification'
 
-/** Anything the lazily loaded editor chunk could be called. */
-const EDITOR_CHUNK = /editor|tiptap|prosemirror/i
+/**
+ * Anything the lazily loaded editor chunk could be called. `plugins-` is in
+ * there because the editor's theming (`@react-email/editor/plugins`, which the
+ * converter reaches for) is split into a chunk of its own with no other clue in
+ * its name — without it, turning that dynamic import into a static one would
+ * put 13 KB of editor into every code template's first download unnoticed.
+ */
+const EDITOR_CHUNK = /editor|tiptap|prosemirror|plugins-/i
 
 /**
  * Playwright evaluates locators inside the sandboxed preview frame, which makes
@@ -315,9 +321,9 @@ test('the read-only export views are reachable from the overflow menu', async ({
   await expect(dialog.getByLabel('Canvas document JSON (read only)')).toContainText('container')
   await page.keyboard.press('Escape')
 
-  // Converting is phase 8, and the menu says so rather than hiding the item.
+  // Converting is real from phase 8 on: with the canvas open the item works.
   await page.getByRole('button', { name: 'More actions' }).click()
-  await expect(page.getByRole('menuitem', { name: /Convert to code template/ })).toHaveAttribute(
+  await expect(page.getByRole('menuitem', { name: /Convert to code template/ })).not.toHaveAttribute(
     'aria-disabled',
     'true',
   )
@@ -536,4 +542,107 @@ test('the send dialog carries the reply-to, the resolved subject and both parts'
   expect(String(sent[0].html)).toContain('Ada')
   expect(String(sent[0].html)).not.toContain('{{firstName}}')
   expect(typeof sent[0].text).toBe('string')
+})
+
+/**
+ * One-way conversion (phase 8). A run-unique name because this file shares the
+ * local D1 database with the rest of the suite, and a converted template stays
+ * converted for the rest of the run.
+ */
+const RUN = Math.random().toString(36).slice(2, 8)
+const CONVERTED_TEXT = 'This paragraph survives the conversion'
+
+/** Fetching and parsing the ~2 MB render worker, then compiling the template. */
+const FIRST_RENDER_TIMEOUT = 30_000
+
+/** Creates a visual template with one paragraph of text on its canvas. */
+async function createVisualTemplate(page: Page, name: string) {
+  await page.getByRole('button', { name: 'New template' }).click()
+  const dialog = page.getByRole('dialog', { name: 'New template' })
+  await dialog.getByLabel('Name', { exact: true }).fill(name)
+  await dialog.getByRole('radio', { name: /^Visual/ }).click()
+  await dialog.getByRole('button', { name: 'Create template' }).click()
+  await expect(dialog).toBeHidden()
+
+  await expect(canvas(page)).toBeVisible({ timeout: EDITOR_LOAD_TIMEOUT })
+  await expect(sheet(page)).toBeVisible({ timeout: EDITOR_LOAD_TIMEOUT })
+  await sheet(page).click()
+  await page.keyboard.type(CONVERTED_TEXT)
+  await expect(sheet(page)).toContainText(CONVERTED_TEXT)
+}
+
+async function openConvertDialog(page: Page) {
+  await page.getByRole('button', { name: 'More actions' }).click()
+  await page.getByRole('menuitem', { name: /Convert to code template/ }).click()
+  return page.getByRole('dialog', { name: /Convert .* to a code template\?/ })
+}
+
+test('converting a visual template leaves a code template that still renders', async ({ page }) => {
+  const name = `Convert me ${RUN}`
+  await createVisualTemplate(page, name)
+
+  const dialog = await openConvertDialog(page)
+  await expect(dialog).toContainText('Switching to source will replace the visual layout')
+  const convert = dialog.getByRole('button', { name: /Convert template/ })
+  await expect(convert).toBeVisible({ timeout: EDITOR_LOAD_TIMEOUT })
+
+  // The keyboard route: tick the box, then press the button.
+  await dialog.getByRole('checkbox', { name: /I understand/ }).click()
+  await convert.click()
+
+  await expect(page.locator('[data-sonner-toast]')).toContainText(
+    'Converted to a code template. The visual document was discarded.',
+    { timeout: FIRST_RENDER_TIMEOUT },
+  )
+
+  // Code is now the mode, and Visual is gone for good.
+  await expect(modeButton(page, 'Code')).toHaveAttribute('aria-pressed', 'true')
+  await expect(modeButton(page, 'Visual')).toHaveAttribute('aria-disabled', 'true')
+  await expect(page.getByRole('tab', { name: /template\.tsx/ })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Code editor' })).toContainText(CONVERTED_TEXT)
+  await expect(statusBar(page).getByText('Code', { exact: true })).toBeVisible()
+
+  // The generated source really renders: the preview shows the same words.
+  await modeButton(page, 'Preview').click()
+  await expect(previewBody(page)).toContainText(CONVERTED_TEXT, { timeout: FIRST_RENDER_TIMEOUT })
+
+  // The library agrees...
+  await page.getByRole('button', { name: 'Templates', exact: true }).click()
+  await expect(libraryHeading(page)).toBeVisible()
+  // The card IS the button; the kind chip is drawn inside it.
+  await expect(templateCard(page, name).getByText('Code', { exact: true })).toBeVisible()
+
+  // ...and so does the server, after a reload that keeps no drafts. (The stored
+  // MODE survives whatever is done to sessionStorage first: the studio flushes
+  // its state on `pagehide`, which a reload fires. So Code is asked for
+  // explicitly rather than assumed — what is being proved here is that the
+  // source came back from the database, not which tab was open last.)
+  await page.evaluate(() => sessionStorage.clear())
+  await page.reload()
+  await templateCard(page, name).click()
+  await modeButton(page, 'Code').click()
+  await expect(page.getByRole('region', { name: 'Code editor' })).toContainText(CONVERTED_TEXT, {
+    timeout: FIRST_RENDER_TIMEOUT,
+  })
+  await expect(modeButton(page, 'Visual')).toHaveAttribute('aria-disabled', 'true')
+})
+
+test('a template with a block the converter cannot handle is refused, not mangled', async ({ page }) => {
+  // The starter has a two-column row, which has no React Email equivalent in
+  // the first set of nodes (ADR-28).
+  await openVisualTemplate(page)
+
+  const dialog = await openConvertDialog(page)
+  await expect(dialog.getByText('These blocks have no React Email equivalent yet')).toBeVisible({
+    timeout: EDITOR_LOAD_TIMEOUT,
+  })
+  await expect(dialog).toContainText('twoColumns')
+  await expect(dialog).toContainText('Remove these blocks, or ask for support for them.')
+  await expect(dialog.getByRole('button', { name: 'Hold to confirm' })).toHaveCount(0)
+  await expect(dialog.getByRole('button', { name: /Convert template/ })).toHaveCount(0)
+
+  await dialog.getByRole('button', { name: 'Keep editing visually' }).click()
+  await expect(dialog).toBeHidden()
+  // Still a visual template, still on the canvas.
+  await expect(modeButton(page, 'Visual')).toHaveAttribute('aria-pressed', 'true')
 })

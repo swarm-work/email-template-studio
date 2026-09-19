@@ -1,0 +1,47 @@
+{
+  "type": "doc",
+  "content": [
+    {
+      "type": "container",
+      "content": [
+        {
+          "type": "heading",
+          "attrs": { "level": 1, "style": "", "alignment": null, "class": "" },
+          "content": [{ "type": "mergeField", "attrs": { "key": "user.first_name" } }]
+        },
+        {
+          "type": "paragraph",
+          "attrs": { "style": "", "alignment": null, "class": "" },
+          "content": [
+            { "type": "text", "text": "Hi " },
+            { "type": "mergeField", "attrs": { "key": "recipientName" } },
+            { "type": "text", "text": ", your invoice for " },
+            { "type": "mergeField", "attrs": { "key": "invoice.total" } },
+            { "type": "text", "text": " is ready." }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "attrs": { "style": "", "alignment": null, "class": "" },
+          "content": [
+            {
+              "type": "text",
+              "marks": [{ "type": "link", "attrs": { "href": "https://example.com/i/{{invoice.id}}" } }],
+              "text": "View invoice {{invoice.id}}"
+            }
+          ]
+        },
+        {
+          "type": "button",
+          "attrs": {
+            "style": "",
+            "alignment": "left",
+            "class": "button",
+            "href": "{{portalUrl}}"
+          },
+          "content": [{ "type": "text", "text": "Open the billing portal" }]
+        }
+      ]
+    }
+  ]
+}

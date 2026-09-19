@@ -85,6 +85,7 @@ const EDITOR_ALLOWED = new Map([
   ['src/infrastructure/render/studioTheme.ts', 'a type-only import, erased at build time'],
   ['src/infrastructure/render/mergeFieldNode.ts', 'the merge-field node, built on EmailNode'],
   ['src/infrastructure/render/editorExtensions.ts', "the canvas's extension list (StarterKit + theming)"],
+  ['src/infrastructure/render/visualStyleResolver.ts', 'reaches /plugins through a dynamic import()'],
 ])
 
 /** The one module allowed to import the package, and its own folder's re-exports. */

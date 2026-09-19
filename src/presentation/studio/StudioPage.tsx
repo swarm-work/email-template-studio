@@ -60,6 +60,7 @@ import { useTemplateSave } from '@/presentation/hooks/useTemplateSave'
 import { useUnsavedChangesGuard } from '@/presentation/hooks/useUnsavedChangesGuard'
 import { useRenderPreview, type RenderPreviewState } from '@/presentation/hooks/useRenderPreview'
 import { SAVED_EXPORT_REASON, useSavedExport } from '@/presentation/hooks/useSavedExport'
+import { useConvertToCode } from '@/presentation/hooks/useConvertToCode'
 import { useVisualPreview } from '@/presentation/hooks/useVisualPreview'
 import type { UseStudioResult } from '@/presentation/hooks/useStudio'
 import { useStudioShortcuts } from '@/presentation/hooks/useStudioShortcuts'
@@ -73,6 +74,7 @@ import type { EditorTabId } from './code/editorTabs'
 import { formatJson, formatTsx } from './code/formatSource'
 import { PreviewThumbnail } from './code/PreviewThumbnail'
 import { PropsPayloadCard } from './code/PropsPayloadCard'
+import { ConvertToCodeDialog } from './dialogs/ConvertToCodeDialog'
 import { ExportedCodeDialog } from './dialogs/ExportedCodeDialog'
 import { ShortcutsDialog } from './dialogs/ShortcutsDialog'
 import { VersionConflictDialog } from './dialogs/VersionConflictDialog'
@@ -352,6 +354,9 @@ export function StudioPage({
   // A metadata PATCH can be refused for exactly the same reason a save can, so
   // it feeds the same dialog rather than inventing a second one.
   const [metadataConflict, setMetadataConflict] = useState<TemplateRecord | null>(null)
+  // A refused conversion is the same conflict as a refused save, and reuses the
+  // same dialog; it is its own state only because it can be dismissed on its own.
+  const [convertConflict, setConvertConflict] = useState<TemplateRecord | null>(null)
   const [copyBusy, setCopyBusy] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
   // The open-time banner can be dismissed with "Keep mine"; that choice lasts
@@ -398,6 +403,30 @@ export function StudioPage({
   const [inspectorOpen, setInspectorOpen] = useState(false)
   const renderHistory = useRenderHistory(templateId, preview)
   const { returnMode, rememberMode } = useReturnMode(templateId, template.kind, features)
+
+  /**
+   * Visual → code, one way (ADR-28). The hook owns the whole flow: convert,
+   * smoke-render through the renderer this page already holds, and only then
+   * write. It is called for every template because hooks cannot live inside an
+   * `if`; it does nothing at all until the dialog is opened.
+   */
+  const conversion = useConvertToCode({
+    template,
+    document: draft.document,
+    // The SAVED envelope, not the draft's: the server writes the saved one onto
+    // the converted version, so generating the <Preview> from anything else
+    // would leave the stored envelope and the stored source disagreeing. An
+    // unsaved edit is warned about instead (see useConvertToCode).
+    subject: template.envelope.subject,
+    preheader: template.envelope.preheader,
+    envelopeDirty,
+    samplePayloadText: draft.payloadText,
+    expectedRevision: draft.baseRevision,
+    renderer,
+    convert: writes.convertToCode,
+    onConverted: actions.markConverted,
+    onConflict: setConvertConflict,
+  })
 
   const previewRef = useRef<HTMLElement>(null)
   const editorRef = useRef<HTMLDivElement>(null)
@@ -541,7 +570,7 @@ export function StudioPage({
    * the revision without moving the version number, so there is a fallback
    * sentence for the cases `describeVersionConflict` cannot describe.
    */
-  const conflictRecord = saveConflict ?? metadataConflict
+  const conflictRecord = saveConflict ?? metadataConflict ?? convertConflict
   const conflictCopy: VersionConflictCopy =
     describeVersionConflict(
       draft.baseVersionNumber || template.metadata.version.number,
@@ -551,6 +580,7 @@ export function StudioPage({
   const closeConflict = useCallback(() => {
     dismissConflict()
     setMetadataConflict(null)
+    setConvertConflict(null)
   }, [dismissConflict])
 
   /** Throws the draft away and shows what the server has. */
@@ -648,6 +678,7 @@ export function StudioPage({
         onDownloadText={downloadText}
         downloadReason={downloadReason}
         onViewExportedCode={() => setExportedCodeOpen(true)}
+        onConvertToCode={canvasEnabled ? conversion.openDialog : undefined}
         onSave={requestSave}
         saving={saving}
         saveReason={saveReason}
@@ -862,6 +893,15 @@ export function StudioPage({
         html={preview.html}
         text={preview.text}
         document={draft.document}
+      />
+      <ConvertToCodeDialog
+        open={conversion.open}
+        onOpenChange={conversion.setOpen}
+        templateName={template.metadata.name}
+        preparation={conversion.preparation}
+        converting={conversion.converting}
+        renderError={conversion.renderError}
+        onConfirm={conversion.confirm}
       />
       <VersionConflictDialog
         open={conflictRecord !== null}

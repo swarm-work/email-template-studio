@@ -1,0 +1,45 @@
+{
+  "type": "doc",
+  "content": [
+    {
+      "type": "container",
+      "content": [
+        {
+          "type": "heading",
+          "attrs": { "level": 2 },
+          "content": [{ "type": "text", "text": "Here's what's new" }]
+        },
+        {
+          "type": "paragraph",
+          "attrs": { "alignment": "center", "style": "text-align: right; color: #334155" },
+          "content": [{ "type": "text", "text": "She said \"hello\" to the whole team." }]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            { "type": "text", "text": "Read " },
+            {
+              "type": "text",
+              "text": "the report",
+              "marks": [{ "type": "link", "attrs": { "href": "https://example.com/r?a=1&amp;b=2" } }]
+            },
+            { "type": "text", "text": " before Friday." }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "attrs": { "alignment": "justify" },
+          "content": [
+            { "type": "text", "text": "Justified on the canvas is not justified here.", "marks": [] }
+          ]
+        },
+        { "type": "horizontalRule" },
+        {
+          "type": "button",
+          "attrs": { "href": "https://example.com/start", "alignment": "center" },
+          "content": [{ "type": "text", "text": "Open the studio" }]
+        }
+      ]
+    }
+  ]
+}

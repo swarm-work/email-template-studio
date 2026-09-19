@@ -19,7 +19,8 @@ import {
 import type { TemplateKind, TemplateStatus } from '@/domain'
 import { ReasonedMenuItem } from '@/presentation/shared/ReasonedButton'
 
-const CONVERT_REASON = 'Coming with the converter.'
+/** Why the item is there but cannot be used, when the canvas is not available. */
+const CONVERT_REASON = 'Open the visual editor first: the conversion reads the canvas.'
 
 export interface StudioOverflowMenuProps {
   kind: TemplateKind
@@ -34,6 +35,8 @@ export interface StudioOverflowMenuProps {
   downloadReason?: string
   /** Opens the read-only export views. The only route to them for a visual template. */
   onViewExportedCode: () => void
+  /** Opens the convert-to-code dialog. Absent while the canvas is not available. */
+  onConvertToCode?: () => void
   /** Flips the template between 'draft' and 'ready' (a metadata PATCH). */
   onToggleStatus: () => void
   /** Opens the delete dialog. */
@@ -49,6 +52,7 @@ export function StudioOverflowMenu({
   onDownloadText,
   downloadReason,
   onViewExportedCode,
+  onConvertToCode,
   onToggleStatus,
   onDelete,
 }: StudioOverflowMenuProps) {
@@ -96,7 +100,11 @@ export function StudioOverflowMenu({
                 <Code2 aria-hidden="true" />
                 View exported code
               </ReasonedMenuItem>
-              <ReasonedMenuItem reason={CONVERT_REASON} reasonId={convertReasonId}>
+              <ReasonedMenuItem
+                reason={onConvertToCode === undefined ? CONVERT_REASON : undefined}
+                reasonId={convertReasonId}
+                onSelect={onConvertToCode}
+              >
                 <FileCode2 aria-hidden="true" />
                 Convert to code template…
               </ReasonedMenuItem>
@@ -114,9 +122,11 @@ export function StudioOverflowMenu({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-      <span id={convertReasonId} className="sr-only">
-        {CONVERT_REASON}
-      </span>
+      {onConvertToCode === undefined ? (
+        <span id={convertReasonId} className="sr-only">
+          {CONVERT_REASON}
+        </span>
+      ) : null}
       {downloadReason === undefined ? null : (
         <span id={downloadReasonId} className="sr-only">
           {downloadReason}

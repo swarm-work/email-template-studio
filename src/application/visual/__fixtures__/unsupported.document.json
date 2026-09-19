@@ -1,0 +1,31 @@
+{
+  "type": "doc",
+  "content": [
+    {
+      "type": "container",
+      "content": [
+        {
+          "type": "paragraph",
+          "attrs": { "style": "", "alignment": null, "class": "" },
+          "content": [{ "type": "text", "text": "This part converts." }]
+        },
+        {
+          "type": "bulletList",
+          "attrs": { "style": "", "class": "" },
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "attrs": { "style": "", "alignment": null, "class": "" },
+                  "content": [{ "type": "text", "text": "This part does not." }]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

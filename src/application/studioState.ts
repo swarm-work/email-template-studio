@@ -109,6 +109,12 @@ export type StudioAction =
     }
   /** A new template exists: select it and open its own editor. */
   | { readonly type: 'template-created'; readonly record: TemplateRecord }
+  /**
+   * The server turned this visual template into a code one. Unlike every other
+   * write this DROPS the draft: the document it holds no longer describes the
+   * template, and there is nothing to rebase it onto.
+   */
+  | { readonly type: 'template-converted'; readonly record: TemplateRecord }
 
 export function createInitialState(selectedId: TemplateId, kind: TemplateKind = 'code'): StudioState {
   return { selectedId, drafts: {}, device: 'desktop', mode: defaultMode(kind) }
@@ -205,6 +211,13 @@ export function studioReducer(state: StudioState, action: StudioAction): StudioS
     case 'template-created': {
       const { metadata, kind } = action.record
       return { ...state, selectedId: metadata.id, mode: defaultMode(kind) }
+    }
+
+    case 'template-converted': {
+      // One way, by design (ADR-28): the visual document is gone, so the draft
+      // that held it goes with it, and the studio opens the new kind's editor.
+      const dropped = removeDraft(state, action.record.metadata.id)
+      return { ...dropped, mode: defaultMode(action.record.kind) }
     }
   }
 }

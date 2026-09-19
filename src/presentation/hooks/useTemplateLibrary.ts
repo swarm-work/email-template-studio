@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useState } from 'react'
 import type { EmailTemplate, TemplateId, TemplateRecord } from '@/domain'
 import type {
+  ConvertToCodeInput,
   NewTemplateInput,
   RepositoryFailure,
   RepositoryResult,
@@ -72,7 +73,7 @@ function reducer(state: TemplateLibraryState, action: LibraryAction): TemplateLi
 }
 
 /**
- * The four writes, as one value.
+ * The writes, as one value.
  *
  * They are grouped because the library screen and the studio screen each need
  * some of them and neither needs the list state: handing one object down is a
@@ -96,13 +97,15 @@ export interface TemplateWrites {
     patch: TemplateMetadataPatch,
   ): Promise<RepositoryResult<EmailTemplate>>
   remove(id: TemplateId): Promise<RepositoryResult<void>>
+  /** Visual → code, one way: the server writes a code version and flips the kind. */
+  convertToCode(id: TemplateId, input: ConvertToCodeInput): Promise<RepositoryResult<EmailTemplate>>
 }
 
 export interface UseTemplateLibraryResult extends TemplateWrites {
   readonly state: TemplateLibraryState
   /** Fetches the list again, e.g. from the Retry button. */
   reload(): void
-  /** The four writes as one value, for handing to a screen. */
+  /** The writes as one value, for handing to a screen. */
   readonly writes: TemplateWrites
 }
 
@@ -160,6 +163,13 @@ export function useTemplateLibrary(repository: TemplateRepository): UseTemplateL
         const result = await repository.remove(id)
         if (result.ok) setAttempt((count) => count + 1)
         return result
+      },
+      async convertToCode(id: TemplateId, input: ConvertToCodeInput) {
+        // Like a save, the answer is the whole record — and this one changes
+        // the template's KIND, so the library card has to hear about it at once.
+        const mapped = mapResult(await repository.convertToCode(id, input))
+        if (mapped.ok) dispatch({ type: 'replaced', template: mapped.value })
+        return mapped
       },
     }),
     [repository],

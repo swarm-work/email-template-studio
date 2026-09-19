@@ -44,6 +44,8 @@ export interface StudioSubHeaderProps {
   downloadReason?: string
   /** Opens the read-only Exported HTML / Plain text / document.json views. */
   onViewExportedCode: () => void
+  /** Opens the convert-to-code dialog; only a visual template has one. */
+  onConvertToCode?: () => void
   /** Saves a new version. */
   onSave: () => void
   /** True while a save is in flight. */
@@ -87,6 +89,7 @@ export function StudioSubHeader({
   onDownloadText,
   downloadReason,
   onViewExportedCode,
+  onConvertToCode,
   onSave,
   saving,
   saveReason,
@@ -142,6 +145,7 @@ export function StudioSubHeader({
           onDownloadText={onDownloadText}
           downloadReason={downloadReason}
           onViewExportedCode={onViewExportedCode}
+          onConvertToCode={onConvertToCode}
           onToggleStatus={onToggleStatus}
           onDelete={onDelete}
         />

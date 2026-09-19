@@ -274,6 +274,20 @@ describe('studioReducer: saved and created', () => {
     expect(studioReducer(state, { type: 'metadata-saved', record, expectedRevision: 4 })).toBe(state)
   })
 
+  it('template-converted drops the draft and opens the code editor', () => {
+    // The one write that does NOT rebase: the draft holds a visual document,
+    // and after the conversion there is no visual template for it to describe
+    // (ADR-28). Keeping it would put the canvas back on the next render.
+    const state = studioReducer(edited(), { type: 'template-converted', record })
+    expect(state.drafts[id]).toBeUndefined()
+    expect(state.mode).toBe('code')
+  })
+
+  it('template-converted leaves a template with no draft alone, but still switches mode', () => {
+    const before = { ...createInitialState(id), mode: 'visual' as const }
+    expect(studioReducer(before, { type: 'template-converted', record }).mode).toBe('code')
+  })
+
   it('template-created selects the new template in its own editor', () => {
     const created: TemplateRecord = {
       ...record,

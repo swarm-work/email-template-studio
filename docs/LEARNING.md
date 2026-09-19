@@ -28,6 +28,7 @@ For a developer coming from Salesforce (Apex, LWC, Flows) into this codebase. Ea
 | Same-origin policy and CSRF                                      | CSRF tokens on Visualforce forms                                      | `rejectForeignRequest` in `server/app.ts` (+ test)                                      | MDN: Same-origin policy, Origin header                          |
 | API keys shown once                                              | Named Credential secret value shown at creation                       | `src/presentation/api/ApiKeysPage.tsx`, `src/application/apiKeys.ts`                    | OWASP: API keys, MDN: Web Crypto                                |
 | Pure functions and table-driven tests                            | A utility Apex class with no SOQL or DML, tested with a list of cases | `src/application/mergeFields.ts` (+ test)                                               | See "Pure functions and table-driven tests: merge fields" below |
+| Walking a tree and generating code                               | Building a String of Apex/SOQL from metadata, carefully               | `src/application/visual/documentToTsx.ts`, `tsxPrinter.ts` (+ three test files)         | See "Walking a tree and generating code" below                  |
 | Webhook signatures and replay windows                            | Signed outbound integration callback                                  | `src/presentation/api/ApiKeysPage.tsx` (planned UI), later `docs/WEBHOOKS.md`           | Stripe docs: webhook signatures, MDN: SubtleCrypto HMAC         |
 
 ## Discriminated unions drive exhaustive switches
@@ -546,6 +547,97 @@ responses status by status, the other runs the shared contract suite against the
 with `fetch` swapped for `app.request`. ADR-27 in `docs/DECISIONS.md` records the trade-offs,
 including why that second file is the one place `src/` imports `server/` and what it costs.
 
+## Walking a tree and generating code
+
+"Convert this visual template to TSX" sounds like a big feature. It is really two small ones: a walk
+over a tree, and a printer that turns the result into text. Both are pure functions, and neither
+knows anything about React.
+
+### The tree
+
+A visual document is a tree of plain objects: `{ type, attrs, content, marks, text }`. Walking one is
+the recursion you will write a hundred times in your career:
+
+```ts
+function buildNode(context, node, parentPath, index) {
+  const path = `${parentPath} > ${node.type}[${index}]`
+  switch (node.type) {
+    case 'paragraph':
+      return element('Text', attributes(styleAttribute(context, node, 'text')), children(context, node, path))
+    // ...one case per node the converter understands
+    default:
+      refuse(context, node.type, path) // record it, carry on, return null
+      return null
+  }
+}
+```
+
+Three things in there are worth stealing:
+
+- **The path is built on the way down.** `doc > container[0] > twoColumns[3]` costs one string
+  concatenation per node and is the difference between "this template cannot be converted" and "the
+  two-column row, third block in, cannot be converted". You cannot reconstruct it afterwards.
+- **A refusal is recorded, not thrown.** The walk carries on collecting every problem, so the dialog
+  lists all of them at once instead of making somebody fix one, retry, and find the next.
+- **The `context` is a plain mutable object** (`reasons`, `warnings`, `props`, `styles`) threaded
+  through the walk. Returning six values from every function would be pure in a different way and
+  much harder to read; one bag of "what this walk has discovered so far" is the readable version.
+
+### Two results, not an exception
+
+```ts
+type DocumentToTsxResult =
+  | { ok: true; source: string; propKeys: readonly string[]; warnings: readonly string[] }
+  | { ok: false; reasons: readonly { node: string; message: string; path: string }[] }
+```
+
+The same shape as `RenderResult` and `RepositoryResult` elsewhere in this codebase, and for the same
+reason: "I cannot convert this" is a normal answer the UI has to render, not an exceptional event
+(ADR-28). Note `warnings` on the ok branch — lossy but convertible — and how differently the dialog
+treats the two: warnings are a note, reasons remove the confirm buttons entirely.
+
+### Printing: the layout rules ARE the spec
+
+The generated file lands in a repository where `prettier --check` is a CI gate, so the printer has to
+agree with prettier. Rather than guess, the rules were derived by running prettier on a probe file
+and reading what came back (`tsxPrinter.ts` records them):
+
+1. An element keeps its child on the same line only when it has exactly one child, that child is an
+   expression, and its opening tag has at most one attribute. A second attribute breaks it, even when
+   it would have fitted.
+2. Attributes go one per line only when the opening tag alone is too long.
+3. An expression that does not fit is indented onto its own line — unless it is a template literal,
+   which prettier never breaks.
+
+And one trick that made the whole thing tractable: **all text is emitted as an expression holding a
+string literal** (`{'Hello'}` rather than `Hello`). Prettier re-flows raw JSX text like a paragraph,
+filling lines greedily and inserting `{' '}` where a line break would eat a space; reproducing that
+is a project of its own. A string literal is one token it will not touch.
+
+The test is the proof, not the claim: `documentToTsx.test.ts` runs the real prettier over every
+golden file and asserts it changes nothing.
+
+### Three tests, three different promises
+
+Generated code invites a special kind of self-deception — a golden file only proves the generator
+still does what it did yesterday. So there are three:
+
+| Test          | Promise                                                                                               |
+| ------------- | ----------------------------------------------------------------------------------------------------- |
+| **Golden**    | This document produces exactly this module (and prettier agrees with it)                              |
+| **Guarantee** | Every golden compiles, evaluates and renders through the real pipeline, with a payload from its props |
+| **Fidelity**  | The converted module says the same words, and links to the same places, as the canvas did             |
+
+The fidelity test compares TEXT CONTENT and the set of link hrefs after normalising whitespace —
+never bytes. Two different renderers produce different table scaffolding and always will; asserting
+byte equality would be asserting that nobody ever improves either of them.
+
+### Where to look
+
+`src/application/visual/documentToTsx.ts` (the walk), `tsxPrinter.ts` (the layout rules),
+`__fixtures__/*.tsx` (what the output actually looks like), then the three test files named above.
+ADR-28 records why an unknown node is a refusal rather than a guess.
+
 ## Suggested reading order through the code
 
 1. `src/domain/*` — the vocabulary (10 minutes).
@@ -566,6 +658,7 @@ including why that second file is the one place `src/` imports `server/` and wha
 - Break the code split on purpose: add `import '@react-email/editor'` to `server/app.ts` and watch `npm run build` refuse it by name.
 - Break the concurrency rule on purpose: comment out `AND revision = ?` in `server/d1TemplateStore.ts` and watch which contract test fails, and why.
 - Add a diagnostic: extend `buildDiagnostics.ts` and its test before touching the panel.
+- Teach the converter a node it currently refuses: start with the golden fixture (a document holding a `blockquote`), watch `documentToTsx.test.ts` fail with `ok: false`, then write the case in `buildNode`, regenerate the golden and read it. The guarantee and fidelity tests are what tell you the mapping is really right.
 - Add a merge-field rule: make `applyMergeFields` accept a `Date` (as an ISO string, say) — one row in the table, then the code.
 - Change the debounce or timeout constants and watch the E2E tests react.
 - Break the error mapping on purpose: make `failureFor` return `unexpected` for 409 and watch which test in `httpTemplateRepository.test.ts` fails, and what the conflict dialog does instead.

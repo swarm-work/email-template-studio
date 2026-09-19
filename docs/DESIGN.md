@@ -307,6 +307,43 @@ app happens not to use.
 **CSS import.** `import '@react-email/editor/themes/default.css'` type-checks under
 `tsconfig.app.json` because it sets `allowArbitraryExtensions`.
 
+### Convert to a code template: one door, two ways to open it
+
+The conversion is irreversible (ADR-28), so it sits at the far end of principle 7: _friction scales
+with irreversibility_. The dialog is reached from the overflow menu's `Convert to code template…`,
+and it opens with the conversion ALREADY DONE in the background — what it shows depends on how that
+went.
+
+**When it converted.** Title `Convert "Product launch" to a code template?`, body _"Switching to
+source will replace the visual layout and can't be undone."_, then three bullets: the exported TSX
+becomes the source of truth; blocks become components, and hand-written TSX will not convert back;
+existing drafts of this template in this browser are replaced. Two confirm controls sit side by side
+in the footer:
+
+- **`Hold to confirm`** — a 1200 ms press. The fill is a width on an `aria-hidden` span, not an
+  animation: a transition would keep travelling after the finger came up, and the app's global
+  reduced-motion rule would flatten it to nothing anyway. Under `prefers-reduced-motion` the same
+  control shows a numeric countdown (`1.0s`) instead of the bar — read with `matchMedia`, because the
+  choice is "a moving bar or a number", not a style.
+- **`I understand the visual layout is discarded.` + `Convert template`** — the keyboard and screen
+  reader route, and the one this project treats as primary for correctness: a gesture only a pointer
+  can perform would be a door only some people can open. Until the box is ticked the button is
+  disabled-with-reason (`Tick the box to confirm, or hold the other button.`), never bare `disabled`.
+
+Cancel is `Keep editing visually`. Success is a toast: `Converted to a code template. The visual
+document was discarded.`
+
+**When it could not convert.** No confirm control is drawn at all — not disabled, absent. In its
+place: _"These blocks have no React Email equivalent yet"_, one row per block with its type and its
+path in the document (`doc > container[0] > twoColumns[3]`), and the action sentence
+`Remove these blocks, or ask for support for them.` Only `Keep editing visually` remains.
+
+**Two softer states in the same dialog.** A conversion that lost something on the way (an image with
+no alternative text, alignment that could not be carried over) shows those as a warning note and
+still offers both confirm controls. A conversion that produced a module the render worker refused
+shows the render error with _"Nothing was saved, and the visual template is exactly as it was."_ —
+the write only ever happens after a successful render.
+
 ### What the mock says that we do not
 
 `Compiler AST` → **Render report**, every row measured from the render on screen. `TS errors: 0` →
@@ -343,7 +380,7 @@ Short, direct, sentence case. Say what happened and what to do next. Examples us
 - "Put the cursor in template.tsx to insert a primitive." (primitives row on another tab)
 - "Compiled with Sucrase — types are stripped, not checked." (compile strip)
 - "Gmail hides everything past about 102 KB behind a 'View entire message' link." (status bar tooltip)
-- "Coming with the converter." (convert to code)
+- "Open the visual editor first: the conversion reads the canvas." (convert to code, while the canvas is not mounted — the feature flag is off, or the server has not answered yet)
 - `Save template` → `Saving…` → the status bar's `Last saved v8 · 10:22`; "There are no changes to save." / "Wait for the preview to render before saving." / "Wait for the preview to finish rendering." (a render is in flight, so the export on hand belongs to the previous edit) / "Fix 2 errors to save: Preview payload (+1 more)." (why Save cannot be pressed, naming the first row to fix) · "A save is already in progress."
 - "Save failed. The template was not changed." (a persistent toast with a Retry action; the draft is untouched)
 - "This template was saved elsewhere as v8." (conflict dialog title) / "This template was changed elsewhere." (the same dialog when only metadata moved, so there is no new version to name) · `Save as a copy` · `Discard mine and load v8` · `Keep editing`
@@ -353,6 +390,7 @@ Short, direct, sentence case. Say what happened and what to do next. Examples us
 - "Draft kept." (leaving the editor for the library with unsaved edits: the draft survives in this browser, so this is a note, not a question)
 - "A template is created as a draft at version 1. You can rename it, describe it and tag it once it is open." (create dialog) · "Used in the API. It cannot be changed after the first publish." (slug) · `Visual — edit on a canvas` · `Code — edit React Email TSX` · `Blank` / `Copy of <name>` · "A copy keeps the kind of the template it came from."
 - "This deletes the template and all 7 versions of it. It cannot be undone from the studio." (delete dialog) · "Type `welcome-verification` to confirm" · "This is a starter. Re-running the seed migration (`npm run db:migrate`) puts it back at version 1." · `Template deleted.`
+- "Switching to source will replace the visual layout and can't be undone." (convert dialog) · `Hold to confirm` / "I understand the visual layout is discarded." + `Convert template` · `Keep editing visually` · `Converted to a code template. The visual document was discarded.` · "These blocks have no React Email equivalent yet" + `Remove these blocks, or ask for support for them.` (a document the converter refuses) · "Nothing was saved, and the visual template is exactly as it was." (a generated module that did not render)
 - "Your session has ended" / "Sign in again to carry on. Your drafts are still in this browser." (the library after a 401; the button reloads, which is what re-runs the password gate)
 - "Template storage is unavailable" / "No template database is bound to this server, so nothing can be listed or saved. Any draft you already have is kept in this browser." (the library after a 503)
 - "This template is written in TSX. Visual editing is only available for visual templates." (mode toggle)
