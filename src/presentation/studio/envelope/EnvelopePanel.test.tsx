@@ -11,7 +11,11 @@ import { EnvelopePanel } from './EnvelopePanel'
 const TEMPLATE = toEmailTemplate(STARTER_TEMPLATES[0])
 const OVER_LIMIT_HELPER = 'Most clients truncate subjects past 78 characters.'
 
-function renderPanel(envelope: Partial<TemplateEnvelope> = {}, onChange = vi.fn()) {
+function renderPanel(
+  envelope: Partial<TemplateEnvelope> = {},
+  onChange = vi.fn(),
+  onMetadataChange = vi.fn(),
+) {
   render(
     <TooltipProvider>
       <EnvelopePanel
@@ -21,6 +25,7 @@ function renderPanel(envelope: Partial<TemplateEnvelope> = {}, onChange = vi.fn(
         onChange={onChange}
         onReset={() => {}}
         from={null}
+        onMetadataChange={onMetadataChange}
       />
     </TooltipProvider>,
   )
@@ -72,10 +77,35 @@ describe('EnvelopePanel', () => {
     expect(field).toHaveAccessibleDescription('Enter a valid email address.')
   })
 
-  it('shows metadata read-only until templates can be saved', () => {
-    renderPanel()
-    expect(screen.getByLabelText('Internal description')).toHaveTextContent(TEMPLATE.metadata.description)
-    expect(screen.getAllByText('Editable once templates can be saved.')).toHaveLength(2)
+  it('sends a description edit as a metadata change when the field is left', async () => {
+    const onMetadataChange = vi.fn()
+    renderPanel({}, vi.fn(), onMetadataChange)
+    const description = screen.getByLabelText('Internal description')
+    expect(description).toHaveValue(TEMPLATE.metadata.description)
+
+    await userEvent.clear(description)
+    await userEvent.type(description, 'Sent after sign-up.')
+    // Nothing is sent per keystroke: each PATCH bumps the revision.
+    expect(onMetadataChange).not.toHaveBeenCalled()
+
+    await userEvent.tab()
+    expect(onMetadataChange).toHaveBeenCalledWith({ description: 'Sent after sign-up.' })
+  })
+
+  it('adds and removes a tag as a metadata change', async () => {
+    const onMetadataChange = vi.fn()
+    renderPanel({}, vi.fn(), onMetadataChange)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Add tag' }))
+    await userEvent.type(await screen.findByLabelText('New tag'), 'billing')
+    await userEvent.click(screen.getByRole('button', { name: /^Add$/ }))
+    expect(onMetadataChange).toHaveBeenCalledWith({ tags: [...TEMPLATE.metadata.tags, 'billing'] })
+
+    const [first] = TEMPLATE.metadata.tags
+    await userEvent.click(screen.getByRole('button', { name: `Remove tag ${first}` }))
+    expect(onMetadataChange).toHaveBeenLastCalledWith({
+      tags: TEMPLATE.metadata.tags.filter((tag) => tag !== first),
+    })
   })
 
   it('announces nothing: the read-only fields are labelable, not live regions', () => {
@@ -88,11 +118,12 @@ describe('EnvelopePanel', () => {
           onChange={vi.fn()}
           onReset={() => {}}
           from={null}
+          onMetadataChange={vi.fn()}
         />
       </TooltipProvider>,
     )
-    // `<output>` is role="status" with an implicit aria-live="polite"; the panel
-    // uses it for the label wiring only, so every one of them opts out. Plan 4.6
+    // `<output>` is role="status" with an implicit aria-live="polite"; the
+    // From identity uses it for the label wiring only, so it opts out. Plan 4.6
     // allows live regions on the autosave note, the save sentence and the render
     // status — nothing in here.
     for (const output of container.querySelectorAll('output')) {

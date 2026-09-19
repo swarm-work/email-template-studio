@@ -465,6 +465,87 @@ of a screen disagreeing. Export the function, delete the re-implementation.
 `src/presentation/studio/StudioPage.tsx`, where one memo decides what is resolved and what is not.
 ADR-26 in `docs/DECISIONS.md` explains that boundary.
 
+## HTTP without exceptions: result types and error mapping
+
+In Apex you call an HTTP endpoint and then live with whatever comes back: `Http.send()` throws
+`CalloutException` when the socket fails, returns an `HttpResponse` with a status code when it does
+not, and it is on you to remember which of those two worlds you are in. JavaScript's `fetch` has the
+same split, and it surprises people:
+
+```ts
+const response = await fetch('/api/templates') // throws ONLY if the request never completed
+// A 404 is not an error here. A 500 is not an error here. `response.ok` is false; that is all.
+```
+
+So there are two failure shapes (a thrown `TypeError`, and a perfectly successful promise carrying a
+bad status) and a third one nobody thinks about: a 200 whose body is not what you expected, because a
+proxy served an HTML error page or half a deploy is live.
+
+### The pattern: make failure a value
+
+`src/infrastructure/templates/httpTemplateRepository.ts` never throws. Every method answers the same
+shape, declared by the port in the application layer:
+
+```ts
+export type RepositoryResult<T> =
+  { readonly ok: true; readonly value: T } | { readonly ok: false; readonly failure: RepositoryFailure }
+```
+
+That is a **discriminated union** again (see the first section of this file): `result.ok` is the
+discriminant, and TypeScript refuses to let you read `result.value` until you have checked it. A
+caller cannot forget to handle the failure, because the compiler will not let it reach the success
+path. Compare that with `try`/`catch`, where forgetting is the default and the mistake shows up at
+runtime, three layers away from the call.
+
+The three failure shapes each get mapped once:
+
+```ts
+try {
+  response = await this.#fetch(url, { ... })
+} catch {
+  return failure('unreachable', UNREACHABLE_MESSAGE)   // 1. the request never completed
+}
+
+const payload: unknown = await response.json().catch(() => null)
+if (!response.ok) return { ok: false, failure: failureFor(response.status, payload) }  // 2. a bad status
+
+const parsed = schema.safeParse(payload)               // 3. a body we do not understand
+if (!parsed.success) return failure('unexpected', UNEXPECTED_BODY_MESSAGE)
+return { ok: true, value: parsed.data }
+```
+
+Note `payload: unknown`. That is the honest type for anything that came off the network, and it is
+what forces the `safeParse` — you cannot read `payload.template` until Zod has said the shape is
+there. `as TemplateDetailDto` would silence the compiler and move the crash to the first missing
+field.
+
+### Mapping statuses to words
+
+`failureFor(status, body)` turns HTTP into the vocabulary the UI already speaks: 401 →
+`unauthenticated`, 404 → `not-found`, 409 with `code: 'conflict'` → `version-conflict` **carrying the
+server's current copy**, 503 → `storage-unavailable`, and so on. The status is the primary signal
+because it survives a body that cannot be parsed; the `code` inside the body only separates the two
+meanings one status can have (a 409 is either "somebody saved first" or "that slug is taken").
+
+Two details worth copying:
+
+- **The failure union carries data when the UI needs it.** `version-conflict` is
+  `{ code, message, current: TemplateRecord }`, so the conflict dialog can offer "discard mine and
+  load v8" without a second request. A bare error string would have cost a round trip and a race.
+- **The same status can mean two things at two call sites.** `POST /:id/versions` answers 422 for
+  "this version is of the other kind"; `POST /:id/convert` answers 422 for "this template is not
+  visual". The port has a word for each, so `saveVersion` asks for its 422 to be read as `invalid`
+  while `convertToCode` keeps `not-visual`. The shared contract suite is what caught that: the
+  in-memory adapter and the HTTP one disagreed, and a test said so out loud.
+
+### Where to look
+
+`src/application/repositories/templateRepository.ts` (the union, declared where it is needed), then
+`src/infrastructure/templates/httpTemplateRepository.ts` and its two test files — one drives recorded
+responses status by status, the other runs the shared contract suite against the **real** Hono app
+with `fetch` swapped for `app.request`. ADR-27 in `docs/DECISIONS.md` records the trade-offs,
+including why that second file is the one place `src/` imports `server/` and what it costs.
+
 ## Suggested reading order through the code
 
 1. `src/domain/*` — the vocabulary (10 minutes).
@@ -476,7 +557,8 @@ ADR-26 in `docs/DECISIONS.md` explains that boundary.
 7. `src/application/mergeFields.ts` and its test — a whole feature as pure functions, and what a table-driven test looks like.
 8. `migrations/0001_create_templates.sql` then `server/templateStore.ts` — the shape of the data and the port over it.
 9. `server/templateRoutes.test.ts` — every HTTP rule the API promises, one case each.
-10. `e2e/studio.spec.ts` — the behaviours we promise, written as a user would experience them.
+10. `src/infrastructure/templates/httpTemplateRepository.ts` — the browser's side of that API, and what "no method throws" looks like in practice.
+11. `e2e/studio.spec.ts` and `e2e/templates.spec.ts` — the behaviours we promise, written as a user would experience them.
 
 ## Things worth practising
 
@@ -486,3 +568,5 @@ ADR-26 in `docs/DECISIONS.md` explains that boundary.
 - Add a diagnostic: extend `buildDiagnostics.ts` and its test before touching the panel.
 - Add a merge-field rule: make `applyMergeFields` accept a `Date` (as an ISO string, say) — one row in the table, then the code.
 - Change the debounce or timeout constants and watch the E2E tests react.
+- Break the error mapping on purpose: make `failureFor` return `unexpected` for 409 and watch which test in `httpTemplateRepository.test.ts` fails, and what the conflict dialog does instead.
+- Provoke a real conflict: open the same template in two tabs, save in one, then save in the other.

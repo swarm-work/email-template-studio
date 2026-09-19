@@ -29,5 +29,11 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src", "shared"]
+  "include": ["src", "shared"],
+  // *.contract.test.ts imports `server/` to drive the real API from a browser
+  // test (see httpTemplateRepository.contract.test.ts). Type-checking Worker
+  // code inside the browser program compares it against the DOM's lib and
+  // reports errors that are not errors where that code actually runs, so these
+  // files are left to Vitest, which does not type-check.
+  "exclude": ["src/**/*.contract.test.ts"]
 }

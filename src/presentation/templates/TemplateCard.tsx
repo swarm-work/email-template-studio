@@ -38,7 +38,7 @@ export function TemplateCard({ template, dirty, onOpen }: TemplateCardProps) {
       // on, so it carries no aria-pressed. The name says what it does.
       aria-label={`Open ${metadata.name}`}
       onClick={() => onOpen(metadata.id)}
-      className="bg-card hover:border-foreground/30 focus-visible:ring-ring/50 flex h-full w-full flex-col gap-3 rounded-lg border p-4 text-left transition-[border-color,box-shadow] duration-150 outline-none focus-visible:ring-3 motion-reduce:transition-none"
+      className="bg-card hover:border-foreground/30 focus-visible:ring-ring/50 flex h-full w-full flex-col gap-3 rounded-lg border p-4 pr-11 text-left transition-[border-color,box-shadow] duration-150 outline-none focus-visible:ring-3 motion-reduce:transition-none"
     >
       <div className="flex min-w-0 items-start gap-2">
         <span

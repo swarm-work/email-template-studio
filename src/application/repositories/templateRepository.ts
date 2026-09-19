@@ -27,8 +27,6 @@ export interface NewTemplateInput {
   readonly description: string
   readonly category: TemplateCategory
   readonly tags?: readonly string[]
-  /** Copy another template's content. Resolved client-side into `initialVersion`. */
-  readonly startFrom?: TemplateId
 }
 
 /** Fields every new version carries, whatever the kind. */

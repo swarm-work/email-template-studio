@@ -229,9 +229,49 @@ describe('studioReducer: saved and created', () => {
     propsSchemaText: '{}',
   }
 
-  it('template-saved drops the draft, because the saved version is now the truth', () => {
+  it('template-saved rebases the draft onto the version that was just written', () => {
+    // Keeping the draft is what stops the editors flashing the OLD content
+    // while the library refetches; it stops counting as "modified" as soon as
+    // the new record lands, because every field then compares equal to it.
     const state = studioReducer(edited(), { type: 'template-saved', record })
-    expect(state.drafts).toEqual({})
+    expect(state.drafts[id].baseRevision).toBe(5)
+    expect(state.drafts[id].baseVersionNumber).toBe(record.metadata.version.number)
+    expect(state.drafts[id].source).toBe(edited().drafts[id].source)
+  })
+
+  it('template-saved leaves a template with no draft alone', () => {
+    const state = createInitialState(id)
+    expect(studioReducer(state, { type: 'template-saved', record })).toBe(state)
+  })
+
+  it('metadata-saved moves the draft on when it was still in step with the server', () => {
+    // A rename bumps the revision without writing a version. The draft was
+    // based on revision 4, which is what the PATCH was made against, so the
+    // next save has to quote the revision the PATCH produced.
+    const state = studioReducer(edited(), {
+      type: 'metadata-saved',
+      record,
+      expectedRevision: 4,
+    })
+    expect(state.drafts[id].baseRevision).toBe(5)
+    // No version was written, so the number the conflict wording uses is untouched.
+    expect(state.drafts[id].baseVersionNumber).toBe(1)
+    expect(state.drafts[id].source).toBe('CHANGED')
+  })
+
+  it('metadata-saved leaves a draft that had ALREADY fallen behind alone', () => {
+    // Somebody else saved a version first, so this draft is based on a revision
+    // the server has moved past. Rebasing it here would hide that: the banner
+    // would go quiet and the next save would silently overwrite their version.
+    const before = edited()
+    const behind = studioReducer(before, { type: 'metadata-saved', record, expectedRevision: 9 })
+    expect(behind).toBe(before)
+    expect(behind.drafts[id].baseRevision).toBe(4)
+  })
+
+  it('metadata-saved leaves a template with no draft alone', () => {
+    const state = createInitialState(id)
+    expect(studioReducer(state, { type: 'metadata-saved', record, expectedRevision: 4 })).toBe(state)
   })
 
   it('template-created selects the new template in its own editor', () => {

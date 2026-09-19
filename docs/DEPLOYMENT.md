@@ -268,6 +268,8 @@ Paste the printed `database_id` over the placeholder `00000000-0000-4000-8000-00
 
 Migration files are numbered and applied in order; wrangler records which have run. **Migrations are never rolled back** (ADR-21): to undo something, write the next migration.
 
+**`npm run db:migrate` is now a prerequisite for `npm run dev`.** Since phase 7b the browser reads and writes templates through the API (`VITE_DATA_MODE` defaults to `http`, ADR-27), so a studio started against an unmigrated database shows "Templates could not be loaded" instead of a library — the first query hits tables that are not there, which the API answers as a 500. ("Template storage is unavailable" is the other failure: a server with no D1 binding at all, which answers 503.) The escape hatch is `VITE_DATA_MODE=memory npm run dev`: the studio then runs entirely in the browser with the starters loaded from `registry.ts`, saves nothing, and needs no database at all. It is meant for a quick look at the UI, not for work you want to keep.
+
 **Migrate before you deploy.** CI does this — the `Apply D1 migrations` step runs before `Deploy to Cloudflare`, gated on the same `CLOUDFLARE_API_TOKEN`. By hand the release is `npm run db:migrate:prod && npm run deploy`.
 
 **Migrations must stay backward compatible with the deployed Worker**, because for the seconds between the two steps the old Worker is talking to the new schema. Adding a table, an index or a nullable column is safe. Renaming or dropping a column is a two-release change: add the new one and write to both, deploy, backfill, then drop the old one in a later release.

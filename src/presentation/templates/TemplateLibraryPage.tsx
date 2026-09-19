@@ -2,15 +2,22 @@
  * The template library: the screen the studio lands on.
  *
  * Presentation layer: it composes the header, the search field and the grid,
- * and owns exactly one piece of state — what has been typed into search. The
- * matching itself is `application/filterTemplates.ts`.
+ * and owns what is on screen — the search text and which dialog is open. The
+ * matching itself is `application/filterTemplates.ts`, and the writes belong to
+ * the route above (it is the one holding the repository).
  */
 import { useMemo, useState } from 'react'
 import { Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { filterTemplates } from '@/application/filterTemplates'
+import type {
+  NewTemplateInput,
+  RepositoryFailure,
+  VersionInput,
+} from '@/application/repositories/templateRepository'
 import type { EmailTemplate, TemplateId } from '@/domain'
-import { ReasonedButton } from '@/presentation/shared/ReasonedButton'
+import { CreateTemplateDialog } from './CreateTemplateDialog'
+import { DeleteTemplateDialog } from './DeleteTemplateDialog'
 import { EmptyLibrary } from './EmptyLibrary'
 import { TemplateGrid } from './TemplateGrid'
 import { TemplateSearch } from './TemplateSearch'
@@ -20,13 +27,25 @@ export interface TemplateLibraryPageProps {
   /** Templates with unsaved edits in this browser session; they get a "Modified" badge. */
   dirtyIds: ReadonlySet<TemplateId>
   onOpenTemplate: (id: TemplateId) => void
+  /** Creates a template. Resolves with the failure, or null when it worked. */
+  onCreateTemplate: (
+    input: NewTemplateInput & { readonly initialVersion: VersionInput },
+  ) => Promise<RepositoryFailure | null>
+  /** Deletes a template and refreshes the list. */
+  onDeleteTemplate: (id: TemplateId) => Promise<void>
 }
 
-/** Creating a template needs somewhere to save it, which is phase 7b's job. */
-const NEW_TEMPLATE_REASON = 'Coming with saved templates.'
-
-export function TemplateLibraryPage({ templates, dirtyIds, onOpenTemplate }: TemplateLibraryPageProps) {
+export function TemplateLibraryPage({
+  templates,
+  dirtyIds,
+  onOpenTemplate,
+  onCreateTemplate,
+  onDeleteTemplate,
+}: TemplateLibraryPageProps) {
   const [query, setQuery] = useState('')
+  const [createOpen, setCreateOpen] = useState(false)
+  // Which template the delete dialog is asking about; null before it is opened.
+  const [deleting, setDeleting] = useState<EmailTemplate | null>(null)
   const visible = useMemo(() => filterTemplates(templates, query), [templates, query])
 
   return (
@@ -41,10 +60,10 @@ export function TemplateLibraryPage({ templates, dirtyIds, onOpenTemplate }: Tem
         </span>
         <div className="ml-auto flex min-w-0 flex-wrap items-center gap-2">
           <TemplateSearch value={query} onChange={setQuery} />
-          <ReasonedButton size="sm" reason={NEW_TEMPLATE_REASON}>
+          <Button size="sm" onClick={() => setCreateOpen(true)}>
             <Plus aria-hidden="true" />
             New template
-          </ReasonedButton>
+          </Button>
         </div>
       </div>
 
@@ -53,8 +72,38 @@ export function TemplateLibraryPage({ templates, dirtyIds, onOpenTemplate }: Tem
       ) : visible.length === 0 ? (
         <NoResults query={query} onClear={() => setQuery('')} />
       ) : (
-        <TemplateGrid templates={visible} dirtyIds={dirtyIds} onOpenTemplate={onOpenTemplate} />
+        <TemplateGrid
+          templates={visible}
+          dirtyIds={dirtyIds}
+          onOpenTemplate={onOpenTemplate}
+          onDeleteTemplate={setDeleting}
+        />
       )}
+
+      <CreateTemplateDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        templates={templates}
+        onCreate={async (input) => {
+          const failure = await onCreateTemplate(input)
+          // Only close on success: a slug clash is shown as a field error and
+          // the person keeps the name they typed.
+          if (failure === null) setCreateOpen(false)
+          return failure
+        }}
+      />
+      <DeleteTemplateDialog
+        open={deleting !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeleting(null)
+        }}
+        template={deleting}
+        onDelete={async () => {
+          if (!deleting) return
+          await onDeleteTemplate(deleting.metadata.id)
+          setDeleting(null)
+        }}
+      />
     </section>
   )
 }

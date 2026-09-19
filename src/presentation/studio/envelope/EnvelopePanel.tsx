@@ -22,12 +22,14 @@ import {
   type TemplateEnvelope,
   type TemplateMetadata,
 } from '@/domain'
+import type { TemplateMetadataPatch } from '@/application/repositories/templateRepository'
+import { MAX_DESCRIPTION_LENGTH } from '@shared/templateContracts'
 import { ReasonedButton } from '@/presentation/shared/ReasonedButton'
 import { StatusBadge } from '@/presentation/shared/StatusBadge'
 import { cn } from '@/lib/utils'
 import { EnvelopeField } from './EnvelopeField'
 import { describedBy } from './fieldIds'
-import { METADATA_READ_ONLY_HELPER, TagsField } from './TagsField'
+import { TagsField } from './TagsField'
 
 /** Why "Reset envelope" cannot be pressed; the studio never shows a bare `disabled`. */
 const NOTHING_TO_RESET_REASON = 'There are no changes to the envelope to reset.'
@@ -51,9 +53,25 @@ export interface EnvelopePanelProps {
    * never show different senders.
    */
   from: string | null
+  /**
+   * Sends a metadata change (description, tags) straight to the server.
+   *
+   * Metadata is NOT part of the draft: it has no version of its own, it is
+   * PATCHed on its own, and it is what the library card shows. Putting it in
+   * the draft would mean a rename only appeared once somebody saved a version.
+   */
+  onMetadataChange: (patch: TemplateMetadataPatch) => void
 }
 
-export function EnvelopePanel({ envelope, metadata, dirty, onChange, onReset, from }: EnvelopePanelProps) {
+export function EnvelopePanel({
+  envelope,
+  metadata,
+  dirty,
+  onChange,
+  onReset,
+  from,
+  onMetadataChange,
+}: EnvelopePanelProps) {
   const headingId = useId()
   const fieldId = useId()
   const [open, setOpen] = useState(true)
@@ -187,31 +205,75 @@ export function EnvelopePanel({ envelope, metadata, dirty, onChange, onReset, fr
               id={`${fieldId}-description`}
               label="Internal description"
               className="md:col-span-3 xl:col-span-5"
-              helper={METADATA_READ_ONLY_HELPER}
+              helper="Only visible in this studio. Never sent."
             >
-              <output
+              <DescriptionField
+                // The key resets the field's own copy when the SAVED value
+                // changes (our own commit, or somebody else's rename). It never
+                // changes while you type, because typing does not commit.
+                key={metadata.description}
                 id={`${fieldId}-description`}
-                aria-live="off"
-                className="text-foreground block min-w-0 py-1 text-sm break-words"
-              >
-                {metadata.description === '' ? '—' : metadata.description}
-              </output>
+                value={metadata.description}
+                onCommit={(description) => onMetadataChange({ description })}
+              />
             </EnvelopeField>
 
             <EnvelopeField
               id={`${fieldId}-tags`}
               label="Tags"
               className="md:col-span-3 xl:col-span-3"
-              helper={METADATA_READ_ONLY_HELPER}
+              helper="Only visible in this studio. Never sent."
             >
-              <output id={`${fieldId}-tags`} aria-live="off" className="block min-w-0 py-1">
-                <TagsField tags={metadata.tags} />
-              </output>
+              {/* A group rather than a single control: the field holds a chip
+                  per tag plus the button that adds one, so there is nothing for
+                  a `<label for>` to point at. */}
+              <div id={`${fieldId}-tags`} role="group" aria-label="Tags" className="min-w-0 py-1">
+                <TagsField tags={metadata.tags} onChange={(tags) => onMetadataChange({ tags })} />
+              </div>
             </EnvelopeField>
           </div>
         </CollapsibleContent>
       </Collapsible>
     </section>
+  )
+}
+
+/**
+ * The internal description, sent to the server when you leave the field.
+ *
+ * It keeps its own copy while you type: every keystroke would otherwise be a
+ * PATCH, and each PATCH bumps the revision — which would turn a sentence into
+ * fifty version conflicts for anyone else with the template open.
+ */
+function DescriptionField({
+  id,
+  value,
+  onCommit,
+}: {
+  id: string
+  value: string
+  onCommit: (value: string) => void
+}) {
+  const [text, setText] = useState(value)
+
+  return (
+    <Input
+      id={id}
+      value={text}
+      maxLength={MAX_DESCRIPTION_LENGTH}
+      placeholder="What this template is for"
+      onChange={(event) => setText(event.target.value)}
+      onBlur={() => {
+        if (text === value) return
+        onCommit(text)
+      }}
+      onKeyDown={(event) => {
+        if (event.key !== 'Enter') return
+        event.currentTarget.blur()
+      }}
+      className={FIELD_CLASS}
+      aria-describedby={describedBy(id, { helper: true })}
+    />
   )
 }
 

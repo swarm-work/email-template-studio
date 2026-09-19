@@ -441,7 +441,7 @@ test('a primitive chip inserts a React Email element at the cursor', async ({ pa
   await expect(source).toContainText('<Column></Column>')
 })
 
-test('the keyboard shortcuts are registered and explain what is not built yet', async ({ page }) => {
+test('the keyboard shortcuts are registered and say when an action does not apply', async ({ page }) => {
   // ⌘P belongs to the studio: it opens Preview, and the browser's own print
   // dialog never gets the chance.
   await page.addInitScript(() => {
@@ -460,9 +460,13 @@ test('the keyboard shortcuts are registered and explain what is not built yet', 
   await page.keyboard.press('ControlOrMeta+P')
   await expect(sourcePanel(page)).toBeVisible()
 
-  // Saving needs somewhere to save to, so ⌘S answers with the button's reason.
+  // Saving is real now (phase 7b). Nothing has been edited here, so ⌘S answers
+  // with the same sentence the button carries rather than writing a version.
+  // The render has to have finished first: before it does, the honest reason is
+  // "wait for the preview", not "nothing to save".
+  await waitForRender(page)
   await page.keyboard.press('ControlOrMeta+S')
-  await expect(toast(page, 'Coming with saved templates.')).toBeVisible()
+  await expect(toast(page, 'There are no changes to save.')).toBeVisible()
 
   await page.keyboard.press('?')
   const dialog = page.getByRole('dialog', { name: 'Keyboard shortcuts' })

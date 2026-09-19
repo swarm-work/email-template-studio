@@ -7,18 +7,18 @@
  * finished studio is visible from the start.
  */
 import { useId } from 'react'
-import { Code2, Download, FileCode2, Keyboard, MoreHorizontal, Send } from 'lucide-react'
+import { Code2, Download, FileCode2, Keyboard, MoreHorizontal, Send, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import type { TemplateKind, TemplateStatus } from '@/domain'
 import { ReasonedMenuItem } from '@/presentation/shared/ReasonedButton'
 
-const SAVED_TEMPLATES_REASON = 'Coming with saved templates.'
 const CONVERT_REASON = 'Coming with the converter.'
 
 export interface StudioOverflowMenuProps {
@@ -34,6 +34,10 @@ export interface StudioOverflowMenuProps {
   downloadReason?: string
   /** Opens the read-only export views. The only route to them for a visual template. */
   onViewExportedCode: () => void
+  /** Flips the template between 'draft' and 'ready' (a metadata PATCH). */
+  onToggleStatus: () => void
+  /** Opens the delete dialog. */
+  onDelete: () => void
 }
 
 export function StudioOverflowMenu({
@@ -45,10 +49,11 @@ export function StudioOverflowMenu({
   onDownloadText,
   downloadReason,
   onViewExportedCode,
+  onToggleStatus,
+  onDelete,
 }: StudioOverflowMenuProps) {
   // The reason sentences live outside the menu: anything inside a menu item
   // becomes part of that item's accessible name.
-  const savedReasonId = useId()
   const convertReasonId = useId()
   const downloadReasonId = useId()
 
@@ -70,9 +75,9 @@ export function StudioOverflowMenu({
             Send test
           </ReasonedMenuItem>
           <DropdownMenuSeparator className="md:hidden" />
-          <ReasonedMenuItem reason={SAVED_TEMPLATES_REASON} reasonId={savedReasonId}>
+          <DropdownMenuItem onSelect={onToggleStatus}>
             {status === 'ready' ? 'Mark as draft' : 'Mark as ready'}
-          </ReasonedMenuItem>
+          </DropdownMenuItem>
           <DropdownMenuSeparator />
           <ReasonedMenuItem reason={downloadReason} reasonId={downloadReasonId} onSelect={onDownloadHtml}>
             <Download aria-hidden="true" />
@@ -102,11 +107,13 @@ export function StudioOverflowMenu({
             <Keyboard aria-hidden="true" />
             Keyboard shortcuts
           </ReasonedMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem variant="destructive" onSelect={onDelete}>
+            <Trash2 aria-hidden="true" />
+            Delete template…
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-      <span id={savedReasonId} className="sr-only">
-        {SAVED_TEMPLATES_REASON}
-      </span>
       <span id={convertReasonId} className="sr-only">
         {CONVERT_REASON}
       </span>

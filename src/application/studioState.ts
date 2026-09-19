@@ -95,8 +95,18 @@ export type StudioAction =
   | { readonly type: 'reset-template'; readonly id: TemplateId }
   | { readonly type: 'set-device'; readonly device: PreviewDevice }
   | { readonly type: 'set-mode'; readonly mode: StudioMode; readonly kind: TemplateKind }
-  /** The server accepted a save: the draft is gone and the record is the new truth. */
+  /** The server accepted a save: the draft is rebased onto the version it wrote. */
   | { readonly type: 'template-saved'; readonly record: TemplateRecord }
+  /**
+   * The server accepted a METADATA change. It moved the revision without
+   * writing a version, so `expectedRevision` says which revision it was made
+   * against — see the reducer for why that matters.
+   */
+  | {
+      readonly type: 'metadata-saved'
+      readonly record: TemplateRecord
+      readonly expectedRevision: number
+    }
   /** A new template exists: select it and open its own editor. */
   | { readonly type: 'template-created'; readonly record: TemplateRecord }
 
@@ -159,10 +169,38 @@ export function studioReducer(state: StudioState, action: StudioAction): StudioS
       return state.mode === mode ? state : { ...state, mode }
     }
 
-    case 'template-saved':
-      // The draft was the difference from the old version; the new version is
-      // the saved text itself, so keeping the draft would show it as modified.
-      return removeDraft(state, action.record.metadata.id)
+    case 'template-saved': {
+      // The draft is REBASED, not dropped. What was just saved is exactly what
+      // the draft holds, so dropping it here would make the editors fall back
+      // to the OLD record for the moment it takes the library to refetch — the
+      // canvas would blink and CodeMirror would lose the cursor. Once the new
+      // record arrives, every field compares equal to it and the "Unsaved
+      // changes" badge goes quiet on its own (see `isTemplateDirty`).
+      const draft = state.drafts[action.record.metadata.id]
+      if (!draft) return state
+      const rebased: TemplateDraft = {
+        ...draft,
+        baseRevision: action.record.metadata.revision,
+        baseVersionNumber: action.record.metadata.version.number,
+      }
+      return { ...state, drafts: { ...state.drafts, [action.record.metadata.id]: rebased } }
+    }
+
+    case 'metadata-saved': {
+      // A metadata PATCH moves the revision but says NOTHING about the content
+      // the draft is based on, so it may only rebase a draft that was still in
+      // step with the server. If the draft had already fallen behind — somebody
+      // else saved a version while this one was being typed — rebasing here
+      // would quietly erase that fact: the banner would go away and the next
+      // save would be accepted, overwriting their version with edits made
+      // against an older one. In that case the draft is left exactly as it is,
+      // so the conflict is still there to be resolved.
+      // `baseVersionNumber` never moves either way: no version was written.
+      const draft = state.drafts[action.record.metadata.id]
+      if (!draft || draft.baseRevision !== action.expectedRevision) return state
+      const rebased: TemplateDraft = { ...draft, baseRevision: action.record.metadata.revision }
+      return { ...state, drafts: { ...state.drafts, [action.record.metadata.id]: rebased } }
+    }
 
     case 'template-created': {
       const { metadata, kind } = action.record

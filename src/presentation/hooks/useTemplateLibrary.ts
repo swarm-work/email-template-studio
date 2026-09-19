@@ -12,6 +12,7 @@ import type {
   NewTemplateInput,
   RepositoryFailure,
   RepositoryResult,
+  TemplateMetadataPatch,
   TemplateRepository,
   VersionInput,
 } from '@/application/repositories/templateRepository'
@@ -32,6 +33,8 @@ type LibraryAction =
   | { readonly type: 'loading' }
   | { readonly type: 'loaded'; readonly templates: readonly EmailTemplate[] }
   | { readonly type: 'failed'; readonly failure: RepositoryFailure }
+  /** A write answered with the whole record; the list takes it straight away. */
+  | { readonly type: 'replaced'; readonly template: EmailTemplate }
 
 function reducer(state: TemplateLibraryState, action: LibraryAction): TemplateLibraryState {
   switch (action.type) {
@@ -47,13 +50,37 @@ function reducer(state: TemplateLibraryState, action: LibraryAction): TemplateLi
         : { kind: 'ready', templates: action.templates }
     case 'failed':
       return { kind: 'error', failure: action.failure }
+    case 'replaced': {
+      // The record the server just answered with is newer than anything a list
+      // request could still be carrying, so it is applied the moment it lands.
+      // Waiting for the refetch instead left a window in which the screen
+      // showed the OLD revision: the badge still said "Unsaved changes", the
+      // status bar still said the previous version, and the next metadata PATCH
+      // went out quoting a revision the server had already moved past.
+      if (state.kind === 'empty') return { kind: 'ready', templates: [action.template] }
+      if (state.kind !== 'ready') return state
+      const id = action.template.metadata.id
+      const known = state.templates.some((template) => template.metadata.id === id)
+      const templates = known
+        ? state.templates.map((template) => (template.metadata.id === id ? action.template : template))
+        : // A brand-new template goes to the front, which is where the list's
+          // newest-first order will put it when the refetch lands.
+          [action.template, ...state.templates]
+      return { kind: 'ready', templates }
+    }
   }
 }
 
-export interface UseTemplateLibraryResult {
-  readonly state: TemplateLibraryState
-  /** Fetches the list again, e.g. from the Retry button. */
-  reload(): void
+/**
+ * The four writes, as one value.
+ *
+ * They are grouped because the library screen and the studio screen each need
+ * some of them and neither needs the list state: handing one object down is a
+ * lot less noise than four callbacks on every component between here and there.
+ * The identity is stable (a `useMemo` on the repository), so passing it as a
+ * prop does not re-render anything.
+ */
+export interface TemplateWrites {
   create(
     input: NewTemplateInput & { readonly initialVersion: VersionInput },
   ): Promise<RepositoryResult<EmailTemplate>>
@@ -62,7 +89,21 @@ export interface UseTemplateLibraryResult {
     expectedRevision: number,
     input: VersionInput,
   ): Promise<RepositoryResult<EmailTemplate>>
+  /** Metadata only: name, slug, description, category, status, tags. No new version. */
+  updateMetadata(
+    id: TemplateId,
+    expectedRevision: number,
+    patch: TemplateMetadataPatch,
+  ): Promise<RepositoryResult<EmailTemplate>>
   remove(id: TemplateId): Promise<RepositoryResult<void>>
+}
+
+export interface UseTemplateLibraryResult extends TemplateWrites {
+  readonly state: TemplateLibraryState
+  /** Fetches the list again, e.g. from the Retry button. */
+  reload(): void
+  /** The four writes as one value, for handing to a screen. */
+  readonly writes: TemplateWrites
 }
 
 export function useTemplateLibrary(repository: TemplateRepository): UseTemplateLibraryResult {
@@ -88,17 +129,32 @@ export function useTemplateLibrary(repository: TemplateRepository): UseTemplateL
 
   const reload = useCallback(() => setAttempt((count) => count + 1), [])
 
-  const writes = useMemo(
+  // Every write that answers with a record patches the list with it before the
+  // caller is told it worked, so the screen and the server never disagree about
+  // which revision is current. A create or a delete ALSO refetches, because
+  // those change which templates exist and in what order; a save or a metadata
+  // patch does not, and a refetch there would be 1 + N requests (TECH_DEBT #42)
+  // to learn what the answer already told us.
+  const writes = useMemo<TemplateWrites>(
     () => ({
       async create(input: NewTemplateInput & { readonly initialVersion: VersionInput }) {
         const result = await repository.create(input)
-        if (result.ok) setAttempt((count) => count + 1)
-        return mapResult(result)
+        const mapped = mapResult(result)
+        if (mapped.ok) {
+          dispatch({ type: 'replaced', template: mapped.value })
+          setAttempt((count) => count + 1)
+        }
+        return mapped
       },
       async saveVersion(id: TemplateId, expectedRevision: number, input: VersionInput) {
-        const result = await repository.saveVersion(id, expectedRevision, input)
-        if (result.ok) setAttempt((count) => count + 1)
-        return mapResult(result)
+        const mapped = mapResult(await repository.saveVersion(id, expectedRevision, input))
+        if (mapped.ok) dispatch({ type: 'replaced', template: mapped.value })
+        return mapped
+      },
+      async updateMetadata(id: TemplateId, expectedRevision: number, patch: TemplateMetadataPatch) {
+        const mapped = mapResult(await repository.updateMetadata(id, expectedRevision, patch))
+        if (mapped.ok) dispatch({ type: 'replaced', template: mapped.value })
+        return mapped
       },
       async remove(id: TemplateId) {
         const result = await repository.remove(id)
@@ -109,7 +165,7 @@ export function useTemplateLibrary(repository: TemplateRepository): UseTemplateL
     [repository],
   )
 
-  return { state, reload, ...writes }
+  return { state, reload, writes, ...writes }
 }
 
 /** Gives a returned record its validator, so callers get the same shape as the list. */

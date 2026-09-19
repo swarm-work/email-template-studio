@@ -8,6 +8,10 @@ declare const __REACT_EMAIL_VERSION__: string
 
 /** Build-time variables the app reads. Vite inlines these into the bundle. */
 interface ImportMetaEnv {
-  /** Which template store to use: 'memory' (default) or 'http' (phase 7b). */
+  /**
+   * Which template store to use. 'http' (the default, and what an unset value
+   * means) talks to the D1-backed API; 'memory' runs the studio with no
+   * database at all, and everything it writes is gone on reload.
+   */
   readonly VITE_DATA_MODE?: 'memory' | 'http'
 }

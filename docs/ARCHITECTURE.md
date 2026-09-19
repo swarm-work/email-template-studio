@@ -203,6 +203,29 @@ Two tables (`migrations/0001_create_templates.sql`): `templates` is the mutable 
 
 Starters are seeded by `migrations/0002_seed_starter_templates.sql`, generated from the real `*.email.tsx` files by `scripts/generate-seed-migration.mjs` (ADR-23). They are ordinary editable rows, not a special case.
 
+### The browser-to-API edge
+
+The browser half of that picture is `src/infrastructure/templates/httpTemplateRepository.ts`, and it is the only module in `src/` that knows the API exists (ADR-27):
+
+```mermaid
+flowchart LR
+  UI["StudioPage / TemplateLibraryPage"] --> H["useTemplateLibrary / useTemplateSave"]
+  H --> P["TemplateRepository (port)"]
+  P --> HTTP["HttpTemplateRepository<br/>fetch + Zod"]
+  P --> MEM["InMemoryTemplateRepository<br/>VITE_DATA_MODE=memory"]
+  HTTP -->|"/api/templates"| API["Hono routes"]
+  HTTP --> MAP["templateMapper.ts<br/>DTO → TemplateRecord"]
+```
+
+Four rules hold at that edge:
+
+1. **Every request carries `credentials: 'same-origin'`** (the session cookie) and, when it mutates, `x-studio-request: 1` plus `content-type: application/json`. The header is the CSRF guard: a cross-site page cannot set it without a preflight the API never answers.
+2. **Every response is parsed** with a schema from `shared/templateContracts.ts` before a field is read. A body that does not parse is a failure, not a value.
+3. **Nothing throws.** Statuses become `RepositoryFailure` codes; a dead network becomes `unreachable`. The UI's job is then to write a sentence, not to catch an exception.
+4. **The wire's vocabulary stops at `templateMapper.ts`.** `versionNumber`, `propsSample` and the bare document object become `version.label`, `samplePayloadText` and `EmailDocument` there and nowhere else.
+
+The concurrency token travels with the draft: `TemplateDraft.baseRevision` is the `templates.revision` the draft started from, and it is what a save sends as `expectedRevision`. A 409 comes back with the server's copy, so the conflict dialog can offer "save as a copy" or "discard mine and load v8" without a second request. Metadata edits (rename, description, tags, status) are a different call — `PATCH /api/templates/:id` against the revision currently on screen — because they have no version of their own and the library card shows them immediately.
+
 Uploaded images live in R2 (`STUDIO_ASSETS`) behind the same kind of structural port (`server/objectStore.ts`). `POST /api/uploads` is authenticated; `GET /media/:key` is deliberately public, because the image is fetched by a stranger's mail client. The prefix is `/media/`, not `/assets/`, because Vite builds the studio's own JS, CSS and fonts into `/assets/`: keeping them apart means `run_worker_first` never sends a static file through the Worker.
 
 ## Runtimes: one API, two hosts

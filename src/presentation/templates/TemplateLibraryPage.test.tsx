@@ -12,7 +12,14 @@ const TEMPLATES = STARTER_TEMPLATES.map(toEmailTemplate)
 function renderPage(props: Partial<Parameters<typeof TemplateLibraryPage>[0]> = {}) {
   return render(
     <TooltipProvider>
-      <TemplateLibraryPage templates={TEMPLATES} dirtyIds={new Set()} onOpenTemplate={() => {}} {...props} />
+      <TemplateLibraryPage
+        templates={TEMPLATES}
+        dirtyIds={new Set()}
+        onOpenTemplate={() => {}}
+        onCreateTemplate={async () => null}
+        onDeleteTemplate={async () => {}}
+        {...props}
+      />
     </TooltipProvider>,
   )
 }
@@ -58,11 +65,24 @@ describe('TemplateLibraryPage', () => {
     expect(screen.getAllByRole('button', { name: /^Open / })).toHaveLength(TEMPLATES.length)
   })
 
-  it('explains why a new template cannot be created yet', () => {
+  it('opens the create dialog from "New template"', async () => {
     renderPage()
-    const button = screen.getByRole('button', { name: 'New template' })
-    expect(button).toHaveAttribute('aria-disabled', 'true')
-    expect(button).toHaveAccessibleDescription('Coming with saved templates.')
+    await userEvent.click(screen.getByRole('button', { name: 'New template' }))
+    const dialog = await screen.findByRole('dialog', { name: 'New template' })
+    expect(dialog).toBeInTheDocument()
+    // Blank is the default start, and the kind is a real choice.
+    expect(screen.getByRole('radio', { name: /Visual/ })).toBeChecked()
+  })
+
+  it('opens the delete dialog from a card\u2019s overflow menu', async () => {
+    renderPage()
+    await userEvent.click(
+      screen.getByRole('button', { name: `More actions for ${TEMPLATES[0].metadata.name}` }),
+    )
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Delete template…' }))
+    expect(await screen.findByRole('dialog', { name: /^Delete/ })).toBeInTheDocument()
+    // Typing the slug is what unlocks it; nothing is destroyed by one click.
+    expect(screen.getByRole('button', { name: 'Delete template' })).toBeDisabled()
   })
 
   it('shows the empty state when there is nothing to list', () => {

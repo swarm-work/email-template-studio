@@ -11,6 +11,7 @@ import type {
   StudioMode,
   TemplateEnvelope,
   TemplateId,
+  TemplateRecord,
 } from '@/domain'
 import {
   createInitialState,
@@ -57,6 +58,14 @@ export interface StudioActions {
   resetTemplate(): void
   setDevice(device: PreviewDevice): void
   setMode(mode: StudioMode): void
+  /** The server accepted a save; the draft is rebased onto the version it wrote. */
+  markSaved(record: TemplateRecord): void
+  /**
+   * The server accepted a metadata change made against `expectedRevision`. It
+   * is NOT `markSaved`: no version was written, so a draft that had already
+   * fallen behind keeps its conflict (see `studioState.ts`).
+   */
+  markMetadataSaved(record: TemplateRecord, expectedRevision: number): void
 }
 
 export interface UseStudioResult {
@@ -110,6 +119,9 @@ export function useStudio({ templates, store, selectedId = null }: UseStudioOpti
       resetTemplate: () => dispatch({ type: 'reset-template', id }),
       setDevice: (device) => dispatch({ type: 'set-device', device }),
       setMode: (mode) => dispatch({ type: 'set-mode', mode, kind: template.kind }),
+      markSaved: (record) => dispatch({ type: 'template-saved', record }),
+      markMetadataSaved: (record, expectedRevision) =>
+        dispatch({ type: 'metadata-saved', record, expectedRevision }),
     }),
     [id, template],
   )

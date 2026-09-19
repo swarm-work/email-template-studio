@@ -18,7 +18,7 @@ An internal studio for editing [React Email](https://react.email) templates, val
 - Keep edits per template for the current browser session (survives refresh, not tab close).
 - Reset source and payload back to the originals, with a confirmation.
 - Send a test email of the current preview to up to 10 addresses through Amazon SES, with an editable subject, or see exactly why sending is unavailable.
-- Open Publish changes and see that it is a local simulation.
+- Save a new version of a template, create and delete templates, and see a version conflict explained when somebody else saved first.
 
 ## Quick start
 
@@ -26,8 +26,11 @@ Requirements: Node.js 22 or newer (developed on Node 26.8) and npm (no pnpm/bun/
 
 ```bash
 npm install
-npm run db:migrate # create the local template database (once; see docs/DEPLOYMENT.md)
+npm run db:migrate # REQUIRED once: creates the local template database (docs/DEPLOYMENT.md)
 npm run dev        # http://localhost:5173, API in the Cloudflare runtime (workerd), sending off
+
+# no database to hand? run with an in-memory store instead (nothing is saved)
+VITE_DATA_MODE=memory npm run dev
 
 # optional, for real test sends through Amazon SES (see docs/SENDING.md)
 cp .env.example .env   # then edit

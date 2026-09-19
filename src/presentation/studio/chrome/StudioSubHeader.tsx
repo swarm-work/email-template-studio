@@ -44,6 +44,18 @@ export interface StudioSubHeaderProps {
   downloadReason?: string
   /** Opens the read-only Exported HTML / Plain text / document.json views. */
   onViewExportedCode: () => void
+  /** Saves a new version. */
+  onSave: () => void
+  /** True while a save is in flight. */
+  saving: boolean
+  /** Why Save cannot be pressed; `undefined` means it can (see `saveTemplateReason`). */
+  saveReason?: string
+  /** Renames the template (a metadata PATCH, not a new version). */
+  onRename: (name: string) => void
+  /** Flips the template between 'draft' and 'ready'. */
+  onToggleStatus: () => void
+  /** Opens the delete dialog. */
+  onDelete: () => void
   /**
    * True only while the canvas is really mounted: a visual template, the
    * server has answered, and the flag is on. The controls that act on the
@@ -75,6 +87,12 @@ export function StudioSubHeader({
   onDownloadText,
   downloadReason,
   onViewExportedCode,
+  onSave,
+  saving,
+  saveReason,
+  onRename,
+  onToggleStatus,
+  onDelete,
   canvasEnabled = false,
   visualControls,
   inspectorOpen = false,
@@ -83,7 +101,11 @@ export function StudioSubHeader({
 }: StudioSubHeaderProps) {
   return (
     <header className="bg-card/85 sticky top-0 z-30 flex min-h-[52px] min-w-0 shrink-0 flex-wrap items-center gap-2 border-b px-4 py-1.5 backdrop-blur-sm">
-      <TemplateBreadcrumb name={template.metadata.name} onBackToLibrary={onBackToLibrary} />
+      <TemplateBreadcrumb
+        name={template.metadata.name}
+        onBackToLibrary={onBackToLibrary}
+        onRename={onRename}
+      />
       <DraftStatusBadge status={template.metadata.status} dirty={dirty} />
       <AutosaveNote lastSavedAt={lastSavedAt} />
 
@@ -110,7 +132,7 @@ export function StudioSubHeader({
         {onToggleInspector ? (
           <InspectorToggle ref={inspectorToggleRef} open={inspectorOpen} onToggle={onToggleInspector} />
         ) : null}
-        <SaveTemplateButton />
+        <SaveTemplateButton saving={saving} reason={saveReason} onSave={onSave} />
         <StudioOverflowMenu
           kind={template.kind}
           status={template.metadata.status}
@@ -120,6 +142,8 @@ export function StudioSubHeader({
           onDownloadText={onDownloadText}
           downloadReason={downloadReason}
           onViewExportedCode={onViewExportedCode}
+          onToggleStatus={onToggleStatus}
+          onDelete={onDelete}
         />
       </div>
     </header>

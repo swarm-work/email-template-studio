@@ -63,17 +63,22 @@ Dark values exist under `.dark` for a later toggle.
 The library is the screen the studio lands on, and it has four of them. They are separate states, not
 an array that happens to be empty, so each gets its own words (`useTemplateLibrary`).
 
-| State          | What is shown                                                                                                        |
-| -------------- | -------------------------------------------------------------------------------------------------------------------- |
-| Loading        | Three `Skeleton` card outlines the same size as real cards, plus one for the heading, so nothing jumps when it lands |
-| Error          | Destructive `Alert`, "Templates could not be loaded", the failure's own message, and a **Retry** button              |
-| Empty          | Dashed panel: "No templates yet" / "Create a template to start authoring email."                                     |
-| No search hits | Dashed panel: `No templates match "invoice".` and a **Clear search** button                                          |
+| State          | What is shown                                                                                                                                                                                                                                                                               |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Loading        | Three `Skeleton` card outlines the same size as real cards, plus one for the heading, so nothing jumps when it lands                                                                                                                                                                        |
+| Error          | Destructive `Alert`, one of three: "Your session has ended" (401, with **Sign in again**, which reloads so `PasswordGate` re-runs), "Template storage is unavailable" (503: no D1 binding, with **Retry**), or "Templates could not be loaded" with the failure's own message and **Retry** |
+| Empty          | Dashed panel: "No templates yet" / "Create a template to start authoring email."                                                                                                                                                                                                            |
+| No search hits | Dashed panel: `No templates match "invoice".` and a **Clear search** button                                                                                                                                                                                                                 |
 
 Cards are plain buttons named `Open <name>`: opening a template is an action, not a selection that
-stays switched on, so there is no `aria-pressed` on them any more. **New template** is rendered
-`aria-disabled` with the reason "Coming with saved templates." — disabled with a reason, never bare
-`disabled` with a silent tooltip.
+stays switched on, so there is no `aria-pressed` on them any more. Each card carries a sibling "⋯"
+button named `More actions for <name>` (a button inside a button is invalid HTML) whose menu holds
+**Open** and **Delete template…**.
+
+**New template** is a live primary button: it opens the create dialog (name, slug, kind, start from).
+Its submit button is the disabled-with-reason pattern — "Enter a name for the template." while the
+name is empty, and "That name has no letters or numbers in it. Type a slug to use instead." when
+`slugify` had nothing to keep — never a bare `disabled` with a silent tooltip.
 
 ## Header
 
@@ -90,7 +95,7 @@ itself connected — it is a measurement of this browser, which is what its tool
 
 Every `aria-disabled` control in the header points at one `sr-only` sentence, "Planned for a later
 milestone.", so a screen reader is told what is unavailable **and** why — the same disabled-with-reason
-rule the library's **New template** button follows.
+rule the studio's **Save template** and **Convert to code** buttons follow.
 
 Below `xl` the workspace label, the pill and Feedback step aside so the nav fits. The nav itself stays
 down to `md` and becomes a horizontal scroll strip rather than disappearing: it is the only route
@@ -333,12 +338,23 @@ Short, direct, sentence case. Say what happened and what to do next. Examples us
 - "Most clients truncate subjects past 78 characters." (subject counter, past 78)
 - "Shown after the subject in the inbox list. Leave empty to use the first line of the email." (preheader)
 - "Set by the send server." (From identity) · "Enter a valid email address." (reply-to)
-- "Editable once templates can be saved." (description and tags, until phase 7b)
+- "Only visible in this studio. Never sent." (internal description and tags, both editable since phase 7b)
 - "Values used by the preview and by test sends. They are never sent to real recipients." (props payload)
 - "Put the cursor in template.tsx to insert a primitive." (primitives row on another tab)
 - "Compiled with Sucrase — types are stripped, not checked." (compile strip)
 - "Gmail hides everything past about 102 KB behind a 'View entire message' link." (status bar tooltip)
-- "Coming with saved templates." (Save, rename, mark as ready) · "Coming with the converter." (convert to code)
+- "Coming with the converter." (convert to code)
+- `Save template` → `Saving…` → the status bar's `Last saved v8 · 10:22`; "There are no changes to save." / "Wait for the preview to render before saving." / "Wait for the preview to finish rendering." (a render is in flight, so the export on hand belongs to the previous edit) / "Fix 2 errors to save: Preview payload (+1 more)." (why Save cannot be pressed, naming the first row to fix) · "A save is already in progress."
+- "Save failed. The template was not changed." (a persistent toast with a Retry action; the draft is untouched)
+- "This template was saved elsewhere as v8." (conflict dialog title) / "This template was changed elsewhere." (the same dialog when only metadata moved, so there is no new version to name) · `Save as a copy` · `Discard mine and load v8` · `Keep editing`
+- "You have unsaved edits made against v5. This template is now v7." (the banner shown when a draft was started against an older version) · `Keep mine`
+- "Your edits are still here and nothing was written. Keep them under a new name, throw them away and start from the saved version, or carry on and decide later." (the conflict dialog's body)
+- "A template with that name already exists. Try another name." (create dialog, a slug that is taken — shown on the Name field, because the name is what you change) · "Use lower-case letters, numbers and single hyphens." (a hand-edited slug the API would refuse, shown on the Slug field before anything is sent)
+- "Draft kept." (leaving the editor for the library with unsaved edits: the draft survives in this browser, so this is a note, not a question)
+- "A template is created as a draft at version 1. You can rename it, describe it and tag it once it is open." (create dialog) · "Used in the API. It cannot be changed after the first publish." (slug) · `Visual — edit on a canvas` · `Code — edit React Email TSX` · `Blank` / `Copy of <name>` · "A copy keeps the kind of the template it came from."
+- "This deletes the template and all 7 versions of it. It cannot be undone from the studio." (delete dialog) · "Type `welcome-verification` to confirm" · "This is a starter. Re-running the seed migration (`npm run db:migrate`) puts it back at version 1." · `Template deleted.`
+- "Your session has ended" / "Sign in again to carry on. Your drafts are still in this browser." (the library after a 401; the button reloads, which is what re-runs the password gate)
+- "Template storage is unavailable" / "No template database is bound to this server, so nothing can be listed or saved. Any draft you already have is kept in this browser." (the library after a 503)
 - "This template is written in TSX. Visual editing is only available for visual templates." (mode toggle)
 - "This template is edited visually. Switch to Visual to change it, or convert it to a code template." (the Code button on a visual template, and the banner over the read-only export views)
 - "The visual editor is switched off. This template is read-only until it is switched back on." (the `STUDIO_VISUAL_EDITOR` rollback switch)

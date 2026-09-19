@@ -21,6 +21,13 @@ import {
   parsePayloadObject,
 } from '@/application/mergeFields'
 import { parsePreviewPayload } from '@/application/parsePreviewPayload'
+import type {
+  RepositoryResult,
+  TemplateMetadataPatch,
+  VersionInput,
+} from '@/application/repositories/templateRepository'
+import { describeVersionConflict, type VersionConflictCopy } from '@/application/versionConflict'
+import { buildVersionInput } from '@/application/versionInput'
 import {
   ALL_STUDIO_MODES,
   availableModes,
@@ -31,18 +38,26 @@ import {
   templateDocument,
   VISUAL_EDITOR_OFF_MESSAGE,
   type EmailDocument,
+  type EmailTemplate,
+  type TemplateId,
+  type TemplateRecord,
   type PreviewPayload,
   type StudioFeatures,
   type StudioMode,
   type TemplateKind,
 } from '@/domain'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
 import { buildPreviewDocument } from '@/infrastructure/render/previewDocument'
 import { DEFAULT_STUDIO_THEME } from '@/infrastructure/render/studioTheme'
 import { mergeFieldPropsValidator } from '@/infrastructure/validation/mergeFieldPropsValidator'
 import type { EmailProvider } from '@/infrastructure/providers/emailProvider'
 import type { TemplateRenderer } from '@/infrastructure/render/renderClient'
+import { slugify } from '@shared/templateContracts'
 import { useSendServerStatus } from '@/presentation/hooks/useSendServerStatus'
+import type { TemplateWrites } from '@/presentation/hooks/useTemplateLibrary'
+import { useTemplateSave } from '@/presentation/hooks/useTemplateSave'
+import { useUnsavedChangesGuard } from '@/presentation/hooks/useUnsavedChangesGuard'
 import { useRenderPreview, type RenderPreviewState } from '@/presentation/hooks/useRenderPreview'
 import { SAVED_EXPORT_REASON, useSavedExport } from '@/presentation/hooks/useSavedExport'
 import { useVisualPreview } from '@/presentation/hooks/useVisualPreview'
@@ -50,7 +65,7 @@ import type { UseStudioResult } from '@/presentation/hooks/useStudio'
 import { useStudioShortcuts } from '@/presentation/hooks/useStudioShortcuts'
 import { downloadTextFile } from '@/presentation/shared/downloadFile'
 import { unavailableModeReason } from './chrome/modeReasons'
-import { SAVE_TEMPLATE_REASON } from './chrome/SaveTemplateButton'
+import { saveTemplateReason } from './chrome/SaveTemplateButton'
 import { StudioStatusBar } from './chrome/StudioStatusBar'
 import { StudioSubHeader } from './chrome/StudioSubHeader'
 import { CodeWorkspace } from './code/CodeWorkspace'
@@ -60,6 +75,8 @@ import { PreviewThumbnail } from './code/PreviewThumbnail'
 import { PropsPayloadCard } from './code/PropsPayloadCard'
 import { ExportedCodeDialog } from './dialogs/ExportedCodeDialog'
 import { ShortcutsDialog } from './dialogs/ShortcutsDialog'
+import { VersionConflictDialog } from './dialogs/VersionConflictDialog'
+import { DeleteTemplateDialog } from '@/presentation/templates/DeleteTemplateDialog'
 import { EMPTY_EMAIL_DOCUMENT } from './visual/canvas'
 import { VisualEditorSkeleton } from './visual/VisualEditorSkeleton'
 import type { VisualEditorControls } from './visual/editorControls'
@@ -83,13 +100,31 @@ export interface StudioPageProps {
   studio: UseStudioResult
   renderer: TemplateRenderer
   provider: EmailProvider
+  /** The repository's four writes; the studio uses three of them. */
+  writes: TemplateWrites
+  /** Opens another template — used after "Save as a copy". */
+  onOpenTemplate: (id: TemplateId) => void
+  /** Deletes this template and goes back to a refreshed library. */
+  onDeleteTemplate: (id: TemplateId) => Promise<void>
+  /** Fetches the library again, e.g. after discarding a draft for the server's copy. */
+  onReloadLibrary: () => void
   /** Goes back to the library; the sub-header's breadcrumb calls it. */
   onBackToLibrary: () => void
   /** Reports the last render time up to the header's latency pill. */
   onRenderTime: (ms: number | null) => void
 }
 
-export function StudioPage({ studio, renderer, provider, onBackToLibrary, onRenderTime }: StudioPageProps) {
+export function StudioPage({
+  studio,
+  renderer,
+  provider,
+  writes,
+  onOpenTemplate,
+  onDeleteTemplate,
+  onReloadLibrary,
+  onBackToLibrary,
+  onRenderTime,
+}: StudioPageProps) {
   const { template, draft, sourceDirty, documentDirty, payloadDirty, envelopeDirty, state, actions } = studio
   const templateId = template.metadata.id
 
@@ -265,6 +300,92 @@ export function StudioPage({ studio, renderer, provider, onBackToLibrary, onRend
     ],
   )
 
+  /**
+   * The version this studio would write if Save were pressed right now.
+   *
+   * `preview.html` / `preview.text` rather than `resolved.*` on purpose: what
+   * is stored keeps its `{{key}}` tokens (ADR-26). The rule itself — and the
+   * shape of each kind's version — lives in `application/versionInput.ts`,
+   * where it is unit-tested; this callback only gathers the inputs.
+   */
+  const currentVersionInput = useCallback(
+    (): VersionInput | null =>
+      buildVersionInput({
+        kind: template.kind,
+        envelope: draft.envelope,
+        samplePayloadText: draft.payloadText,
+        html: preview.html,
+        text: preview.text,
+        source: draft.source,
+        document: draft.document ?? EMPTY_EMAIL_DOCUMENT,
+        theme: template.kind === 'visual' ? template.theme : DEFAULT_STUDIO_THEME,
+        // A code template's schema is authored with the template; the studio has
+        // no UI for it yet, so it is carried forward untouched.
+        propsSchemaText: template.propsSchemaText,
+        mergeFieldKeys,
+      }),
+    [preview.html, preview.text, draft, template, mergeFieldKeys],
+  )
+
+  const sendVersion = useCallback(
+    async (expectedRevision: number): Promise<RepositoryResult<EmailTemplate>> => {
+      const input = currentVersionInput()
+      if (!input) {
+        return { ok: false, failure: { code: 'invalid', message: 'Nothing has been rendered to save yet.' } }
+      }
+      return writes.saveVersion(templateId, expectedRevision, input)
+    },
+    [currentVersionInput, writes, templateId],
+  )
+
+  const {
+    saving,
+    conflict: saveConflict,
+    dismissConflict,
+    save,
+  } = useTemplateSave({
+    send: sendVersion,
+    baseRevision: draft.baseRevision,
+    onSaved: actions.markSaved,
+  })
+
+  // A metadata PATCH can be refused for exactly the same reason a save can, so
+  // it feeds the same dialog rather than inventing a second one.
+  const [metadataConflict, setMetadataConflict] = useState<TemplateRecord | null>(null)
+  const [copyBusy, setCopyBusy] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  // The open-time banner can be dismissed with "Keep mine"; that choice lasts
+  // as long as the screen does, which is what "keep editing" means.
+  const [bannerDismissed, setBannerDismissed] = useState(false)
+
+  /**
+   * Sends a metadata change. Metadata has no version of its own — it is what
+   * the library card shows — so it goes out immediately rather than waiting for
+   * a save.
+   *
+   * `template` is the record the library holds, and every successful write
+   * patches that list synchronously (`useTemplateLibrary`), so the revision
+   * quoted here is the newest one this browser has been told about — two
+   * metadata edits in a row no longer make the second one a conflict with the
+   * first.
+   */
+  const patchMetadata = useCallback(
+    async (patch: TemplateMetadataPatch) => {
+      const expectedRevision = template.metadata.revision
+      const result = await writes.updateMetadata(templateId, expectedRevision, patch)
+      if (result.ok) {
+        actions.markMetadataSaved(result.value, expectedRevision)
+        return
+      }
+      if (result.failure.code === 'version-conflict') {
+        setMetadataConflict(result.failure.current)
+        return
+      }
+      toast.error('That change was not saved.', { description: result.failure.message })
+    },
+    [writes, templateId, template.metadata.revision, actions],
+  )
+
   const [sendOpen, setSendOpen] = useState(false)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [exportedCodeOpen, setExportedCodeOpen] = useState(false)
@@ -385,10 +506,123 @@ export function StudioPage({ studio, renderer, provider, onBackToLibrary, onRend
     downloadTextFile(`${template.metadata.slug}.txt`, resolved.text, 'text/plain')
   }, [resolved.text, template.metadata.slug])
 
+  const dirty = studio.dirtyTemplateIds.has(templateId)
+  const errorLabels = useMemo(
+    () => diagnostics.filter((item) => item.state === 'error').map((item) => item.label),
+    [diagnostics],
+  )
+  const saveReason = saveTemplateReason({
+    dirty,
+    rendered: preview.html !== null,
+    // What is stored is the render's own output, so Save waits for the render
+    // that matches the draft rather than saving the previous one's export.
+    status: preview.status,
+    errors: errorLabels,
+  })
+
+  // Moving around inside the studio never prompts (drafts survive in session
+  // storage); leaving the PAGE throws that storage away, so it does.
+  useUnsavedChangesGuard(dirty)
+
+  /** ⌘S and the button take the same route, reason included. */
+  const requestSave = useCallback(() => {
+    if (saveReason !== undefined) {
+      toast(saveReason)
+      return
+    }
+    save()
+  }, [saveReason, save])
+
+  /**
+   * The conflict the dialog is about, whichever write was refused.
+   *
+   * The wording needs the version the draft started from. A draft written by an
+   * older build records 0 for that, and a metadata-only change elsewhere moves
+   * the revision without moving the version number, so there is a fallback
+   * sentence for the cases `describeVersionConflict` cannot describe.
+   */
+  const conflictRecord = saveConflict ?? metadataConflict
+  const conflictCopy: VersionConflictCopy =
+    describeVersionConflict(
+      draft.baseVersionNumber || template.metadata.version.number,
+      conflictRecord?.metadata.version.number ?? template.metadata.version.number,
+    ) ?? GENERIC_CONFLICT_COPY
+
+  const closeConflict = useCallback(() => {
+    dismissConflict()
+    setMetadataConflict(null)
+  }, [dismissConflict])
+
+  /** Throws the draft away and shows what the server has. */
+  const discardMine = useCallback(() => {
+    actions.resetTemplate()
+    closeConflict()
+    setBannerDismissed(false)
+    onReloadLibrary()
+    toast.success('Your edits were discarded. Showing the saved version.')
+  }, [actions, closeConflict, onReloadLibrary])
+
+  /**
+   * Keeps the draft by making it a NEW template. The slug is derived from the
+   * copy's name and given a number if that is taken, so pressing this twice
+   * produces two copies rather than one error.
+   */
+  const saveAsCopy = useCallback(async () => {
+    const input = currentVersionInput()
+    if (!input) {
+      toast(NOTHING_RENDERED_REASON)
+      return
+    }
+    const name = `${template.metadata.name} (copy)`
+    const base = slugify(name)
+    setCopyBusy(true)
+    let created = null
+    for (let attempt = 0; attempt < MAX_COPY_SLUG_ATTEMPTS; attempt += 1) {
+      const result = await writes.create({
+        name,
+        slug: attempt === 0 ? base : `${base}-${attempt + 1}`,
+        kind: template.kind,
+        description: template.metadata.description,
+        category: template.metadata.category,
+        tags: template.metadata.tags,
+        initialVersion: input,
+      })
+      if (result.ok) {
+        created = result.value
+        break
+      }
+      if (result.failure.code !== 'slug-taken') {
+        setCopyBusy(false)
+        toast.error('The copy could not be created.', { description: result.failure.message })
+        return
+      }
+    }
+    setCopyBusy(false)
+    if (!created) {
+      toast.error('The copy could not be created.', { description: 'Too many templates share that name.' })
+      return
+    }
+    // The edits now live in the copy, so the original goes back to its saved state.
+    actions.resetTemplate()
+    closeConflict()
+    toast.success(`Saved as a copy: ${created.metadata.name}.`)
+    onOpenTemplate(created.metadata.id)
+  }, [currentVersionInput, template, writes, actions, closeConflict, onOpenTemplate])
+
+  /**
+   * The draft was made against an older version and the template has since
+   * moved on. Shown when the editor OPENS, which is the moment somebody can
+   * still choose what to do about it cheaply.
+   */
+  const showConflictBanner =
+    !bannerDismissed &&
+    conflictRecord === null &&
+    draft.baseRevision > 0 &&
+    draft.baseRevision !== template.metadata.revision
+
   useStudioShortcuts({
     enabled: true,
-    // Saving is phase 7b: ⌘S answers with exactly what the button says.
-    onSave: () => toast(SAVE_TEMPLATE_REASON),
+    onSave: requestSave,
     onPreview: togglePreview,
     onFormat: () => formatTab(activeTab === 'props' ? 'props' : 'tsx'),
     onSendTest: () => setSendOpen(true),
@@ -414,6 +648,14 @@ export function StudioPage({ studio, renderer, provider, onBackToLibrary, onRend
         onDownloadText={downloadText}
         downloadReason={downloadReason}
         onViewExportedCode={() => setExportedCodeOpen(true)}
+        onSave={requestSave}
+        saving={saving}
+        saveReason={saveReason}
+        onRename={(name) => void patchMetadata({ name })}
+        onToggleStatus={() =>
+          void patchMetadata({ status: template.metadata.status === 'ready' ? 'draft' : 'ready' })
+        }
+        onDelete={() => setDeleteOpen(true)}
         visualControls={visualControls}
         canvasEnabled={canvasEnabled}
         inspectorOpen={canvasEnabled ? inspectorOpen : undefined}
@@ -431,7 +673,28 @@ export function StudioPage({ studio, renderer, provider, onBackToLibrary, onRend
           toast.success('Envelope restored to the saved values.')
         }}
         from={fromIdentity}
+        onMetadataChange={(patch) => void patchMetadata(patch)}
       />
+
+      {showConflictBanner ? (
+        <Alert className="border-warning/30 bg-warning-muted text-warning-foreground mx-4 mt-3 w-auto">
+          <AlertTitle>This template changed while you were editing</AlertTitle>
+          <AlertDescription className="flex flex-col items-start gap-2">
+            <span>{conflictCopy.banner}</span>
+            <span className="flex flex-wrap gap-2">
+              <Button variant="outline" size="sm" onClick={() => setBannerDismissed(true)}>
+                Keep mine
+              </Button>
+              <Button variant="outline" size="sm" onClick={discardMine}>
+                {conflictCopy.discardLabel}
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => void saveAsCopy()} disabled={copyBusy}>
+                Save as a copy
+              </Button>
+            </span>
+          </AlertDescription>
+        </Alert>
+      ) : null}
 
       {/* The one scroller in the editor: from `lg` up the shell is exactly one
           viewport tall, so this is what moves. Below `lg` it has no height to
@@ -600,8 +863,41 @@ export function StudioPage({ studio, renderer, provider, onBackToLibrary, onRend
         text={preview.text}
         document={draft.document}
       />
+      <VersionConflictDialog
+        open={conflictRecord !== null}
+        onOpenChange={(open) => {
+          if (!open) closeConflict()
+        }}
+        copy={conflictCopy}
+        onSaveAsCopy={() => void saveAsCopy()}
+        onDiscardMine={discardMine}
+        busy={copyBusy}
+      />
+      <DeleteTemplateDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        template={template}
+        onDelete={async () => {
+          await onDeleteTemplate(templateId)
+          setDeleteOpen(false)
+        }}
+      />
     </div>
   )
+}
+
+/** How many `-2`, `-3` … slugs "Save as a copy" will try before giving up. */
+const MAX_COPY_SLUG_ATTEMPTS = 5
+
+/**
+ * What the conflict dialog says when the two version numbers are the same.
+ * That happens when the change made elsewhere was metadata only: the revision
+ * moved, the version did not, and there is no "v8" to name.
+ */
+const GENERIC_CONFLICT_COPY: VersionConflictCopy = {
+  banner: 'This template was changed elsewhere since you started editing.',
+  title: 'This template was changed elsewhere.',
+  discardLabel: 'Discard mine and reload',
 }
 
 /** The payload every substitution falls back to when the JSON does not parse. */
