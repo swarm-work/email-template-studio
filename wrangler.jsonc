@@ -15,10 +15,37 @@
   "compatibility_date": "2026-09-09",
   "compatibility_flags": ["nodejs_compat"],
   "assets": {
-    // Everything except /api/* is answered from the built files; unknown paths get index.html.
+    // Everything except /api/* and /media/* is answered from the built files;
+    // unknown paths get index.html. /media/* is the R2-backed image store the
+    // visual editor uploads to, so the Worker has to see it before the asset
+    // layer. Vite builds the studio's own JS, CSS and fonts into /assets/, which
+    // is why uploads do NOT live there: a static file never costs a Worker
+    // invocation (see server/uploadRoutes.ts).
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*"],
+    "run_worker_first": ["/api/*", "/media/*"],
   },
+  // Templates and their versions live in D1 (SQLite). One-time setup:
+  //   npx wrangler d1 create email-template-studio
+  // and paste the id it prints over the placeholder below. See docs/DEPLOYMENT.md.
+  // `preview_database_id` is deliberately absent: local dev, `vite preview` and
+  // `wrangler d1 ... --local` then all share one SQLite file under .wrangler/state/v3.
+  "d1_databases": [
+    {
+      "binding": "STUDIO_DB",
+      "database_name": "email-template-studio",
+      // REPLACE ME with the id printed by `npx wrangler d1 create email-template-studio`.
+      "database_id": "00000000-0000-4000-8000-0000000000d1",
+      "migrations_dir": "migrations",
+    },
+  ],
+  // Images pasted or uploaded into a visual template. One-time setup:
+  //   npx wrangler r2 bucket create email-template-studio-assets
+  "r2_buckets": [
+    {
+      "binding": "STUDIO_ASSETS",
+      "bucket_name": "email-template-studio-assets",
+    },
+  ],
   "observability": { "enabled": true },
   "vars": {
     // Live Amazon SES sending, on this account, deliberately (docs/DEPLOYMENT.md).
@@ -47,6 +74,10 @@
     // stop. See "Turning live sending on" in docs/DEPLOYMENT.md.
     "STUDIO_SEND_ENABLED": "true",
     "STUDIO_SEND_DRY_RUN": "false",
+    // The rollback switch for the visual editor (docs/DEPLOYMENT.md). Set it to
+    // the literal "false" and redeploy - no rebuild - and every visual template
+    // opens read-only in Preview mode. Anything else, including absent, is "on".
+    "STUDIO_VISUAL_EDITOR": "true",
     "AWS_REGION": "ap-southeast-2",
     "SES_FROM_ADDRESS": "testing@swarm.camp",
     "SES_ALLOWED_RECIPIENTS": "echo@swarm.work",
@@ -57,12 +88,30 @@
       "vars": {
         "STUDIO_SEND_ENABLED": "true",
         "STUDIO_SEND_DRY_RUN": "true",
+        "STUDIO_VISUAL_EDITOR": "true",
         "AWS_REGION": "us-east-1",
         "SES_FROM_ADDRESS": "studio@example.test",
         "SES_ALLOWED_RECIPIENTS": "qa@example.test,second@example.test",
         // No Access in front of the test build, so the API runs as this fixed identity.
         "STUDIO_DEV_IDENTITY": "playwright@example.test",
       },
+      // Bindings are NOT inherited by a named environment, so both are repeated
+      // here. A separate database id keeps the Playwright run from touching the
+      // database `npm run dev` uses, even though both live in .wrangler/state/v3.
+      "d1_databases": [
+        {
+          "binding": "STUDIO_DB",
+          "database_name": "email-template-studio-e2e",
+          "database_id": "00000000-0000-4000-8000-0000000000e2",
+          "migrations_dir": "migrations",
+        },
+      ],
+      "r2_buckets": [
+        {
+          "binding": "STUDIO_ASSETS",
+          "bucket_name": "email-template-studio-assets-e2e",
+        },
+      ],
     },
   },
 }

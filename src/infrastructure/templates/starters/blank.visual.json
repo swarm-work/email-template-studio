@@ -1,0 +1,18 @@
+{
+  "type": "doc",
+  "content": [
+    {
+      "type": "container",
+      "content": [
+        {
+          "type": "paragraph",
+          "attrs": {
+            "style": "",
+            "alignment": null,
+            "class": ""
+          }
+        }
+      ]
+    }
+  ]
+}

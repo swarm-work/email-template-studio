@@ -5,7 +5,7 @@
  *   POST /api/send-test         -> send one test email to up to 10 recipients
  *
  * The browser never sees credentials; it only sees this API. Guards, in order:
- * enabled flag, body validation, recipient policy, HTML size cap, rate limit.
+ * enabled flag, body validation, recipient policy, body size cap, rate limit.
  *
  * Who may receive is `config.recipientPolicy`: an allow-list, or any valid
  * address when SES_ALLOWED_RECIPIENTS is "*" (see server/config.ts). The
@@ -18,6 +18,7 @@
  * behind a password gate (ADR-17).
  */
 import { Hono } from 'hono'
+import { HTTPException } from 'hono/http-exception'
 import { z } from 'zod'
 import type { Authenticator, Identity } from './auth.ts'
 import {
@@ -27,10 +28,19 @@ import {
   SESSION_COOKIE,
   SESSION_TTL_SECONDS,
 } from './auth.ts'
-import type { SendServerConfig } from './config.ts'
+import type { SendServerConfig, StudioFeatures } from './config.ts'
+import { DEFAULT_STUDIO_FEATURES } from './config.ts'
 import type { EmailSender, SenderPreflight } from './emailSender.ts'
+import { apiError } from './http.ts'
+import type { ObjectStore } from './objectStore.ts'
+import type { TemplateStore } from './templateStore.ts'
+import { registerTemplateRoutes } from './templateRoutes.ts'
+import { registerUploadRoutes } from './uploadRoutes.ts'
 
+/** The cap on the message body: HTML and the plain-text part together. */
 export const MAX_HTML_BYTES = 500 * 1024
+/** At most five reply-to addresses, matching what the dialog offers. */
+export const MAX_REPLY_TO = 5
 /** Friendly cap, applied after de-duplication, so one send is one readable To header. */
 export const MAX_RECIPIENTS_PER_SEND = 10
 export const TEST_SUBJECT_PREFIX = '[TEST] '
@@ -61,6 +71,24 @@ const sendRequestSchema = z.object({
     .max(200)
     .refine((value) => !CONTROL_CHARACTERS.test(value), 'Subject must not contain control characters'),
   html: z.string().min(1),
+  /**
+   * The plain-text alternative part. Optional so an older browser tab, and the
+   * curl example in docs/SENDING.md, keep working; empty means HTML only.
+   */
+  text: z.string().max(200_000).optional(),
+  /**
+   * Where replies go. NOT checked against SES_ALLOWED_RECIPIENTS: nothing is
+   * delivered to a reply-to address, so the rule that protects recipients has
+   * nothing to protect here. It is still de-duplicated, control-char checked
+   * and capped, because it lands in a mail header.
+   */
+  replyTo: z
+    .union([recipient, z.array(recipient).min(1).max(MAX_REPLY_TO)])
+    .optional()
+    .refine(
+      (value) => value === undefined || !asList(value).some((address) => CONTROL_CHARACTERS.test(address)),
+      'Reply-to must not contain control characters',
+    ),
   templateId: z
     .string()
     .min(1)
@@ -98,6 +126,19 @@ export interface AppDependencies {
    * exist when there is no password to check.
    */
   readonly passwordGate?: { readonly password: string }
+  /**
+   * Where templates are stored. Optional, unlike `sender`, so the existing
+   * `createApp` call sites and tests compile unchanged; absent or null means
+   * the template routes answer 503 storage-unavailable while sending keeps working.
+   */
+  readonly templateStore?: TemplateStore | null
+  /** Where uploaded images are stored (R2 in the Worker). Absent or null -> uploads answer 503. */
+  readonly objectStore?: ObjectStore | null
+  /**
+   * Which optional parts of the studio are switched on. Defaults to all of
+   * them, so an adapter that forgets to pass any keeps the studio complete.
+   */
+  readonly features?: StudioFeatures
   /** Injectable clock for tests. */
   readonly now?: () => number
 }
@@ -119,6 +160,9 @@ export function createApp({
     'No authenticator was configured for this server, so every API request is refused.',
   ),
   passwordGate,
+  templateStore = null,
+  objectStore = null,
+  features = DEFAULT_STUDIO_FEATURES,
   now = () => Date.now(),
 }: AppDependencies) {
   const app = new Hono<{ Variables: Variables }>()
@@ -153,6 +197,23 @@ export function createApp({
     }
     c.set('identity', result.identity)
     await next()
+  })
+
+  // Registered AFTER the two middlewares above, so every template and upload
+  // route already has a checked origin and a named caller. `GET /media/:key`
+  // lives outside /api/* and is deliberately public (see uploadRoutes.ts).
+  registerTemplateRoutes(app, { templateStore, now })
+  registerUploadRoutes(app, { objectStore })
+
+  // The last line of defence: anything a handler THROWS (a D1 outage, a row that
+  // does not parse, a duplicate primary key) would otherwise leave Hono's
+  // plain-text "Internal Server Error" - the one response the browser cannot
+  // parse with `apiErrorSchema`. The real error is logged here and never sent:
+  // a database message is no business of the browser's.
+  app.onError((error, c) => {
+    if (error instanceof HTTPException) return error.getResponse()
+    console.error('[api] unhandled error', error)
+    return apiError(c, 500, 'unexpected', 'Something went wrong on the server. Try again.')
   })
 
   if (passwordGate) {
@@ -216,12 +277,22 @@ export function createApp({
     // The signed-in email is echoed back so the UI can show who Access let in.
     const user = c.get('identity').email
     if (!config.enabled) {
-      return c.json({ enabled: false as const, provider: 'amazon-ses', reason: config.reason, user })
+      // `features` is reported on BOTH branches: which workspaces the studio
+      // offers has nothing to do with whether SES is reachable, and a studio
+      // with sending switched off still has to know its editor is switched on.
+      return c.json({
+        enabled: false as const,
+        provider: 'amazon-ses',
+        reason: config.reason,
+        user,
+        features,
+      })
     }
     return c.json({
       enabled: true as const,
       provider: 'amazon-ses',
       user,
+      features,
       mode: sender?.mode ?? 'dry-run',
       from: config.from,
       recipientPolicy: config.recipientPolicy,
@@ -324,12 +395,16 @@ export function createApp({
       )
     }
 
-    if (new TextEncoder().encode(request.html).length > MAX_HTML_BYTES) {
+    // One message, one budget: the two parts travel in the same email, so the
+    // cap is on their sum rather than on the HTML alone.
+    const encoder = new TextEncoder()
+    const bodyBytes = encoder.encode(request.html).length + encoder.encode(request.text ?? '').length
+    if (bodyBytes > MAX_HTML_BYTES) {
       return c.json(
         {
           status: 'error',
           code: 'invalid-request',
-          message: `HTML is larger than ${MAX_HTML_BYTES / 1024} KB.`,
+          message: `HTML and plain text together are larger than ${MAX_HTML_BYTES / 1024} KB.`,
         },
         400,
       )
@@ -349,12 +424,21 @@ export function createApp({
     const subject = /^\[TEST\]/i.test(request.subject)
       ? request.subject
       : `${TEST_SUBJECT_PREFIX}${request.subject}`
+    const replyTo = dedupe(asList(request.replyTo))
     try {
-      const receipt = await sender.send({ from: config.from, to, subject, html: request.html })
+      const receipt = await sender.send({
+        from: config.from,
+        to,
+        subject,
+        html: request.html,
+        text: request.text,
+        replyTo: replyTo.length > 0 ? replyTo : undefined,
+      })
       // The requester is logged so a surprising send can be traced to a person.
       const who = to.length === 1 ? to[0] : `${to.length} recipients: ${to.join(', ')}`
+      const replyToNote = replyTo.length > 0 ? ` reply-to ${replyTo.join(', ')}` : ''
       console.log(
-        `[send-test] ${sender.mode} "${subject}" -> ${who} by ${c.get('identity').email} (template ${request.templateId}) message ${receipt.messageId}`,
+        `[send-test] ${sender.mode} "${subject}" -> ${who}${replyToNote} by ${c.get('identity').email} (template ${request.templateId}) message ${receipt.messageId}`,
       )
       return c.json({
         status: 'sent',
@@ -380,6 +464,26 @@ export function createApp({
   })
 
   return app
+}
+
+/** One optional address or a list of them, always as a list. */
+function asList(value: string | string[] | undefined): string[] {
+  if (value === undefined) return []
+  return Array.isArray(value) ? value : [value]
+}
+
+/** Removes duplicates case-insensitively, keeping the first spelling typed. */
+function dedupe(addresses: readonly string[]): string[] {
+  const seen = new Set<string>()
+  const kept: string[] = []
+  for (const raw of addresses) {
+    const address = raw.trim()
+    const key = address.toLowerCase()
+    if (address === '' || seen.has(key)) continue
+    seen.add(key)
+    kept.push(address)
+  }
+  return kept
 }
 
 /**

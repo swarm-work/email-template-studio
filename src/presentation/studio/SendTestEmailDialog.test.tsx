@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { DEFAULT_STUDIO_FEATURES } from '@/domain'
 import {
   NoSendEmailProvider,
   type EmailProvider,
@@ -9,8 +10,11 @@ import {
   type ProviderStatus,
   type SendOutcome,
 } from '@/infrastructure/providers/emailProvider'
-import { TEMPLATES } from '@/infrastructure/templates/registry'
+import { STARTER_TEMPLATES } from '@/infrastructure/templates/registry'
+import { toEmailTemplate } from '@/infrastructure/templates/templateMapper'
 import { SendTestEmailDialog } from './SendTestEmailDialog'
+
+const TEMPLATES = STARTER_TEMPLATES.map(toEmailTemplate)
 
 interface FakeOptions {
   readonly messageId?: string
@@ -32,6 +36,7 @@ class FakeConnectedProvider implements EmailProvider {
   async getStatus(): Promise<ProviderStatus> {
     return {
       connected: true,
+      features: DEFAULT_STUDIO_FEATURES,
       provider: 'fake',
       mode: this.options.mode ?? 'dry-run',
       from: 'studio@example.test',
@@ -56,14 +61,18 @@ class FakeConnectedProvider implements EmailProvider {
   }
 }
 
-function renderDialog(provider: EmailProvider) {
+function renderDialog(provider: EmailProvider, overrides: { replyTo?: string; subject?: string } = {}) {
   render(
     <SendTestEmailDialog
       open
       onOpenChange={() => {}}
       template={TEMPLATES[0]}
       provider={provider}
+      // Already resolved by StudioPage (ADR-26): the dialog never substitutes.
+      subject={overrides.subject ?? TEMPLATES[0].envelope.subject}
+      replyTo={overrides.replyTo ?? ''}
       html="<p>x</p>"
+      text="x"
     />,
   )
 }
@@ -122,8 +131,52 @@ describe('SendTestEmailDialog', () => {
       to: ['ada@example.test', 'grace@example.test'],
       subject: 'Custom subject',
       html: '<p>x</p>',
+      text: 'x',
+      replyTo: undefined,
       templateId: TEMPLATES[0].metadata.id,
     })
+  })
+
+  it('seeds Reply-to from the envelope and sends it', async () => {
+    const provider = new FakeConnectedProvider()
+    renderDialog(provider, { replyTo: 'support@example.test' })
+
+    const replyTo = await screen.findByLabelText('Reply-to')
+    expect(replyTo).toHaveValue('support@example.test')
+
+    await userEvent.type(screen.getByLabelText('To'), 'qa@example.test')
+    await userEvent.click(screen.getByRole('button', { name: /^Send test$/ }))
+
+    expect(await screen.findByText('Dry run complete')).toBeInTheDocument()
+    expect(provider.sent[0].replyTo).toEqual(['support@example.test'])
+  })
+
+  it('refuses to send while Reply-to is not an address', async () => {
+    renderDialog(new FakeConnectedProvider())
+
+    await screen.findByLabelText('To')
+    await userEvent.type(screen.getByLabelText('To'), 'qa@example.test')
+    await userEvent.type(screen.getByLabelText('Reply-to'), 'not-an-email')
+
+    expect(await screen.findByText('Check this address: not-an-email.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^Send test$/ })).toBeDisabled()
+  })
+
+  it('sends no reply-to at all when the field is left empty', async () => {
+    const provider = new FakeConnectedProvider()
+    renderDialog(provider)
+
+    await screen.findByLabelText('To')
+    await userEvent.type(screen.getByLabelText('To'), 'qa@example.test')
+    await userEvent.click(screen.getByRole('button', { name: /^Send test$/ }))
+
+    expect(await screen.findByText('Dry run complete')).toBeInTheDocument()
+    expect(provider.sent[0].replyTo).toBeUndefined()
+  })
+
+  it('says how big both parts of the message are', async () => {
+    renderDialog(new FakeConnectedProvider())
+    expect(await screen.findByText('Current preview, 0.0 KB HTML + 0.0 KB plain text')).toBeInTheDocument()
   })
 
   it("warns about an address the server's allow-list does not have", async () => {

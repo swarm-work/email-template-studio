@@ -13,6 +13,16 @@ export interface TestEmail {
   readonly to: readonly string[]
   readonly subject: string
   readonly html: string
+  /**
+   * The plain-text alternative part. Absent or empty means the message goes out
+   * as HTML only, which is what every send did before phase 6.
+   */
+  readonly text?: string
+  /**
+   * Reply-To addresses. Absent means replies go to `from`. Not a recipient: SES
+   * delivers nothing here, it only writes the header.
+   */
+  readonly replyTo?: readonly string[]
 }
 
 export interface SendReceipt {
@@ -49,8 +59,12 @@ export function createDryRunSender(log: (line: string) => void = console.log): E
       // treat a real id (UAX #14 never breaks between a hyphen and a digit).
       // The UI must cope with that shape, so the rehearsal produces it too.
       const messageId = `dry-run-${counter}-${randomHex(26)}`
+      // The rehearsal has to show the parts a real send would carry, or a
+      // dry run cannot tell you that the reply-to you typed arrived.
+      const replyTo = email.replyTo?.length ? ` reply-to ${email.replyTo.join(', ')}` : ''
+      const text = ` + ${email.text?.length ?? 0} chars text`
       log(
-        `[dry-run] would send "${email.subject}" from ${email.from} to ${email.to.join(', ')} (${email.html.length} chars html) -> ${messageId}`,
+        `[dry-run] would send "${email.subject}" from ${email.from} to ${email.to.join(', ')}${replyTo} (${email.html.length} chars html${text}) -> ${messageId}`,
       )
       return { messageId }
     },

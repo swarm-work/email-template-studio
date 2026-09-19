@@ -14,12 +14,34 @@ import type { TemplateRenderer } from '@/infrastructure/render/renderClient'
 
 export const DEFAULT_RENDER_DEBOUNCE_MS = 300
 
+/** The knobs both preview hooks take. Grouped so a call site names what it sets. */
+export interface RenderPreviewOptions {
+  /**
+   * false = this pipeline is not the one on screen (a visual template, say).
+   * The hook then holds no timer and reports `idle`, so the studio never pays
+   * for a render nobody asked for. Hooks cannot be called conditionally, which
+   * is why this is a flag rather than "do not call it".
+   */
+  readonly enabled?: boolean
+  readonly debounceMs?: number
+}
+
+/** The empty state: what a preview hook reports before anything has been rendered. */
+export const IDLE_PREVIEW_STATE = {
+  result: null,
+  html: null,
+  text: null,
+  renderedAt: null,
+} as const
+
 export interface RenderPreviewState {
   readonly status: RenderStatus
   /** Outcome of the most recent finished render for this template, success or failure. */
   readonly result: RenderResult | null
   /** HTML of the most recent SUCCESSFUL render, kept while newer renders fail. */
   readonly html: string | null
+  /** Plain-text part of that same successful render; null before the first one. */
+  readonly text: string | null
   readonly renderedAt: Date | null
   /** Forces a re-render even if nothing changed (used by the Refresh button). */
   readonly refresh: () => void
@@ -34,6 +56,8 @@ interface Completed {
 interface LastGood {
   readonly resetKey: string
   readonly html: string
+  /** Kept beside the HTML so the two parts on screen always come from one render. */
+  readonly text: string
   readonly renderedAt: Date
 }
 
@@ -44,7 +68,7 @@ export function useRenderPreview(
   source: string,
   /** `null` when the payload is invalid; rendering is then blocked. */
   props: PreviewPayload | null,
-  debounceMs: number = DEFAULT_RENDER_DEBOUNCE_MS,
+  { enabled = true, debounceMs = DEFAULT_RENDER_DEBOUNCE_MS }: RenderPreviewOptions = {},
 ): RenderPreviewState {
   const [completed, setCompleted] = useState<Completed | null>(null)
   const [lastGood, setLastGood] = useState<LastGood | null>(null)
@@ -53,7 +77,8 @@ export function useRenderPreview(
 
   const propsKey = useMemo(() => (props === null ? null : JSON.stringify(props)), [props])
   // Everything that should trigger a new render is folded into one key.
-  const requestKey = propsKey === null ? null : `${resetKey} ${refreshCount} ${propsKey} ${source}`
+  const requestKey =
+    !enabled || propsKey === null ? null : `${resetKey} ${refreshCount} ${propsKey} ${source}`
 
   useEffect(() => {
     latestRequest.current = requestKey
@@ -62,7 +87,9 @@ export function useRenderPreview(
       void renderer.render(source, props).then((result) => {
         if (latestRequest.current !== requestKey) return // superseded by a newer request
         setCompleted({ requestKey, resetKey, result })
-        if (result.ok) setLastGood({ resetKey, html: result.html, renderedAt: new Date() })
+        if (result.ok) {
+          setLastGood({ resetKey, html: result.html, text: result.text, renderedAt: new Date() })
+        }
       })
     }, debounceMs)
     return () => clearTimeout(timer)
@@ -73,6 +100,12 @@ export function useRenderPreview(
   const currentCompleted = completed && completed.resetKey === resetKey ? completed : null
   const currentGood = lastGood && lastGood.resetKey === resetKey ? lastGood : null
 
+  // A switched-off pipeline reports nothing at all, not a stale success: the
+  // studio picks one hook's state by template kind, and a leftover render from
+  // the other would reach the status bar and the diagnostics as if it were the
+  // one on screen.
+  if (!enabled) return { status: 'idle', ...IDLE_PREVIEW_STATE, refresh }
+
   let status: RenderStatus
   if (requestKey === null) status = 'blocked'
   else if (currentCompleted?.requestKey !== requestKey) status = 'rendering'
@@ -82,6 +115,7 @@ export function useRenderPreview(
     status,
     result: currentCompleted?.result ?? null,
     html: currentGood?.html ?? null,
+    text: currentGood?.text ?? null,
     renderedAt: currentGood?.renderedAt ?? null,
     refresh,
   }

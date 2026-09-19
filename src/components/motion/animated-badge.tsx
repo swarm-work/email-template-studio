@@ -1,24 +1,36 @@
-// Vendored from beUI (beui.dev/components/motion/animated-badge, MIT) via `npx shadcn add @beui/animated-badge`.
-// Local changes: status colours mapped to the studio's semantic tokens (see src/index.css)
-// instead of Tailwind palette colours, so badges match the rest of the interface.
-
+/**
+ * A small status badge whose icon and label roll in when the state changes.
+ *
+ * Presentation layer, no business rules. Originally vendored from beUI
+ * (beui.dev/components/motion/animated-badge, MIT) on `motion/react`; phase 6
+ * reimplemented the same component on CSS keyframes so that the `motion`
+ * dependency (~45 KB gzip) left the eagerly loaded main chunk (ADR-4,
+ * docs/TECH_DEBT.md #30). The exported API and the status vocabulary are
+ * unchanged, so every caller and test kept working.
+ *
+ * Motion mechanics: a state change gives the inner span a new React `key`, so
+ * React replaces the element and the browser runs the `badge-roll` animation on
+ * the new one (`src/index.css`). There is no exit animation — CSS cannot animate
+ * an element that is already gone — which is the one deliberate difference from
+ * the `motion` version. `prefers-reduced-motion` is honoured in the stylesheet,
+ * so no hook has to ask.
+ */
 import { AlertTriangle, Check, Circle, Info, LoaderCircle, X, type LucideIcon } from 'lucide-react'
-import { AnimatePresence, motion, useReducedMotion, type HTMLMotionProps, type Variants } from 'motion/react'
-import type { ReactNode } from 'react'
-import { EASE_OUT } from '@/lib/ease'
+import type { ComponentPropsWithoutRef, ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 
 export type AnimatedBadgeStatus = 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'loading'
 
 export type AnimatedBadgeSize = 'sm' | 'md'
 
-export interface AnimatedBadgeProps extends Omit<HTMLMotionProps<'span'>, 'children'> {
+export interface AnimatedBadgeProps extends Omit<ComponentPropsWithoutRef<'span'>, 'children'> {
   status?: AnimatedBadgeStatus
   size?: AnimatedBadgeSize
   children?: ReactNode
   icon?: ReactNode
   showIcon?: boolean
   pulse?: boolean
+  /** What counts as "a different message"; changing it replays the roll. */
   contentKey?: string | number
 }
 
@@ -50,58 +62,6 @@ const ICONS: Record<AnimatedBadgeStatus, LucideIcon> = {
   loading: LoaderCircle,
 }
 
-const ICON_ROLL_VARIANTS: Variants = {
-  initial: {
-    opacity: 0.72,
-    y: '80%',
-    scale: 0.92,
-    rotate: -8,
-    filter: 'blur(6px)',
-  },
-  animate: {
-    opacity: 1,
-    y: '0%',
-    scale: 1,
-    rotate: 0,
-    filter: 'blur(0px)',
-    transition: {
-      y: { type: 'spring', stiffness: 210, damping: 24, mass: 0.85 },
-      scale: { type: 'spring', stiffness: 250, damping: 24, mass: 0.75 },
-      rotate: { duration: 0.28, ease: EASE_OUT },
-      opacity: { duration: 0.28, ease: EASE_OUT },
-      filter: { duration: 0.42, ease: EASE_OUT },
-    },
-  },
-  exit: {
-    opacity: 0.5,
-    y: '-80%',
-    scale: 0.96,
-    rotate: 8,
-    filter: 'blur(6px)',
-    transition: { duration: 0.22, ease: EASE_OUT },
-  },
-}
-
-const TEXT_ROLL_VARIANTS: Variants = {
-  initial: { opacity: 0.76, y: '85%', filter: 'blur(6px)' },
-  animate: {
-    opacity: 1,
-    y: '0%',
-    filter: 'blur(0px)',
-    transition: {
-      y: { type: 'spring', stiffness: 210, damping: 24, mass: 0.85 },
-      opacity: { duration: 0.3, ease: EASE_OUT },
-      filter: { duration: 0.42, ease: EASE_OUT },
-    },
-  },
-  exit: {
-    opacity: 0.5,
-    y: '-85%',
-    filter: 'blur(6px)',
-    transition: { duration: 0.2, ease: EASE_OUT },
-  },
-}
-
 export function AnimatedBadge({
   status = 'neutral',
   size = 'md',
@@ -113,15 +73,12 @@ export function AnimatedBadge({
   className,
   ...rest
 }: AnimatedBadgeProps) {
-  const reduce = useReducedMotion()
   const Icon = ICONS[status]
   const resolvedContentKey =
     contentKey ?? (typeof children === 'string' || typeof children === 'number' ? children : status)
 
   return (
-    <motion.span
-      layout
-      transition={{ type: 'spring', stiffness: 420, damping: 30, mass: 0.7 }}
+    <span
       className={cn(
         'relative inline-flex shrink-0 items-center overflow-hidden rounded-md border font-medium whitespace-nowrap tabular-nums',
         'transition-colors duration-300',
@@ -131,59 +88,25 @@ export function AnimatedBadge({
       )}
       {...rest}
     >
-      {pulse && !reduce ? (
-        <motion.span
-          aria-hidden
-          className="absolute inset-0 rounded-full bg-current opacity-10"
-          animate={{ scale: [0.94, 1.08, 0.94], opacity: [0.08, 0.16, 0.08] }}
-          transition={{ duration: 1.6, repeat: Infinity, ease: 'easeInOut' }}
-        />
-      ) : null}
+      {pulse ? <span aria-hidden className="badge-pulse absolute inset-0 rounded-full bg-current" /> : null}
       {showIcon ? (
         <span className="relative z-10 inline-flex items-center justify-center overflow-hidden">
-          <AnimatePresence mode="popLayout" initial={false}>
-            <motion.span
-              key={status}
-              aria-hidden
-              data-badge-icon
-              variants={ICON_ROLL_VARIANTS}
-              initial={reduce ? false : 'initial'}
-              animate={reduce ? { opacity: 1 } : 'animate'}
-              exit={reduce ? undefined : 'exit'}
-              className="inline-flex will-change-transform"
-            >
-              {status === 'loading' && !reduce && !icon ? (
-                <motion.span
-                  animate={{ rotate: 360 }}
-                  transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
-                  className="inline-flex"
-                >
-                  <Icon className={ICON_CLASS[size]} />
-                </motion.span>
-              ) : (
-                (icon ?? <Icon className={ICON_CLASS[size]} />)
-              )}
-            </motion.span>
-          </AnimatePresence>
+          <span key={status} aria-hidden data-badge-icon className="badge-roll inline-flex">
+            {status === 'loading' && !icon ? (
+              <Icon className={cn(ICON_CLASS[size], 'animate-spin motion-reduce:animate-none')} />
+            ) : (
+              (icon ?? <Icon className={ICON_CLASS[size]} />)
+            )}
+          </span>
         </span>
       ) : null}
       {children != null ? (
         <span className="relative z-10 inline-flex overflow-hidden">
-          <AnimatePresence mode="popLayout" initial={false}>
-            <motion.span
-              key={resolvedContentKey}
-              data-badge-label
-              variants={TEXT_ROLL_VARIANTS}
-              initial={reduce ? false : 'initial'}
-              animate={reduce ? { opacity: 1 } : 'animate'}
-              exit={reduce ? undefined : 'exit'}
-              className="inline-block will-change-transform"
-            >
-              {children}
-            </motion.span>
-          </AnimatePresence>
+          <span key={resolvedContentKey} data-badge-label className="badge-roll inline-block">
+            {children}
+          </span>
         </span>
       ) : null}
-    </motion.span>
+    </span>
   )
 }

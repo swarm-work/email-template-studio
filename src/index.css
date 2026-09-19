@@ -6,6 +6,14 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Several of @react-email/editor's Inspector sections carry bare Tailwind
+ * utility classes in their own JSX (`flex flex-col gap-2` and friends). Tailwind
+ * only generates the utilities it can SEE, and it does not read node_modules by
+ * default, so without this line the inspector renders as a stack of unstyled
+ * rows. Scanning one package's dist is cheap; scanning all of node_modules is
+ * not, which is why the path is exact. */
+@source '../node_modules/@react-email/editor/dist';
+
 /*
  * Design tokens for Email Template Studio.
  *
@@ -144,6 +152,193 @@
   --info-muted: oklch(0.3 0.05 250);
 }
 
+/* ---------------------------------------------------------------------------
+ * The visual editor's token bridge.
+ *
+ * PLACEMENT IS LOAD-BEARING. Tailwind v4 puts its own rules into real cascade
+ * layers (`@layer theme/base/components/utilities`), and unlayered author CSS
+ * beats ANY layered declaration whatever its specificity. The editor package's
+ * `default.css` arrives unlayered from the lazy chunk, so these rules have to be
+ * unlayered too - at the top level of this file, never inside
+ * `@layer components` - or the package would win.
+ *
+ * `:root:root` is the same element twice: specificity (0,2,0), which beats the
+ * package's own `:root`, its `@media (prefers-color-scheme: dark)` block and its
+ * `.dark` block, in that order. That matters because the slash menu portals to
+ * <body>, outside anything we could scope to.
+ *
+ * All 17 variables are set, including the three the package references but
+ * never defines (`--re-bg-hover`, `--re-tooltip-bg`, `--re-tooltip-text`).
+ * ------------------------------------------------------------------------- */
+:root:root {
+  --re-bg: var(--card);
+  --re-text: var(--foreground);
+  --re-text-muted: var(--muted-foreground);
+  --re-border: var(--border);
+  --re-separator: var(--border);
+  --re-hover: color-mix(in oklch, var(--foreground) 5%, transparent);
+  --re-bg-hover: color-mix(in oklch, var(--foreground) 5%, transparent);
+  --re-active: color-mix(in oklch, var(--foreground) 9%, transparent);
+  --re-bg-active: color-mix(in oklch, var(--foreground) 9%, transparent);
+  --re-pressed: color-mix(in oklch, var(--foreground) 13%, transparent);
+  --re-danger: var(--danger);
+  --re-danger-hover: color-mix(in oklch, var(--danger) 12%, transparent);
+  --re-radius: var(--radius);
+  /* --radius-sm comes from `@theme inline`, which is layered, so it cannot be
+     read from here. The same arithmetic, written out. */
+  --re-radius-sm: calc(var(--radius) * 0.6);
+  --re-shadow: 0 4px 16px oklch(0 0 0 / 0.08);
+  --re-tooltip-bg: var(--popover);
+  --re-tooltip-text: var(--popover-foreground);
+}
+
+/* Every other variable above re-resolves for free in dark mode, because they
+   all point at app tokens that change with `.dark`. A shadow does not. */
+:root.dark {
+  --re-shadow: 0 4px 16px oklch(0 0 0 / 0.4);
+}
+
+/* The one near-black instrument in the studio: the selection toolbar, which
+   floats over the white email and has to read as chrome, not as content. */
+[data-re-bubble-menu] {
+  --re-bg: var(--primary);
+  --re-text: var(--primary-foreground);
+  --re-text-muted: color-mix(in oklch, var(--primary-foreground) 70%, transparent);
+  --re-border: transparent;
+  --re-separator: oklch(1 0 0 / 0.18);
+  --re-hover: oklch(1 0 0 / 0.12);
+  --re-active: oklch(1 0 0 / 0.2);
+  --re-pressed: oklch(1 0 0 / 0.2);
+}
+
+/* ---------------------------------------------------------------------------
+ * The email sheet.
+ *
+ * An email is light. It is light in Gmail's dark mode too, and it is certainly
+ * light on the recipient's screen. So the sheet opts out of the app's theme
+ * entirely rather than inheriting it: `color-scheme: light` fixes form controls
+ * and scrollbars inside it, and the `--re-*` values are pinned to light so the
+ * editor's own chrome inside the sheet does not go dark around white paper.
+ * ------------------------------------------------------------------------- */
+.studio-sheet {
+  color-scheme: light;
+  --re-bg: #fff;
+  --re-text: oklch(0.2 0.012 265);
+  --re-text-muted: oklch(0.5 0.012 265);
+  --re-border: oklch(0.9 0.004 95);
+  --re-separator: oklch(0.9 0.004 95);
+  --re-hover: rgb(0 0 0 / 0.04);
+  --re-bg-hover: rgb(0 0 0 / 0.04);
+  --re-active: rgb(0 0 0 / 0.06);
+  --re-bg-active: rgb(0 0 0 / 0.06);
+  --re-pressed: rgb(0 0 0 / 0.06);
+}
+
+.studio-sheet .tiptap {
+  /* The app turns on two Geist stylistic sets; an email cannot rely on them, so
+     what is typed here is drawn with the same shapes it will be sent with. */
+  font-feature-settings: normal;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+/* The canvas shows its selection and its bubble menu; a focus ring around the
+   whole sheet on top of that is noise. Everything else in the studio keeps its
+   ring (see the `outline-ring/50` base rule). */
+.studio-sheet .tiptap:focus-visible {
+  outline: none;
+}
+
+.studio-sheet .tiptap img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* ---------------------------------------------------------------------------
+ * Merge-field chips.
+ *
+ * Top level, unlayered, for the same reason as everything above: these rules
+ * have to beat the editor package's own stylesheet, which arrives unlayered
+ * from the lazy chunk. The chip is the only place in the email where the
+ * studio deliberately draws something the RECIPIENT will never see - by the
+ * time it is sent, `{{firstName}}` has become a name (ADR-26).
+ * ------------------------------------------------------------------------- */
+.studio-sheet [data-merge-field] {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: oklch(0.94 0.004 95);
+  color: oklch(0.32 0.012 265);
+  border-radius: calc(var(--radius) * 0.6);
+  padding: 0.05em 0.3em;
+  /* A field is one thing: it never wraps in the middle and the caret steps
+     over it rather than into it. */
+  white-space: nowrap;
+  -webkit-user-select: all;
+  user-select: all;
+}
+
+/* The canvas shows a selected chip the way it shows any selected node. */
+.studio-sheet [data-merge-field].ProseMirror-selectednode {
+  outline: 2px solid color-mix(in oklch, var(--ring) 70%, transparent);
+  outline-offset: 1px;
+}
+
+/* ---------------------------------------------------------------------------
+ * The inspector rail, restyled to the studio's own controls.
+ *
+ * Every selector here is an attribute the package actually renders; they were
+ * enumerated by mounting the real Inspector under jsdom (docs/DESIGN.md,
+ * "Editor hooks inventory"). The package's sections are kept and restyled, never
+ * forked (ADR-18).
+ * ------------------------------------------------------------------------- */
+.studio-inspector {
+  font-size: 12px;
+}
+
+/* Section titles read like the studio's other metadata labels. */
+.studio-inspector [data-re-inspector-section-toggle] {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.studio-inspector [data-re-inspector-section] {
+  gap: 0.5rem;
+  padding: 0.75rem 0;
+}
+
+/* The three control shells the sections use: one height, one surface. */
+.studio-inspector [data-re-inspector-number],
+.studio-inspector [data-re-inspector-select],
+.studio-inspector [data-re-inspector-color-control] {
+  height: 2rem;
+  border-color: transparent;
+  border-radius: var(--radius-sm, calc(var(--radius) * 0.6));
+  background: var(--muted);
+}
+
+.studio-inspector [data-re-inspector-input],
+.studio-inspector [data-re-inspector-color-hex] {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.studio-inspector [data-re-inspector-label] {
+  color: var(--muted-foreground);
+}
+
+/* The breadcrumb is the rail's "you are here"; the last crumb is the subject. */
+.studio-inspector [data-re-inspector-breadcrumb-button] {
+  color: var(--muted-foreground);
+}
+
+.studio-inspector [data-re-inspector-breadcrumb-item]:last-child [data-re-inspector-breadcrumb-button] {
+  color: var(--foreground);
+  font-weight: 500;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -201,5 +396,63 @@
   .studio-editor .cm-editor.cm-focused {
     outline: 2px solid color-mix(in oklch, var(--ring) 60%, transparent);
     outline-offset: -2px;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * The status badge's motion (src/components/motion/animated-badge.tsx).
+ *
+ * These two animations replaced the `motion` library in phase 6: the same
+ * gesture in about 30 lines of CSS, and 45 KB gzip off the main chunk
+ * (docs/TECH_DEBT.md #30). The easing is the `EASE_OUT` curve the vendored beUI
+ * component used.
+ *
+ * Unlayered, next to the other rules that have to win over the editor package's
+ * own stylesheet, and because a `@layer` would put them behind Tailwind's
+ * `animate-none` utility under `motion-reduce:`.
+ * ------------------------------------------------------------------------- */
+@keyframes badge-roll-in {
+  from {
+    opacity: 0.72;
+    transform: translateY(80%) scale(0.93);
+    filter: blur(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+@keyframes badge-pulse {
+  0%,
+  100% {
+    opacity: 0.08;
+    transform: scale(0.94);
+  }
+  50% {
+    opacity: 0.16;
+    transform: scale(1.08);
+  }
+}
+
+.badge-roll {
+  animation: badge-roll-in 320ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  will-change: transform;
+}
+
+.badge-pulse {
+  opacity: 0.1;
+  animation: badge-pulse 1.6s ease-in-out infinite;
+}
+
+/* Reduced motion keeps the badge and drops the movement: the label simply
+   appears, and the pulse is removed rather than frozen mid-throb. */
+@media (prefers-reduced-motion: reduce) {
+  .badge-roll {
+    animation: none;
+  }
+  .badge-pulse {
+    display: none;
   }
 }

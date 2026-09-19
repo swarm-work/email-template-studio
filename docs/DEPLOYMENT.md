@@ -4,29 +4,29 @@ How the studio is deployed to Cloudflare, where it runs today, and what has to h
 
 ## Where it runs today
 
-| Item               | Value                                                                                                                                                         |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| URL                | https://email-template-studio.jerichodelrosario35.workers.dev                                                                                                 |
-| Cloudflare account | **The developer's personal account** (Jericho del Rosario, Gmail login), account id `0f95923f7c5505d2e3261d3a788d68e0`, Workers Free plan                     |
-| Worker name        | `email-template-studio`                                                                                                                                       |
-| First deployed     | 2026-09-09, by hand from a laptop with `npm run deploy`, version `d131ab86`                                                                                   |
-| Authentication     | **None.** Anyone with the URL can open the editor. There is nothing to protect yet: no stored data, no secrets, and sending is disabled                       |
-| Sending            | Disabled (`STUDIO_SEND_ENABLED=false`). The Worker **can** send now (ADR-16), but this account must never hold AWS credentials. See "Turning live sending on" |
-| Data               | None. Templates ship in the bundle; drafts live in the visitor's browser session                                                                              |
+| Item               | Value                                                                                                                                                                                                                                                                            |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| URL                | https://email-template-studio.jerichodelrosario35.workers.dev                                                                                                                                                                                                                    |
+| Cloudflare account | **The developer's personal account** (Jericho del Rosario, Gmail login), account id `d0fa6b3d72170539438800a907ec5323` (the one `wrangler.jsonc` pins), Workers Free plan                                                                                                        |
+| Worker name        | `email-template-studio`                                                                                                                                                                                                                                                          |
+| First deployed     | 2026-09-09, by hand from a laptop with `npm run deploy`, version `d131ab86`                                                                                                                                                                                                      |
+| Authentication     | **The pages are open, the API is closed.** Anyone with the URL can open the editor; every `/api/*` route goes through `server/auth.ts`, and with no `ACCESS_*` and no `STUDIO_PASSWORD` set the mode is `none`, so the API answers 401. See "Putting Cloudflare Access in front" |
+| Sending            | Disabled (`STUDIO_SEND_ENABLED=false`). The Worker **can** send now (ADR-16), but this account must never hold AWS credentials. See "Turning live sending on"                                                                                                                    |
+| Data               | Cloudflare D1 (`STUDIO_DB`) holds templates and their versions; R2 (`STUDIO_ASSETS`) holds uploaded images. Both on the account above. See "Persistence (D1) and assets (R2)"                                                                                                    |
 
-> **This is a temporary home.** The personal account was used so that the deployment pipeline could be built and verified without waiting for a company account. It must not receive AWS credentials, customer data or a custom domain. See "Moving to the production account" below; do it **before** phase 2 of `docs/PLAN.md` (D1 persistence), while there is still nothing to migrate.
+> **This is a temporary home.** The personal account was used so that the deployment pipeline could be built and verified without waiting for a company account. It must not receive AWS credentials, customer data or a custom domain. **There is data now**: D1 and R2 hold real rows and files, so moving is no longer a free action — follow the export/import path in "Moving to the production account" below, and move sooner rather than later.
 
 ## What gets deployed
 
 One Cloudflare Worker with two parts (ADR-15 in `docs/DECISIONS.md`):
 
 - **Static assets**: the Vite build of the studio (`dist/client`). Served by Cloudflare's asset layer, not billed as Worker requests. Unknown paths return `index.html` (single-page-app fallback).
-- **The API**: `worker/index.ts` wraps the same Hono app the local Node send server uses (`server/app.ts`). Only `/api/*` reaches it (`run_worker_first` in `wrangler.jsonc`).
+- **The API**: `worker/index.ts` wraps the same Hono app the local Node send server uses (`server/app.ts`). Only `/api/*` and `/media/*` reach it (`run_worker_first` in `wrangler.jsonc`).
 
 ```mermaid
 flowchart LR
   B[Browser] -->|"GET /, /assets/*"| A[Static assets<br/>dist/client]
-  B -->|"/api/*"| W["Worker<br/>worker/index.ts → server/app.ts"]
+  B -->|"/api/*, /media/*"| W["Worker<br/>worker/index.ts → server/app.ts"]
   W -->|"aws4fetch, SigV4"| SES[Amazon SES v2]
 ```
 
@@ -45,15 +45,18 @@ flowchart LR
 | Run locally in the Cloudflare runtime | `npm run dev`                                | workerd next to Vite; variables from `.dev.vars` (see `.dev.vars.example`)           |
 | Run locally with real SES sending     | `npm run dev` with keys in `.dev.vars`       | Same code path as production. `npm run dev:node` + `npm run server` is the Node path |
 | Regenerate binding types              | `npm run cf:types`                           | After every change to `wrangler.jsonc`; `build` and `typecheck` do it anyway         |
+| Apply migrations locally              | `npm run db:migrate`                         | Do this once before the first `npm run dev`; see "Persistence (D1) and assets (R2)"  |
+| Apply migrations to the real database | `npm run db:migrate:prod`                    | Always before `npm run deploy`, never after                                          |
+| Query the local database              | `npm run db:console -- "SELECT 1"`           | Local SQLite under `.wrangler/state/v3`                                              |
 
 ## Environments
 
-| Name                    | Where it is defined             | Purpose                                                                                   |
-| ----------------------- | ------------------------------- | ----------------------------------------------------------------------------------------- |
-| local                   | `.dev.vars` (git-ignored)       | `npm run dev` and `npm run preview`; sending disabled or dry-run                          |
-| `e2e`                   | `wrangler.jsonc` → `env.e2e`    | Playwright only: dry-run sending with fake addresses; never deployed                      |
-| top level               | `wrangler.jsonc` top-level keys | What `npm run deploy` deploys today (personal account)                                    |
-| `staging`, `production` | to be added                     | Wrangler environments with their own D1, secrets and Access policy (PLAN.md phase 1 to 3) |
+| Name                    | Where it is defined             | Purpose                                                                                                                                                                                                                                                   |
+| ----------------------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| local                   | `.dev.vars` (git-ignored)       | `npm run dev` and `npm run preview`; sending disabled or dry-run                                                                                                                                                                                          |
+| `e2e`                   | `wrangler.jsonc` → `env.e2e`    | Playwright only: dry-run sending with fake addresses, plus its own local D1 and R2; never deployed. Its `webServer` deletes every template and replays `0002` **and** `0003` before each run, so a run always starts from exactly the four starters at v1 |
+| top level               | `wrangler.jsonc` top-level keys | What `npm run deploy` deploys today (personal account)                                                                                                                                                                                                    |
+| `staging`, `production` | to be added                     | Wrangler environments with their own D1, secrets and Access policy (PLAN.md phase 1 to 3). Bindings are **not** inherited by a named environment: repeat `d1_databases` and `r2_buckets` in each                                                          |
 
 Rule: `vars` in `wrangler.jsonc` are for non-secret settings and are committed. Secrets go through `wrangler secret put` (or `.dev.vars` locally) and never into the file.
 
@@ -232,17 +235,135 @@ Opening sending up is one variable, and so is closing it again. In increasing se
 
 **Rotation.** Long-lived IAM keys should be rotated on a schedule. `wrangler secret put` with the same name overwrites in place, and the next request picks it up. There is no downtime and no code change.
 
+## Persistence (D1) and assets (R2)
+
+Templates live in a Cloudflare D1 database (`STUDIO_DB`); images uploaded into a visual template live in an R2 bucket (`STUDIO_ASSETS`). Both are bound in `wrangler.jsonc`, and **both live on the account `wrangler.jsonc` pins** — the same account the Worker deploys to (ADR-21). Without a binding the Worker still boots: the template routes answer `503 storage-unavailable` and sending keeps working. The reverse holds too — a broken send configuration only disables `/api/send-test`; templates, uploads and `GET /media/:key` keep working.
+
+**Where an uploaded image is served from.** `POST /api/uploads` stores the file in R2 under `img_<uuid>.<ext>` and answers with the absolute URL `https://<host>/media/img_<uuid>.<ext>` — absolute because the `<img src>` ends up in someone's inbox, where there is no page for a relative path to be resolved against. The bytes behind a key never change, so `GET /media/:key` sends `cache-control: public, max-age=31536000, immutable`; a new image gets a new key. The prefix is `/media/` and **not** `/assets/` on purpose: Vite builds the studio's own JS, CSS and fonts into `/assets/`, and `run_worker_first` only lists `/api/*` and `/media/*`, so every static build asset is answered by the asset layer without ever costing a Worker invocation.
+
+**The database is bound, but the API in front of it is closed.** Deploy, `curl https://…/api/templates` and you get `401`, because no `ACCESS_*` and no `STUDIO_PASSWORD` are set (see "Putting Cloudflare Access in front"). That is the right default; it is also the first thing to trip over after following the setup below to the letter.
+
+### One-time setup
+
+```bash
+npx wrangler whoami                                            # confirm the account FIRST
+npx wrangler d1 create email-template-studio                   # prints database_id
+npx wrangler r2 bucket create email-template-studio-assets
+npx wrangler r2 bucket create email-template-studio-assets-e2e # Playwright's bucket
+```
+
+Paste the printed `database_id` over the placeholder `00000000-0000-4000-8000-0000000000d1` in `wrangler.jsonc`, then `npm run cf:types`. The `env.e2e` database id (`…0000000000e2`) is a local-only fixture and stays as it is — the e2e database is never created remotely.
+
+`preview_database_id` is deliberately **never** set. Local dev, `npm run preview`, `vite preview` and `wrangler d1 … --local` then all share one SQLite file under `.wrangler/state/v3`, keyed by `database_id`, so what you migrate on the command line is what the Worker sees. `.wrangler/` is git-ignored.
+
+### Migrations
+
+| Task                       | Command                                           | Notes                                                       |
+| -------------------------- | ------------------------------------------------- | ----------------------------------------------------------- |
+| Apply locally              | `npm run db:migrate`                              | `.wrangler/state/v3`; run this before `npm run dev`         |
+| Apply to the e2e database  | `npm run db:migrate:e2e`                          | Playwright's `webServer` does it for you                    |
+| Apply to the real database | `npm run db:migrate:prod`                         | `--remote`. Needs D1 Edit on the token                      |
+| Ad-hoc query (local)       | `npm run db:console -- "SELECT * FROM templates"` | Read-only by convention, not by enforcement                 |
+| Regenerate the seed        | `npm run seed:generate`                           | After editing a starter; the drift test fails if you forget |
+
+Migration files are numbered and applied in order; wrangler records which have run. **Migrations are never rolled back** (ADR-21): to undo something, write the next migration.
+
+**`npm run db:migrate` is now a prerequisite for `npm run dev`.** Since phase 7b the browser reads and writes templates through the API (`VITE_DATA_MODE` defaults to `http`, ADR-27), so a studio started against an unmigrated database shows "Templates could not be loaded" instead of a library — the first query hits tables that are not there, which the API answers as a 500. ("Template storage is unavailable" is the other failure: a server with no D1 binding at all, which answers 503.) The escape hatch is `VITE_DATA_MODE=memory npm run dev`: the studio then runs entirely in the browser with the starters loaded from `registry.ts`, saves nothing, and needs no database at all. It is meant for a quick look at the UI, not for work you want to keep.
+
+**Migrate before you deploy.** CI does this — the `Apply D1 migrations` step runs before `Deploy to Cloudflare`, gated on the same `CLOUDFLARE_API_TOKEN`. By hand the release is `npm run db:migrate:prod && npm run deploy`.
+
+**Migrations must stay backward compatible with the deployed Worker**, because for the seconds between the two steps the old Worker is talking to the new schema. Adding a table, an index or a nullable column is safe. Renaming or dropping a column is a two-release change: add the new one and write to both, deploy, backfill, then drop the old one in a later release.
+
+### Verified on local D1 (2026-09-18)
+
+The plan listed two D1 behaviours as unproven. Both were checked against the **local** workerd SQLite (`.wrangler/state/v3`), through a throwaway Worker with the real binding; **re-run them against `--remote` once the database exists**:
+
+| Question                                                          | Result                                                                                                                                                                                                                                  |
+| ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Does `UPDATE … RETURNING` work?                                   | **Yes** — `UPDATE templates SET revision = revision + 1 … RETURNING revision` returned `[{ revision: 2 }]`. Verified locally; re-run against `--remote` once the database exists                                                        |
+| Does a 500 KB **bound parameter** hit the 100 KB statement limit? | **No** — a 500 KB string bound with `.bind(...)` inserted and read back at exactly 500,000 characters. The 100 KB limit is on statement text, not on bound values. Verified locally; re-run against `--remote` once the database exists |
+
+Two further facts were confirmed the same way, and again through the production build (`vite preview` + curl): a guarded `UPDATE` that matches nothing reports `meta.changes === 0`, and `ON DELETE CASCADE` removes a template's versions with it.
+
+The store does **not** rely on `RETURNING`: every write is a `db.batch(...)` whose conflict detection uses `meta.changes`, followed by a re-read. If `RETURNING` behaves differently on remote D1, nothing breaks.
+
+### Backups and restore
+
+```bash
+npx wrangler d1 export STUDIO_DB --remote --output backup-$(date +%F).sql   # before every migration
+npx wrangler d1 execute STUDIO_DB --remote --file backup-2026-09-18.sql     # import into a fresh database
+```
+
+For "it was fine ten minutes ago", D1 **Time Travel** restores to a point in the last 30 days without a backup file:
+
+```bash
+npx wrangler d1 time-travel info STUDIO_DB                                  # current bookmark
+npx wrangler d1 time-travel restore STUDIO_DB --timestamp 2026-09-18T09:00:00Z
+```
+
+Time Travel is a restore of the whole database, not of one row. Take an export first if the current state might still be wanted.
+
+R2 has no Time Travel. The bucket holds only uploaded images, which are content-addressed by an immutable key, so the recovery story is "re-upload"; copy a bucket with `npx wrangler r2 object get/put` or `rclone` if it ever has to move.
+
+### Token permissions
+
+The `CLOUDFLARE_API_TOKEN` used by CI (and by anyone deploying by hand) needs, on the one account:
+
+- **Workers Scripts: Edit** — deploy
+- **D1: Edit** — `migrations apply --remote`
+- **Workers R2 Storage: Edit** — uploads
+
+The "Edit Cloudflare Workers" template does not include D1 or R2; add both to the token, or the migrate step fails with a permission error while the deploy succeeds.
+
+### Rollback
+
+| What went wrong                          | What to do                                                                                                                                                                 |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Bad Worker version                       | `npx wrangler rollback`, or redeploy the previous commit. The schema is left alone — migrations are additive, so the older Worker still reads it                           |
+| Bad data (a wrong bulk edit, a deletion) | D1 Time Travel to just before it, or import the last export. Template history is append-only, so a bad **save** is recoverable by reading the previous version             |
+| Bad migration                            | Never "roll back" a migration. Write the next one that undoes it, test it locally with `npm run db:migrate`, then apply it                                                 |
+| Visual editor misbehaving                | Set `STUDIO_VISUAL_EDITOR` to `"false"` in `wrangler.jsonc` and `npx wrangler deploy`. See below — it is a variable change, not a rebuild, and it keeps templates readable |
+
+#### Switching the visual editor off
+
+`STUDIO_VISUAL_EDITOR` is a Worker `var`, read by `server/config.ts` and reported to the browser in
+`GET /api/send-test/status` as `features.visualEditor`. Only the literal string `"false"` switches it
+off; anything else, including an absent variable, leaves it on, so a typo can never take the editor
+away by accident.
+
+With it off:
+
+- the **Visual** button in the mode toggle is disabled and says why (it stays on screen and stays
+  focusable, so a keyboard reader can reach the explanation);
+- a visual template opens in **Preview** with the banner _"The visual editor is switched off. This
+  template is read-only until it is switched back on."_;
+- the 2.5 MB editor chunk is **never requested** — the studio waits for the status response before it
+  mounts the canvas, so a broken editor build cannot even be downloaded;
+- the preview shows the HTML and plain text saved with the current version; a template that has
+  never been saved — including the seeded starter, which ships with an empty export because the
+  studio composes it on open — has nothing to show, so the banner is the only thing on screen;
+- code templates are completely unaffected.
+
+Nothing is written while it is off, so switching it back on (`"true"`, or delete the variable) and
+redeploying restores the canvas exactly as it was. A rollback of the whole Worker
+(`npx wrangler rollback`) does the same thing more bluntly; prefer the flag when only the editor is
+the problem.
+
+Pre-deploy checklist: `npm run check` green → `npm run build` green (the Worker-bundle guard runs here) → `npx wrangler whoami` shows the right account → `wrangler d1 export --remote` taken → `npm run db:migrate:prod` → `npm run deploy` → the post-deploy checks below.
+
 ## Continuous integration
 
 `.github/workflows/ci.yml` runs on every push and pull request: typecheck, lint, unit tests, formatting, production build and the Playwright suite against the Cloudflare runtime.
 
 The `deploy` job runs on pushes to `main` only when the `CLOUDFLARE_API_TOKEN` repository secret exists; otherwise it prints a notice and is skipped. To enable it:
 
-1. In the Cloudflare dashboard, create an API token from the "Edit Cloudflare Workers" template, scoped to the one account.
+1. In the Cloudflare dashboard, create an API token from the "Edit Cloudflare Workers" template, scoped to the one account, and **add D1: Edit and Workers R2 Storage: Edit** (the template has neither).
 2. `gh secret set CLOUDFLARE_API_TOKEN --repo Jericho0912/email-template-studio` (paste the token when prompted).
 3. The `CLOUDFLARE_ACCOUNT_ID` repository variable is already set to the personal account; change it when the account changes.
 
-Until then, deploys are manual with `npm run deploy`.
+The deploy job applies D1 migrations (`d1 migrations apply STUDIO_DB --remote`) before deploying, gated on the same secret.
+
+Until the secret exists, releases are manual: `npm run db:migrate:prod && npm run deploy`.
 
 ## Moving to the production account
 
@@ -250,7 +371,18 @@ Until then, deploys are manual with `npm run deploy`.
 
 The short version, in order: transfer the GitHub repository, point wrangler at the company Cloudflare account and pin `account_id`, add `staging` and `production` environments with custom-domain routes, deploy staging in dry run, put Cloudflare Access in front, only then add the SES key and switch production to live, and finally delete the personal Worker.
 
-Do it before D1 lands (PLAN.md phase 2), while there is nothing to migrate. If the move happens after: export with `npx wrangler d1 export <db> --output backup.sql` on the old account, create the database on the new one, apply migrations, and import the backup. Plan for a short freeze of edits during the switch.
+D1 and R2 now exist on the pinned account (ADR-21), so the move has data in it. The path:
+
+```bash
+npx wrangler d1 export STUDIO_DB --remote --output move.sql     # old account
+npx wrangler login                                              # new account
+npx wrangler d1 create email-template-studio                    # paste the new id into wrangler.jsonc
+npx wrangler r2 bucket create email-template-studio-assets
+npm run db:migrate:prod                                         # schema first
+npx wrangler d1 execute STUDIO_DB --remote --file move.sql      # then the data
+```
+
+Copy the R2 objects across with `npx wrangler r2 object get/put` or `rclone` (the keys are immutable, so the URLs already in saved templates keep working once the bucket is populated). Plan for a short freeze of edits during the switch.
 
 ## Post-deploy checks
 

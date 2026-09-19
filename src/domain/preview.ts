@@ -3,8 +3,9 @@
  *
  * Everything here is a plain data type. Union types with a discriminant
  * (`ok`, `kind`, `status`) are used so that TypeScript forces callers to
- * handle every case.
+ * handle every case. No React, Zod or browser APIs.
  */
+import type { EmailAddress } from './template'
 
 /** Template props supplied by the JSON payload editor. */
 export type PreviewPayload = Readonly<Record<string, unknown>>
@@ -50,8 +51,11 @@ export type RenderStatus = 'idle' | 'blocked' | 'rendering' | 'success' | 'error
  * - render: the component threw while rendering to HTML
  * - timeout: the render worker was stopped because it took too long
  * - worker: the worker crashed or was restarted
+ * - compose: the visual editor could not compose its document into an email
+ * - editor-load: the lazily loaded visual editor chunk never arrived
  */
-export type RenderErrorKind = 'forbidden-import' | 'compile' | 'evaluate' | 'render' | 'timeout' | 'worker'
+export type RenderErrorKind =
+  'forbidden-import' | 'compile' | 'evaluate' | 'render' | 'timeout' | 'worker' | 'compose' | 'editor-load'
 
 export interface RenderError {
   readonly kind: RenderErrorKind
@@ -64,9 +68,26 @@ export interface RenderError {
   readonly detail?: string
 }
 
+/**
+ * One currency for both pipelines (code templates through the render worker,
+ * visual templates through the editor): the same result shape, so the preview,
+ * the diagnostics and the send dialog never care which kind they are showing.
+ */
 export type RenderResult =
-  | { readonly ok: true; readonly html: string; readonly durationMs: number }
+  | {
+      readonly ok: true
+      readonly html: string
+      /** Plain-text alternative part, rendered beside the HTML by the same pipeline. */
+      readonly text: string
+      readonly durationMs: number
+    }
   | { readonly ok: false; readonly error: RenderError }
+
+/**
+ * Which workspace the studio is showing. Which of these a template can reach
+ * depends on its kind; see application/studioModes.ts.
+ */
+export type StudioMode = 'visual' | 'code' | 'preview'
 
 export type PreviewDevice = 'desktop' | 'mobile'
 
@@ -75,3 +96,9 @@ export const PREVIEW_DEVICE_WIDTHS: Readonly<Record<PreviewDevice, number>> = {
   desktop: 680,
   mobile: 375,
 }
+
+/**
+ * The recipient shown in the preview's mail frame. It is a fixed sample, not
+ * template data, and is never used for sending.
+ */
+export const PREVIEW_SAMPLE_RECIPIENT: EmailAddress = { name: 'Ada Lovelace', address: 'ada@example.com' }

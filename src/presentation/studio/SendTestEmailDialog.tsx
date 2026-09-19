@@ -13,7 +13,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import type { EmailTemplate } from '@/domain'
+import { Input } from '@/components/ui/input'
+import { PREVIEW_SAMPLE_RECIPIENT, type EmailTemplate } from '@/domain'
 import type { EmailProvider, ProviderStatus, SendOutcome } from '@/infrastructure/providers/emailProvider'
 import { StatusBadge } from '@/presentation/shared/StatusBadge'
 
@@ -22,14 +23,24 @@ export interface SendTestEmailDialogProps {
   onOpenChange: (open: boolean) => void
   template: EmailTemplate
   provider: EmailProvider
-  /** HTML of the last successful render; null means nothing can be sent yet. */
+  /**
+   * Subject with its merge fields already filled in (ADR-26). The dialog shows
+   * it so the person sees what will land in the inbox, and it stays editable.
+   */
+  subject: string
+  /** The envelope's reply-to address; seeds the field, and may be cleared. */
+  replyTo: string
+  /** HTML of the last successful render, RESOLVED; null means nothing to send. */
   html: string | null
+  /** Its plain-text alternative part, also resolved; null before the first render. */
+  text: string | null
 }
 
 /**
- * Plain field styling, copied from PasswordGate rather than added as a new
- * shadcn component: the send canvas redesign will bring its own inputs, and
- * two small fields do not justify a dependency in the meantime.
+ * Styling for the one field that is still hand-rolled: the recipients box is a
+ * `<textarea>` (several addresses, several lines), and shadcn's `textarea`
+ * component arrives with the envelope panel in the next phase. The subject is
+ * an `<Input>`. These classes match what `<Input>` renders, deliberately.
  */
 const FIELD_CLASS =
   'border-input focus-visible:ring-ring/50 w-full rounded-md border bg-transparent px-2 py-1 text-xs shadow-xs outline-none focus-visible:ring-[3px]'
@@ -42,6 +53,12 @@ const recipientHint = (max: number) =>
   `Separate multiple addresses with commas or line breaks. Up to ${max} per send; everyone listed can see the other addresses.`
 
 const NO_SUBJECT_REASON = 'Add a subject line to send a test.'
+
+/** The server's cap. Reply-to is not allow-listed, but it is still bounded. */
+const MAX_REPLY_TO = 5
+
+/** Helper line under the Reply-to field. */
+const REPLY_TO_HINT = 'Where replies go. Leave empty to reply to the From address.'
 
 /**
  * Sends one test email through the provider. The action is only enabled when
@@ -57,7 +74,10 @@ export function SendTestEmailDialog({
   onOpenChange,
   template,
   provider,
+  subject,
+  replyTo,
   html,
+  text,
 }: SendTestEmailDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -69,7 +89,14 @@ export function SendTestEmailDialog({
             holds credentials.
           </DialogDescription>
         </DialogHeader>
-        <SendTestEmailForm template={template} provider={provider} html={html} />
+        <SendTestEmailForm
+          template={template}
+          provider={provider}
+          subject={subject}
+          replyTo={replyTo}
+          html={html}
+          text={text}
+        />
       </DialogContent>
     </Dialog>
   )
@@ -83,11 +110,15 @@ type Phase =
 function SendTestEmailForm({
   template,
   provider,
+  subject,
+  replyTo,
   html,
-}: Pick<SendTestEmailDialogProps, 'template' | 'provider' | 'html'>) {
+  text,
+}: Pick<SendTestEmailDialogProps, 'template' | 'provider' | 'subject' | 'replyTo' | 'html' | 'text'>) {
   const [phase, setPhase] = useState<Phase>({ kind: 'loading' })
   const [recipientsText, setRecipientsText] = useState('')
-  const [subjectText, setSubjectText] = useState(template.metadata.subject)
+  const [subjectText, setSubjectText] = useState(subject)
+  const [replyToText, setReplyToText] = useState(replyTo)
   /** Which template the subject above was seeded from, so a switch can re-seed it. */
   const [seededFrom, setSeededFrom] = useState(template.metadata.id)
   /** True once a live send has been asked for and is waiting for a second click. */
@@ -99,7 +130,8 @@ function SendTestEmailForm({
   // recommendation for "a prop changed, reset some state".
   if (seededFrom !== template.metadata.id) {
     setSeededFrom(template.metadata.id)
-    setSubjectText(template.metadata.subject)
+    setSubjectText(subject)
+    setReplyToText(replyTo)
     setConfirming(false)
   }
 
@@ -129,11 +161,16 @@ function SendTestEmailForm({
   const maxRecipients = status?.connected === true ? status.maxRecipientsPerSend : 10
   const recipientReason = recipientProblem(list, maxRecipients)
   const subjectReason = subjectText.trim() === '' ? NO_SUBJECT_REASON : null
-  const problem = recipientReason ?? subjectReason
+  // Reply-to is optional, and it is NOT checked against SES_ALLOWED_RECIPIENTS:
+  // nothing is delivered to it, so the allow-list has no business here. An
+  // empty field is simply no reply-to at all.
+  const replyToList = parseRecipientList(replyToText)
+  const replyToReason = replyToText.trim() === '' ? null : recipientProblem(replyToList, MAX_REPLY_TO)
+  const problem = recipientReason ?? subjectReason ?? replyToReason
 
   const canSend =
     connected && !senderKnownUnverified && html !== null && problem === null && phase.kind === 'ready'
-  const htmlKilobytes = html === null ? null : (new TextEncoder().encode(html).length / 1024).toFixed(1)
+  const kilobytes = (value: string) => (new TextEncoder().encode(value).length / 1024).toFixed(1)
   // A live send costs real deliverability, so it takes a second, explicit click.
   const needsConfirmation = status?.connected === true && status.mode === 'live'
 
@@ -145,6 +182,10 @@ function SendTestEmailForm({
       to: [...list.addresses],
       subject: subjectText.trim(),
       html,
+      // Both parts of one email: a client that shows plain text gets the same
+      // message, and a message with a text part reads as less like spam.
+      text: text ?? '',
+      replyTo: replyToList.addresses.length > 0 ? [...replyToList.addresses] : undefined,
       templateId: template.metadata.id,
     })
     setOutcome(result)
@@ -210,12 +251,18 @@ function SendTestEmailForm({
               </p>
             </>
           ) : (
-            <span className="text-muted-foreground font-mono break-all">{template.metadata.to.address}</span>
+            <span className="text-muted-foreground font-mono break-all">
+              {PREVIEW_SAMPLE_RECIPIENT.address}
+            </span>
           )}
         </dd>
         <dt className="meta-label">From</dt>
         <dd className="font-mono break-all">
-          {status?.connected ? status.from : template.metadata.from.address}
+          {status?.connected ? (
+            status.from
+          ) : (
+            <span className="text-muted-foreground font-sans">Set by the send server.</span>
+          )}
         </dd>
         <dt className="meta-label self-start pt-1.5">
           <label htmlFor="send-test-subject">Subject</label>
@@ -224,13 +271,13 @@ function SendTestEmailForm({
           <div className="flex items-center gap-2">
             {/* The server adds this prefix whatever is typed here. */}
             <span className="text-muted-foreground font-mono">[TEST]</span>
-            <input
+            <Input
               id="send-test-subject"
               type="text"
               maxLength={200}
               autoComplete="off"
               aria-describedby={subjectReason ? 'send-test-subject-hint' : undefined}
-              className={FIELD_CLASS}
+              className="h-7 px-2 py-1 text-xs md:text-xs"
               value={subjectText}
               onChange={(event) => {
                 setSubjectText(event.target.value)
@@ -245,11 +292,37 @@ function SendTestEmailForm({
             </p>
           ) : null}
         </dd>
+        <dt className="meta-label self-start pt-1.5">
+          <label htmlFor="send-test-reply-to">Reply-to</label>
+        </dt>
+        <dd>
+          <Input
+            id="send-test-reply-to"
+            type="text"
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="support@example.com"
+            aria-describedby="send-test-reply-to-hint"
+            className="h-7 px-2 py-1 font-mono text-xs md:text-xs"
+            value={replyToText}
+            onChange={(event) => {
+              setReplyToText(event.target.value)
+              setConfirming(false)
+            }}
+            disabled={phase.kind === 'sending'}
+          />
+          <p
+            id="send-test-reply-to-hint"
+            className={`${HINT_CLASS} ${replyToReason ? 'text-warning-foreground' : 'text-muted-foreground'} mt-1.5`}
+          >
+            {replyToReason ?? REPLY_TO_HINT}
+          </p>
+        </dd>
         <dt className="meta-label">Body</dt>
         <dd className={html === null ? 'text-danger-foreground' : ''}>
           {html === null
             ? 'No rendered HTML yet. Fix the template or payload first.'
-            : `Current preview, ${htmlKilobytes} KB of HTML`}
+            : `Current preview, ${kilobytes(html)} KB HTML + ${kilobytes(text ?? '')} KB plain text`}
         </dd>
         <dt className="meta-label">Provider</dt>
         <dd className="flex flex-wrap items-center gap-2">

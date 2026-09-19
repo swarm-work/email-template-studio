@@ -10,8 +10,12 @@ describe('DiagnosticsPanel', () => {
       validation: { ok: false, kind: 'schema', issues: [{ path: 'recipientName', message: 'Required' }] },
       renderStatus: 'blocked',
       renderResult: null,
-      sourceDirty: false,
+      kind: 'code',
+      contentDirty: false,
       payloadDirty: true,
+      missingMergeFields: [],
+      mergeFieldCount: 0,
+      unsafeHrefs: [],
     })
     render(<DiagnosticsPanel items={items} />)
 

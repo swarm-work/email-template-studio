@@ -13,6 +13,7 @@
  *
  * The three SES operations used, all on `https://email.<region>.amazonaws.com`:
  *   POST /v2/email/outbound-emails   send one email          (SendEmail)
+ *     - ReplyToAddresses and Body.Text are only sent when they have a value.
  *   GET  /v2/email/account           quota + sandbox status  (GetAccount)
  *   GET  /v2/email/identities/{id}   is this sender verified (GetEmailIdentity)
  */
@@ -98,12 +99,19 @@ export function createSesSender(options: SesSenderOptions): EmailSender {
         FromEmailAddress: email.from,
         // One SES call for the whole list: everyone in To can see the others.
         Destination: { ToAddresses: [...email.to] },
-        // Omitted entirely when unset: SES rejects an explicit null.
+        // Top level, beside Destination - not inside Content. Omitted entirely
+        // when unset, like ConfigurationSetName: SES rejects an explicit null.
+        ...(email.replyTo?.length ? { ReplyToAddresses: [...email.replyTo] } : {}),
         ...(options.configurationSet ? { ConfigurationSetName: options.configurationSet } : {}),
         Content: {
           Simple: {
             Subject: { Data: email.subject, Charset: 'UTF-8' },
-            Body: { Html: { Data: email.html, Charset: 'UTF-8' } },
+            Body: {
+              Html: { Data: email.html, Charset: 'UTF-8' },
+              // Same rule again: an empty text part is worse than none, because
+              // a client that prefers text would show a blank message.
+              ...(email.text ? { Text: { Data: email.text, Charset: 'UTF-8' } } : {}),
+            },
           },
         },
       })

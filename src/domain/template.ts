@@ -2,8 +2,8 @@
  * Domain model: email templates.
  *
  * The domain layer holds plain TypeScript types and tiny pure helpers only.
- * It must not import React, Zod, Vite or browser APIs, so the core concepts
- * stay easy to read and easy to unit test.
+ * It must not import React, Zod, Vite, Tiptap or browser APIs, so the core
+ * concepts stay easy to read and easy to unit test.
  */
 import type { PropsValidator } from './preview'
 
@@ -24,8 +24,34 @@ export type TemplateCategory = 'onboarding' | 'security' | 'collaboration' | 'bi
 /** Lifecycle status shown on each library card. */
 export type TemplateStatus = 'draft' | 'ready' | 'deprecated'
 
-/** Only React Email TSX templates are supported in the MVP. */
-export type TemplateFileType = 'tsx'
+/**
+ * How a template is authored:
+ * - code: React Email TSX, edited in CodeMirror and compiled in the browser
+ * - visual: a document edited on a canvas and exported to HTML at save time
+ */
+export type TemplateKind = 'code' | 'visual'
+
+/** Where a template came from: shipped with the studio, or created by a person. */
+export type TemplateOrigin = 'user' | 'starter'
+
+/**
+ * Structural shape of the visual editor's document (Tiptap JSON).
+ *
+ * The domain describes it with plain optional fields instead of importing the
+ * editor's types: that keeps a 2.5 MB dependency out of every layer and makes
+ * the document just data. The single cast to the editor's own type lives in
+ * infrastructure.
+ */
+export interface EmailDocumentNode {
+  readonly type?: string
+  readonly text?: string
+  readonly attrs?: Readonly<Record<string, unknown>>
+  readonly marks?: readonly EmailDocumentNode[]
+  readonly content?: readonly EmailDocumentNode[]
+}
+
+/** A whole visual document is just its root node. */
+export type EmailDocument = EmailDocumentNode
 
 export interface TemplateVersion {
   /** Monotonic number, e.g. 3. */
@@ -41,38 +67,113 @@ export interface EmailAddress {
   readonly address: string
 }
 
+/**
+ * What is written on the envelope rather than inside the letter.
+ *
+ * The sender ("From") is deliberately absent: it belongs to the send server,
+ * not to the template (see EmailProvider.getStatus()).
+ */
+export interface TemplateEnvelope {
+  /** Subject line. May contain {{key}} merge fields. */
+  readonly subject: string
+  /** Inbox preview text. '' means the email renders no preview line. */
+  readonly preheader: string
+  /** '' means replies go to the sender address configured on the send server. */
+  readonly replyTo: string
+}
+
+/** Everything about a template except its content. */
 export interface TemplateMetadata {
   readonly id: TemplateId
   readonly name: string
   /** URL/file friendly identifier, e.g. "welcome-verification". */
   readonly slug: string
-  /** File name shown in the editor chrome, e.g. "welcome-verification.email.tsx". */
-  readonly fileName: string
   readonly description: string
   readonly category: TemplateCategory
   readonly status: TemplateStatus
+  /** The version currently on the template. */
   readonly version: TemplateVersion
-  readonly fileType: TemplateFileType
-  /** Subject line shown in the preview mail frame. */
-  readonly subject: string
-  readonly from: EmailAddress
-  /** Sample recipient shown in the preview mail frame. Never used for sending. */
-  readonly to: EmailAddress
-  /** ISO-8601 timestamp of the last change to the original template. */
+  /** Concurrency token: the server bumps it on every write (0 = unknown). */
+  readonly revision: number
+  readonly tags: readonly string[]
+  readonly origin: TemplateOrigin
+  readonly createdBy: string
+  readonly createdAt: string
+  readonly updatedBy: string
+  /** ISO-8601 timestamp of the last change to the template. */
   readonly updatedAt: string
 }
 
 /**
- * A template as stored in the local repository.
- * `source` and `samplePayloadText` are the ORIGINAL values. Edits never mutate
- * them; they live in session drafts (see application/studioState.ts).
+ * The file name shown in the editor chrome. It is derived, never stored, so a
+ * rename can never leave the name and the slug disagreeing.
  */
-export interface EmailTemplate {
+export function fileNameFor(kind: TemplateKind, slug: string): string {
+  return kind === 'code' ? `${slug}.email.tsx` : `${slug}.email.json`
+}
+
+/** Fields both kinds of template carry. */
+interface TemplateRecordBase {
   readonly metadata: TemplateMetadata
-  /** Original React Email TSX source. */
-  readonly source: string
-  /** Original sample props as pretty-printed JSON text. */
+  readonly envelope: TemplateEnvelope
+  /** Sample props as pretty-printed JSON text. */
   readonly samplePayloadText: string
-  /** Checks an unknown JSON value against this template's props contract. */
-  readonly validateProps: PropsValidator
+  /** JSON Schema text describing the props contract. '{}' means "any object". */
+  readonly propsSchemaText: string
+}
+
+/**
+ * A template as it is stored and sent over the wire.
+ *
+ * `kind` is the discriminant: TypeScript will not let you read `source` before
+ * you have checked that the record is a code template, and vice versa.
+ * The exported `html` / `text` of a visual template are UNRESOLVED: any
+ * {{key}} merge field is still in place, so a later send can substitute
+ * per recipient.
+ */
+export type TemplateRecord =
+  | (TemplateRecordBase & {
+      readonly kind: 'code'
+      /** React Email TSX source. */
+      readonly source: string
+    })
+  | (TemplateRecordBase & {
+      readonly kind: 'visual'
+      readonly document: EmailDocument
+      /** Name of the editor theme this version was authored with. */
+      readonly theme: string
+      readonly html: string
+      readonly text: string
+    })
+
+/**
+ * A record plus the behaviour the studio needs. `validateProps` is assembled in
+ * infrastructure (Zod lives there), so it never travels over the wire.
+ */
+export type EmailTemplate = TemplateRecord & { readonly validateProps: PropsValidator }
+
+/** The TSX a code template is edited as. Visual templates have no source, so ''. */
+export function templateSource(record: TemplateRecord): string {
+  return record.kind === 'code' ? record.source : ''
+}
+
+/** The canvas document of a visual template; null for code templates. */
+export function templateDocument(record: TemplateRecord): EmailDocument | null {
+  return record.kind === 'visual' ? record.document : null
+}
+
+/**
+ * RFC 5322 recommends subject lines of at most 78 characters and most mail
+ * clients truncate around there. It is a recommendation, not a hard limit, so
+ * the studio warns instead of blocking.
+ */
+export const SUBJECT_LENGTH_LIMIT = 78
+
+/** Where a subject sits against the recommended length. */
+export type SubjectLengthState = 'empty' | 'ok' | 'too-long'
+
+/** Pure rule behind the subject counter and its check / warning icon. */
+export function subjectLengthState(subject: string): SubjectLengthState {
+  if (subject.length === 0) return 'empty'
+  return subject.length > SUBJECT_LENGTH_LIMIT ? 'too-long' : 'ok'
 }

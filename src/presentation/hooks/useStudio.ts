@@ -3,78 +3,134 @@
  * All state transitions live in application/studioState.ts; this hook only
  * connects them to React and to the browser session store.
  */
-import { useEffect, useMemo, useReducer } from 'react'
-import type { EmailTemplate, PreviewDevice, TemplateId } from '@/domain'
+import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import type {
+  EmailDocument,
+  EmailTemplate,
+  PreviewDevice,
+  StudioMode,
+  TemplateEnvelope,
+  TemplateId,
+  TemplateRecord,
+} from '@/domain'
 import {
   createInitialState,
   getDraft,
+  isDocumentDirty,
+  isEnvelopeDirty,
   isPayloadDirty,
   isSourceDirty,
   isTemplateDirty,
   studioReducer,
+  type ResolvedDraft,
   type StudioState,
-  type TemplateDraft,
 } from '@/application/studioState'
+import { clampMode } from '@/application/studioModes'
 import type { PersistedStudioState, StudioSessionStore } from '@/infrastructure/session/sessionStore'
+
+/**
+ * Writing to sessionStorage means stringifying the whole state, which is too
+ * much work for every keystroke. Half a second of typing is never lost, because
+ * the pending state is also written when the page is hidden or the page unmounts.
+ */
+const SAVE_DEBOUNCE_MS = 500
 
 export interface UseStudioOptions {
   readonly templates: readonly EmailTemplate[]
   readonly store: StudioSessionStore
-  /** Injectable clock (ISO string) so tests are deterministic. */
-  readonly now?: () => string
+  /**
+   * The template the route has opened. Selection belongs to the route now (the
+   * library decides what is being edited), so when this is given it wins over
+   * the id kept in the reducer; null means "no route choice, use the stored one".
+   */
+  readonly selectedId?: TemplateId | null
 }
 
 export interface StudioActions {
-  selectTemplate(id: TemplateId): void
   updateSource(source: string): void
   updatePayload(payloadText: string): void
+  updateDocument(document: EmailDocument): void
+  updateEnvelope(envelope: TemplateEnvelope): void
   resetSource(): void
   resetPayload(): void
+  resetDocument(): void
+  resetEnvelope(): void
   resetTemplate(): void
   setDevice(device: PreviewDevice): void
-  simulatePublish(): void
+  setMode(mode: StudioMode): void
+  /** The server accepted a save; the draft is rebased onto the version it wrote. */
+  markSaved(record: TemplateRecord): void
+  /**
+   * The server accepted a metadata change made against `expectedRevision`. It
+   * is NOT `markSaved`: no version was written, so a draft that had already
+   * fallen behind keeps its conflict (see `studioState.ts`).
+   */
+  markMetadataSaved(record: TemplateRecord, expectedRevision: number): void
+  /**
+   * The server converted this visual template to a code one. The draft is
+   * DROPPED rather than rebased: the document it holds describes a template
+   * that no longer exists (ADR-28).
+   */
+  markConverted(record: TemplateRecord): void
 }
 
 export interface UseStudioResult {
   readonly state: StudioState
   readonly template: EmailTemplate
-  readonly draft: TemplateDraft
+  readonly draft: ResolvedDraft
   readonly sourceDirty: boolean
   readonly payloadDirty: boolean
+  readonly documentDirty: boolean
+  readonly envelopeDirty: boolean
   /** Ids of every template that currently has local edits. */
   readonly dirtyTemplateIds: ReadonlySet<TemplateId>
+  /** When the draft was last written to session storage; null before the first write. */
+  readonly lastSavedAt: Date | null
   readonly actions: StudioActions
 }
 
-export function useStudio({
-  templates,
-  store,
-  now = () => new Date().toISOString(),
-}: UseStudioOptions): UseStudioResult {
+export function useStudio({ templates, store, selectedId = null }: UseStudioOptions): UseStudioResult {
   const [state, dispatch] = useReducer(studioReducer, undefined, () => hydrate(store.load(), templates))
 
-  useEffect(() => {
-    store.save(state)
-  }, [state, store])
+  const lastSavedAt = useDebouncedSave(state, store)
 
+  // Render against the route's choice straight away, then tell the reducer, so
+  // the stored selection and the mode clamp catch up without a blank frame.
+  const activeId = selectedId ?? state.selectedId
   const template = useMemo(
-    () => templates.find((candidate) => candidate.metadata.id === state.selectedId) ?? templates[0],
-    [templates, state.selectedId],
+    () => templates.find((candidate) => candidate.metadata.id === activeId) ?? templates[0],
+    [templates, activeId],
   )
   const id = template.metadata.id
 
+  useEffect(() => {
+    if (selectedId === null || selectedId === state.selectedId) return
+    const target = templates.find((candidate) => candidate.metadata.id === selectedId)
+    // An id that is not in the list would be stored — and then persisted — as a
+    // selection pointing at nothing, so an unknown choice is simply ignored.
+    if (!target) return
+    dispatch({ type: 'select-template', id: selectedId, kind: target.kind })
+  }, [selectedId, state.selectedId, templates])
+
   const actions = useMemo<StudioActions>(
     () => ({
-      selectTemplate: (next) => dispatch({ type: 'select-template', id: next }),
       updateSource: (source) => dispatch({ type: 'edit-source', id, template, source }),
       updatePayload: (payloadText) => dispatch({ type: 'edit-payload', id, template, payloadText }),
+      updateDocument: (document) => dispatch({ type: 'edit-document', id, template, document }),
+      updateEnvelope: (envelope) => dispatch({ type: 'edit-envelope', id, template, envelope }),
       resetSource: () => dispatch({ type: 'reset-source', id }),
       resetPayload: () => dispatch({ type: 'reset-payload', id }),
+      resetDocument: () => dispatch({ type: 'reset-document', id }),
+      resetEnvelope: () => dispatch({ type: 'reset-envelope', id }),
       resetTemplate: () => dispatch({ type: 'reset-template', id }),
       setDevice: (device) => dispatch({ type: 'set-device', device }),
-      simulatePublish: () => dispatch({ type: 'simulate-publish', id, publishedAt: now() }),
+      setMode: (mode) => dispatch({ type: 'set-mode', mode, kind: template.kind }),
+      markSaved: (record) => dispatch({ type: 'template-saved', record }),
+      markMetadataSaved: (record, expectedRevision) =>
+        dispatch({ type: 'metadata-saved', record, expectedRevision }),
+      markConverted: (record) => dispatch({ type: 'template-converted', record }),
     }),
-    [id, template, now],
+    [id, template],
   )
 
   const dirtyTemplateIds = useMemo(
@@ -93,9 +149,69 @@ export function useStudio({
     draft: getDraft(state, template),
     sourceDirty: isSourceDirty(state, template),
     payloadDirty: isPayloadDirty(state, template),
+    documentDirty: isDocumentDirty(state, template),
+    envelopeDirty: isEnvelopeDirty(state, template),
     dirtyTemplateIds,
+    lastSavedAt,
     actions,
   }
+}
+
+/**
+ * Saves `state` half a second after the last change, and immediately when the
+ * page goes away (`pagehide` covers closing the tab and the bfcache) or this
+ * hook unmounts, so no edit is lost inside the debounce window.
+ *
+ * Returns when the last write happened, which is what the sub-header's
+ * "Autosaved just now" note reports. It is state rather than a ref because the
+ * note has to re-render when it changes.
+ */
+function useDebouncedSave(state: StudioState, store: StudioSessionStore): Date | null {
+  /** The state that is waiting to be written, or null when nothing is pending. */
+  const pending = useRef<StudioState | null>(null)
+  /**
+   * The state the store already holds. It starts as the state this hook was
+   * hydrated FROM, so opening a template and touching nothing writes nothing
+   * and — more importantly — reports nothing: "Autosaved just now" half a
+   * second after opening a template no one has edited is a claim about an
+   * event that did not happen.
+   */
+  const saved = useRef<StudioState>(state)
+  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null)
+
+  useEffect(() => {
+    pending.current = state
+    const timer = setTimeout(() => {
+      // A `pagehide` in the meantime already wrote this state.
+      if (pending.current === null) return
+      pending.current = null
+      if (state === saved.current) return
+      saved.current = state
+      store.save(state)
+      setLastSavedAt(new Date())
+    }, SAVE_DEBOUNCE_MS)
+    return () => clearTimeout(timer)
+  }, [state, store])
+
+  useEffect(() => {
+    const flush = () => {
+      if (pending.current === null) return
+      const snapshot = pending.current
+      pending.current = null
+      if (snapshot === saved.current) return
+      saved.current = snapshot
+      store.save(snapshot)
+      setLastSavedAt(new Date())
+    }
+    if (typeof window === 'undefined') return flush
+    window.addEventListener('pagehide', flush)
+    return () => {
+      window.removeEventListener('pagehide', flush)
+      flush()
+    }
+  }, [store])
+
+  return lastSavedAt
 }
 
 /** Rebuilds state from storage, dropping anything that refers to unknown templates. */
@@ -103,15 +219,19 @@ export function hydrate(
   persisted: PersistedStudioState | null,
   templates: readonly EmailTemplate[],
 ): StudioState {
-  const fallback = createInitialState(templates[0].metadata.id)
+  const fallback = createInitialState(templates[0].metadata.id, templates[0].kind)
   if (!persisted) return fallback
-  const known = new Set<string>(templates.map((template) => template.metadata.id))
-  const keepKnown = <T>(record: Record<string, T>) =>
-    Object.fromEntries(Object.entries(record).filter(([key]) => known.has(key)))
+  const known = new Map(templates.map((template) => [template.metadata.id as string, template]))
+  const selected = known.has(persisted.selectedId)
+    ? (persisted.selectedId as TemplateId)
+    : fallback.selectedId
+  const selectedTemplate = known.get(selected) ?? templates[0]
   return {
-    selectedId: known.has(persisted.selectedId) ? (persisted.selectedId as TemplateId) : fallback.selectedId,
-    drafts: keepKnown(persisted.drafts),
-    localPublishes: keepKnown(persisted.localPublishes),
+    selectedId: selected,
+    drafts: Object.fromEntries(Object.entries(persisted.drafts).filter(([key]) => known.has(key))),
     device: persisted.device,
+    // A stored mode can belong to the other kind of template (or to a template
+    // that has since been converted), so it is clamped on the way in.
+    mode: clampMode(selectedTemplate.kind, persisted.mode),
   }
 }

@@ -17,7 +17,7 @@ function fakeRenderer(results: RenderResult[]): TemplateRenderer & { calls: numb
   return renderer
 }
 
-const ok: RenderResult = { ok: true, html: '<p>ok</p>', durationMs: 5 }
+const ok: RenderResult = { ok: true, html: '<p>ok</p>', text: 'ok', durationMs: 5 }
 const failed: RenderResult = { ok: false, error: { kind: 'render', message: 'boom' } }
 
 describe('useRenderPreview', () => {
@@ -26,7 +26,7 @@ describe('useRenderPreview', () => {
     const renderer = fakeRenderer([ok])
     const { result, rerender } = renderHook(
       ({ props }: { props: Record<string, unknown> | null }) =>
-        useRenderPreview(renderer, 't1', 'src', props, 100),
+        useRenderPreview(renderer, 't1', 'src', props, { debounceMs: 100 }),
       { initialProps: { props: null as Record<string, unknown> | null } },
     )
     expect(result.current.status).toBe('blocked')
@@ -41,14 +41,16 @@ describe('useRenderPreview', () => {
     expect(renderer.calls).toBe(1)
     expect(result.current.status).toBe('success')
     expect(result.current.html).toBe('<p>ok</p>')
+    expect(result.current.text).toBe('ok')
     vi.useRealTimers()
   })
 
-  it('keeps the last good HTML when a later render fails', async () => {
+  it('keeps the last good HTML and plain text when a later render fails', async () => {
     vi.useFakeTimers()
     const renderer = fakeRenderer([ok, failed])
     const { result, rerender } = renderHook(
-      ({ source }: { source: string }) => useRenderPreview(renderer, 't1', source, { a: 1 }, 50),
+      ({ source }: { source: string }) =>
+        useRenderPreview(renderer, 't1', source, { a: 1 }, { debounceMs: 50 }),
       { initialProps: { source: 'v1' } },
     )
     await act(async () => {
@@ -63,6 +65,9 @@ describe('useRenderPreview', () => {
     expect(result.current.status).toBe('error')
     expect(result.current.result).toEqual(failed)
     expect(result.current.html).toBe('<p>ok</p>')
+    // The text part comes from the last GOOD render too, or the plain-text tab
+    // and the text download would blank out the moment an edit fails to compile.
+    expect(result.current.text).toBe('ok')
     vi.useRealTimers()
   })
 
@@ -70,7 +75,7 @@ describe('useRenderPreview', () => {
     vi.useFakeTimers()
     const renderer = fakeRenderer([ok])
     const { result, rerender } = renderHook(
-      ({ key }: { key: string }) => useRenderPreview(renderer, key, 'src', { a: 1 }, 50),
+      ({ key }: { key: string }) => useRenderPreview(renderer, key, 'src', { a: 1 }, { debounceMs: 50 }),
       { initialProps: { key: 't1' } },
     )
     await act(async () => {
@@ -80,6 +85,7 @@ describe('useRenderPreview', () => {
 
     rerender({ key: 't2' })
     expect(result.current.html).toBeNull()
+    expect(result.current.text).toBeNull()
     expect(result.current.status).toBe('rendering')
     vi.useRealTimers()
   })

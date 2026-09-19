@@ -1,11 +1,32 @@
 /// <reference types="vitest/config" />
 import path from 'node:path'
+import { readFileSync } from 'node:fs'
 import type { IncomingMessage } from 'node:http'
 import { cloudflare } from '@cloudflare/vite-plugin'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { defineConfig, loadEnv, type PluginOption } from 'vite'
 import pkg from './package.json' with { type: 'json' }
+
+/**
+ * Which React Email the studio compiles against, read from the installed
+ * package so the number on screen is the version that actually ran.
+ *
+ * It is read from disk rather than imported: `@react-email/components@1.0.12`
+ * exports only `"."`, so `import '@react-email/components/package.json'` is
+ * refused. And it is read defensively, because a static import of a path inside
+ * `node_modules` makes the whole config — `vite dev`, `vite build` and every
+ * Vitest run — fail if the layout differs (a hoisted workspace root, pnpm,
+ * Yarn PnP). One label on a strip is not worth that.
+ */
+function reactEmailVersion(): string {
+  try {
+    const url = new URL('./node_modules/@react-email/components/package.json', import.meta.url)
+    return JSON.parse(readFileSync(url, 'utf8')).version ?? 'unknown'
+  } catch {
+    return 'unknown'
+  }
+}
 
 /**
  * Two ways to run the API locally (docs/SENDING.md):
@@ -74,18 +95,28 @@ export default defineConfig(({ mode }) => {
     plugins,
     define: {
       __APP_VERSION__: JSON.stringify(pkg.version),
+      __REACT_EMAIL_VERSION__: JSON.stringify(reactEmailVersion()),
     },
     resolve: {
       alias: {
         '@': path.resolve(import.meta.dirname, './src'),
+        // Wire contracts shared by the app, the Node server and the Worker.
+        '@shared': path.resolve(import.meta.dirname, './shared'),
       },
     },
     test: {
       // Default to Node; component tests opt into jsdom with a `@vitest-environment jsdom` docblock.
       environment: 'node',
       setupFiles: ['./src/test/setup.ts'],
-      include: ['src/**/*.test.{ts,tsx}', 'server/**/*.test.ts'],
+      include: ['src/**/*.test.{ts,tsx}', 'server/**/*.test.ts', 'shared/**/*.test.ts'],
       css: false,
+      // Why a fork cap: the default is one worker per core, and on a 4-core dev
+      // box with swap already full that races the jsdom suites out of memory --
+      // workers then fail to start at all ("Timeout waiting for worker to
+      // respond") and `npm run check` goes red for reasons unrelated to the code.
+      // Two workers is slower but deterministic, which is what a phase gate needs.
+      // (Top-level `maxWorkers`, not `poolOptions`: Vitest 4 removed the latter.)
+      maxWorkers: 2,
     },
   }
 })

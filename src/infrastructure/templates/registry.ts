@@ -1,24 +1,74 @@
 /**
- * Local template repository.
+ * The starter templates that ship with the studio.
  *
- * In the MVP templates live in this folder as real TSX files. Vite's `?raw`
- * import gives us the exact file text for the editor, while the same files
- * are also type-checked and unit-tested as normal React components.
+ * These records are now TWO things: the **seed input** that
+ * `scripts/generate-seed-migration.mjs` turns into `migrations/0002_seed_starter_templates.sql`,
+ * and the **fixtures** most unit tests build on. The metadata comes from
+ * `starterCatalog.json`; the source is the real TSX file next to it, pulled in
+ * with Vite's `?raw` so the same file is both editable text and a type-checked
+ * React component.
  *
- * Later milestones can replace this module with an API- or D1-backed
- * repository without changing the rest of the application (see docs/ROADMAP.md).
+ * Infrastructure layer: it may use Zod and Vite features. Behaviour (the props
+ * validator) is attached in templateMapper.ts.
  */
 import { z } from 'zod'
-import { templateId, type EmailTemplate, type TemplateId } from '@/domain'
+import {
+  templateId,
+  type EmailDocument,
+  type PropsValidator,
+  type TemplateId,
+  type TemplateRecord,
+} from '@/domain'
 import { zodPropsValidator } from '@/infrastructure/validation/zodPropsValidator'
+import { prettyJson, STARTER_CATALOG } from './starterCatalog'
 import welcomeVerificationSource from './welcome-verification.email.tsx?raw'
 import passwordResetSource from './password-reset.email.tsx?raw'
 import teamInvitationSource from './team-invitation.email.tsx?raw'
+import productLaunchDocument from './starters/product-launch.visual.json'
 
 const url = z.url({ protocol: /^https?$/, message: 'Must be an http(s) URL' })
 
 /** The fictional product used across sample data. */
 export const SAMPLE_PRODUCT_NAME = 'Meridian'
+
+/** Who the starters are attributed to: they are created by the seed, not a person. */
+const SEED_AUTHOR = 'seed'
+
+/** The TSX text of each starter, keyed by the `sourceFile` its catalog entry names. */
+const STARTER_SOURCES: Readonly<Record<string, string>> = {
+  'welcome-verification.email.tsx': welcomeVerificationSource,
+  'password-reset.email.tsx': passwordResetSource,
+  'team-invitation.email.tsx': teamInvitationSource,
+}
+
+/**
+ * The Tiptap document of each visual starter, keyed by its `documentFile`.
+ *
+ * It is a plain JSON import rather than a `?raw` one: the studio hands the
+ * editor an object, and parsing the same text on every page load would be work
+ * for nothing.
+ */
+const STARTER_DOCUMENTS: Readonly<Record<string, EmailDocument>> = {
+  'starters/product-launch.visual.json': productLaunchDocument as EmailDocument,
+}
+
+/**
+ * The TSX text for one catalog entry. A typo in `sourceFile` is a mistake, not
+ * a template with no source: the server-side seed throws on it (readFileSync),
+ * and an empty starter here would only show up as a blank editor in the studio.
+ */
+function sourceFor(sourceFile: string, slug: string): string {
+  const source = STARTER_SOURCES[sourceFile]
+  if (!source) throw new Error(`Starter "${slug}" names an unknown sourceFile: ${sourceFile}`)
+  return source
+}
+
+/** The same rule for a visual starter's document. */
+function documentFor(documentFile: string, slug: string): EmailDocument {
+  const document = STARTER_DOCUMENTS[documentFile]
+  if (!document) throw new Error(`Starter "${slug}" names an unknown documentFile: ${documentFile}`)
+  return document
+}
 
 const welcomeVerificationSchema = z.strictObject({
   recipientName: z.string().min(1, 'Required'),
@@ -47,105 +97,74 @@ const teamInvitationSchema = z.strictObject({
   productName: z.string().min(1, 'Required'),
 })
 
-function pretty(value: unknown): string {
-  return `${JSON.stringify(value, null, 2)}\n`
+export const STARTER_TEMPLATES: readonly TemplateRecord[] = STARTER_CATALOG.map((entry) => ({
+  // A visual starter ships its document and NO exported html/text: the studio
+  // composes those the moment the template is opened, from the live editor, so
+  // storing a stale copy in the repository would only ever be a second truth.
+  ...(entry.kind === 'visual'
+    ? {
+        kind: 'visual' as const,
+        document: documentFor(entry.documentFile, entry.slug),
+        theme: entry.theme,
+        html: '',
+        text: '',
+      }
+    : { kind: 'code' as const, source: sourceFor(entry.sourceFile, entry.slug) }),
+  metadata: {
+    id: templateId(entry.slug),
+    name: entry.name,
+    slug: entry.slug,
+    description: entry.description,
+    category: entry.category,
+    status: entry.status,
+    version: entry.version,
+    revision: 1,
+    tags: entry.tags,
+    origin: 'starter',
+    createdBy: SEED_AUTHOR,
+    createdAt: entry.createdAt,
+    updatedBy: SEED_AUTHOR,
+    updatedAt: entry.createdAt,
+  },
+  envelope: entry.envelope,
+  samplePayloadText: prettyJson(entry.samplePayload),
+  propsSchemaText: prettyJson(entry.propsSchema),
+}))
+
+/**
+ * The Zod schemas behind the starters, keyed by **slug**. Exported for
+ * `registry.test.ts`, which regenerates the stored JSON Schema text from them
+ * and fails when the two drift apart.
+ */
+export const STARTER_PROPS_SCHEMAS: Readonly<Partial<Record<string, z.ZodType>>> = {
+  'welcome-verification': welcomeVerificationSchema,
+  'password-reset': passwordResetSchema,
+  'team-invitation': teamInvitationSchema,
 }
 
-export const TEMPLATES: readonly EmailTemplate[] = [
-  {
-    metadata: {
-      id: templateId('welcome-verification'),
-      name: 'Welcome & verification',
-      slug: 'welcome-verification',
-      fileName: 'welcome-verification.email.tsx',
-      description:
-        'Sent after sign-up. Asks the user to confirm their email address before the account is activated.',
-      category: 'onboarding',
-      status: 'ready',
-      version: { number: 3, label: 'v3', createdAt: '2026-08-21T09:30:00Z' },
-      fileType: 'tsx',
-      subject: 'Verify your email address',
-      from: { name: 'Meridian', address: 'no-reply@meridian.example' },
-      to: { name: 'Ada Lovelace', address: 'ada@example.com' },
-      updatedAt: '2026-08-21T09:30:00Z',
-    },
-    source: welcomeVerificationSource,
-    samplePayloadText: pretty({
-      recipientName: 'Ada',
-      verificationUrl: 'https://app.meridian.example/verify?token=sample-token',
-      expiresInHours: 24,
-      productName: SAMPLE_PRODUCT_NAME,
-      supportEmail: 'support@meridian.example',
-    }),
-    validateProps: zodPropsValidator(welcomeVerificationSchema),
-  },
-  {
-    metadata: {
-      id: templateId('password-reset'),
-      name: 'Password reset',
-      slug: 'password-reset',
-      fileName: 'password-reset.email.tsx',
-      description:
-        'Time-limited link to choose a new password, with optional request details for security context.',
-      category: 'security',
-      status: 'ready',
-      version: { number: 5, label: 'v5', createdAt: '2026-09-02T14:05:00Z' },
-      fileType: 'tsx',
-      subject: 'Reset your password',
-      from: { name: 'Meridian Security', address: 'security@meridian.example' },
-      to: { name: 'Grace Hopper', address: 'grace@example.com' },
-      updatedAt: '2026-09-02T14:05:00Z',
-    },
-    source: passwordResetSource,
-    samplePayloadText: pretty({
-      recipientName: 'Grace',
-      resetUrl: 'https://app.meridian.example/reset?token=sample-token',
-      expiresInMinutes: 30,
-      productName: SAMPLE_PRODUCT_NAME,
-      requestIp: '203.0.113.42',
-      requestLocation: 'Manila, PH',
-    }),
-    validateProps: zodPropsValidator(passwordResetSchema),
-  },
-  {
-    metadata: {
-      id: templateId('team-invitation'),
-      name: 'Team invitation',
-      slug: 'team-invitation',
-      fileName: 'team-invitation.email.tsx',
-      description: 'Invites a person to join a team with a specific role. Uses Row/Column layout.',
-      category: 'collaboration',
-      status: 'draft',
-      version: { number: 1, label: 'v1', createdAt: '2026-09-05T11:00:00Z' },
-      fileType: 'tsx',
-      subject: 'You have been invited to join a team',
-      from: { name: 'Meridian', address: 'no-reply@meridian.example' },
-      to: { name: 'Linus Torvalds', address: 'linus@example.com' },
-      updatedAt: '2026-09-05T11:00:00Z',
-    },
-    source: teamInvitationSource,
-    samplePayloadText: pretty({
-      inviteeName: 'Linus',
-      inviterName: 'Margaret Hamilton',
-      teamName: 'Platform Core',
-      role: 'member',
-      acceptUrl: 'https://app.meridian.example/invitations/sample-token',
-      expiresInDays: 7,
-      productName: SAMPLE_PRODUCT_NAME,
-    }),
-    validateProps: zodPropsValidator(teamInvitationSchema),
-  },
-]
+/**
+ * The same schemas as validators, ready for templateMapper.ts: `strictObject`
+ * rejects unknown keys, which catches typos in payloads, and each field carries
+ * its own message. Keyed by **slug**, not by id: the ids change when the
+ * starters are seeded into the database (`tpl_<slug>`), the slug does not.
+ * `Partial` is deliberate — an unknown slug must read as `undefined` so the
+ * mapper's fallback stays load-bearing for the compiler.
+ */
+export const STARTER_PROPS_VALIDATORS: Readonly<Partial<Record<string, PropsValidator>>> = {
+  'welcome-verification': zodPropsValidator(welcomeVerificationSchema),
+  'password-reset': zodPropsValidator(passwordResetSchema),
+  'team-invitation': zodPropsValidator(teamInvitationSchema),
+}
 
-export function findTemplate(id: TemplateId): EmailTemplate | undefined {
-  return TEMPLATES.find((template) => template.metadata.id === id)
+export function findTemplate(id: TemplateId): TemplateRecord | undefined {
+  return STARTER_TEMPLATES.find((template) => template.metadata.id === id)
 }
 
 /** Throws if the id is unknown. Use when an unknown id is a programming error. */
-export function getTemplate(id: TemplateId): EmailTemplate {
+export function getTemplate(id: TemplateId): TemplateRecord {
   const template = findTemplate(id)
   if (!template) throw new Error(`Unknown template id: ${id}`)
   return template
 }
 
-export const DEFAULT_TEMPLATE_ID: TemplateId = TEMPLATES[0].metadata.id
+export const DEFAULT_TEMPLATE_ID: TemplateId = STARTER_TEMPLATES[0].metadata.id

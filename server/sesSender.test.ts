@@ -72,6 +72,52 @@ describe('createSesSender.send', () => {
     })
   })
 
+  it('sends ReplyToAddresses at the top level when reply-to is set', async () => {
+    const { calls, impl } = fakeFetch([{ match: '/outbound-emails', body: { MessageId: 'x' } }])
+    const sender = createSesSender({ region: 'us-east-1', credentials, fetch: impl })
+
+    await sender.send({ ...email, replyTo: ['support@example.com'] })
+
+    const body = JSON.parse(calls[0].body)
+    // Beside Destination, NOT inside Content - SES ignores it anywhere else.
+    expect(body.ReplyToAddresses).toEqual(['support@example.com'])
+  })
+
+  it('omits ReplyToAddresses entirely when there is no reply-to', async () => {
+    const { calls, impl } = fakeFetch([{ match: '/outbound-emails', body: { MessageId: 'x' } }])
+    const sender = createSesSender({ region: 'us-east-1', credentials, fetch: impl })
+
+    await sender.send({ ...email, replyTo: [] })
+
+    // Absent, not null: SES refuses an explicit null.
+    expect('ReplyToAddresses' in JSON.parse(calls[0].body)).toBe(false)
+  })
+
+  it('adds the Text part when the plain-text alternative is not empty', async () => {
+    const { calls, impl } = fakeFetch([{ match: '/outbound-emails', body: { MessageId: 'x' } }])
+    const sender = createSesSender({ region: 'us-east-1', credentials, fetch: impl })
+
+    await sender.send({ ...email, text: 'Hi' })
+
+    expect(JSON.parse(calls[0].body).Content.Simple.Body).toEqual({
+      Html: { Data: '<p>Hi</p>', Charset: 'UTF-8' },
+      Text: { Data: 'Hi', Charset: 'UTF-8' },
+    })
+  })
+
+  it('sends no Text part for an empty or absent plain text', async () => {
+    const { calls, impl } = fakeFetch([{ match: '/outbound-emails', body: { MessageId: 'x' } }])
+    const sender = createSesSender({ region: 'us-east-1', credentials, fetch: impl })
+
+    await sender.send({ ...email, text: '' })
+
+    // An empty Text part is worse than none: a text-first client would show a
+    // blank message instead of falling back to the HTML.
+    expect(JSON.parse(calls[0].body).Content.Simple.Body).toEqual({
+      Html: { Data: '<p>Hi</p>', Charset: 'UTF-8' },
+    })
+  })
+
   it('includes the configuration set only when one is configured', async () => {
     const { calls, impl } = fakeFetch([{ match: '/outbound-emails', body: { MessageId: 'x' } }])
     const sender = createSesSender({

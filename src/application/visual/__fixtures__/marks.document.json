@@ -1,0 +1,54 @@
+{
+  "type": "doc",
+  "content": [
+    {
+      "type": "container",
+      "attrs": { "style": "max-width: 600px" },
+      "content": [
+        {
+          "type": "paragraph",
+          "attrs": { "style": "font-size: 15px; line-height: 24px", "alignment": null, "class": "" },
+          "content": [
+            { "type": "text", "text": "Plain, " },
+            { "type": "text", "marks": [{ "type": "bold" }], "text": "bold" },
+            { "type": "text", "text": ", " },
+            { "type": "text", "marks": [{ "type": "italic" }], "text": "italic" },
+            { "type": "text", "text": ", " },
+            { "type": "text", "marks": [{ "type": "underline" }], "text": "underline" },
+            { "type": "text", "text": ", " },
+            { "type": "text", "marks": [{ "type": "strike" }], "text": "struck" },
+            { "type": "text", "text": ", " },
+            { "type": "text", "marks": [{ "type": "code" }], "text": "code" },
+            { "type": "text", "text": ", x" },
+            { "type": "text", "marks": [{ "type": "sup" }], "text": "2" },
+            { "type": "text", "text": ", " },
+            { "type": "text", "marks": [{ "type": "uppercase" }], "text": "shouty" },
+            { "type": "text", "text": ", " },
+            {
+              "type": "text",
+              "marks": [{ "type": "preservedStyle", "attrs": { "style": "color: #2563eb" } }],
+              "text": "kept"
+            },
+            { "type": "text", "text": " and " },
+            {
+              "type": "text",
+              "marks": [
+                {
+                  "type": "link",
+                  "attrs": {
+                    "href": "https://example.com/docs",
+                    "target": "_blank",
+                    "rel": "noopener noreferrer nofollow"
+                  }
+                }
+              ],
+              "text": "a link"
+            },
+            { "type": "text", "text": "." },
+            { "type": "text", "marks": [{ "type": "bold" }, { "type": "italic" }], "text": " Both at once." }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "type": "doc",
+  "content": [
+    {
+      "type": "container",
+      "content": [
+        {
+          "type": "section",
+          "attrs": { "style": "background-color: #f4f4f5; padding: 16px" },
+          "content": [
+            {
+              "type": "div",
+              "attrs": { "style": "border-left: 3px solid #18181b" },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "attrs": { "style": "", "alignment": null, "class": "" },
+                  "content": [
+                    { "type": "text", "text": "First line" },
+                    { "type": "hardBreak" },
+                    { "type": "text", "text": "second line after a hard break" }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "button",
+          "attrs": {
+            "style": "background-color: #18181b; border-radius: 6px; color: #ffffff; padding: 12px 20px",
+            "alignment": "center",
+            "class": "button",
+            "href": "https://example.com/start"
+          },
+          "content": [{ "type": "text", "text": "Get started" }]
+        },
+        { "type": "horizontalRule", "attrs": { "style": "border-color: #e4e4e7", "class": "" } },
+        {
+          "type": "paragraph",
+          "attrs": { "style": "", "alignment": null, "class": "" },
+          "content": [
+            {
+              "type": "text",
+              "text": "A closing paragraph long enough that the printer has to break the element across several lines instead of keeping it on one."
+            }
+          ]
+        },
+        { "type": "paragraph", "attrs": { "style": "", "alignment": null, "class": "" } }
+      ]
+    }
+  ]
+}

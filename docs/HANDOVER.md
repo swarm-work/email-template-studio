@@ -6,9 +6,16 @@ Companion documents: `docs/DEPLOYMENT.md` (how deploys work and how to switch li
 
 Facts about GitHub and Cloudflare below were verified against the official documentation on 2026-09-10. Where a claim could not be confirmed it says so instead of guessing.
 
-## Do it now, before phase 2
+## Do it now — and the cheap window has closed
 
-Nothing has to be migrated yet. There is no database, no stored user data and no custom domain. The moment `docs/PLAN.md` phase 2 adds D1, this becomes a data migration with a freeze window. Doing it now is an afternoon; doing it later is a project.
+**Superseded, 2026-09-19.** This section used to say "there is no database, no stored user data and no
+custom domain", and that the move was an afternoon. That was true until `docs/PLAN.md` phase 2 landed.
+**There is data now**: templates and their immutable versions in a Cloudflare D1 database, and
+uploaded images in an R2 bucket, both on the account `wrangler.jsonc` pins (ADR-21, ADR-22). The move
+is therefore a data migration with a freeze window — export, create on the new account, apply
+migrations, import, copy the R2 objects — exactly as part B below now describes. Doing it is no
+longer an afternoon, and every week it waits adds rows. There is still no custom domain, which is
+what Cloudflare Access needs (TECH_DEBT #19).
 
 ## Which order, and why
 
@@ -108,7 +115,9 @@ The deploy job runs on every push to `main`, so `main` is production. Add a rule
 
 # Part B. Cloudflare
 
-Today: Worker `email-template-studio` on the personal account `0f95923f7c5505d2e3261d3a788d68e0`, at `https://email-template-studio.jerichodelrosario35.workers.dev`, sending disabled, no data.
+Today: Worker `email-template-studio` on the personal account `d0fa6b3d72170539438800a907ec5323` (the id `wrangler.jsonc` pins), at `https://email-template-studio.jerichodelrosario35.workers.dev`.
+
+**There is data now.** Templates live in a Cloudflare D1 database and uploaded images in an R2 bucket, both on that same account (ADR-21). Moving accounts therefore means moving data: export the database, create it on the new account, apply migrations, import, and copy the R2 objects. The exact commands are in "Moving to the production account" in `docs/DEPLOYMENT.md`. Do the move during a short freeze of edits.
 
 ## B1. Get into the company account
 

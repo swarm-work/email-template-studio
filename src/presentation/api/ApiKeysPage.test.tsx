@@ -5,16 +5,7 @@ import userEvent from '@testing-library/user-event'
 import { ApiKeysPage } from './ApiKeysPage'
 
 function renderPage() {
-  return render(
-    <ApiKeysPage
-      workspace="meridian-platform"
-      environment="Local"
-      version="0.1.0"
-      providerLabel="Cloudflare dry run"
-      activePage="api"
-      onNavigate={() => {}}
-    />,
-  )
+  return render(<ApiKeysPage environment="Local" />)
 }
 
 describe('ApiKeysPage', () => {

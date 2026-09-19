@@ -1,0 +1,40 @@
+{
+  "type": "doc",
+  "content": [
+    {
+      "type": "container",
+      "content": [
+        {
+          "type": "heading",
+          "attrs": { "level": 1, "style": "", "alignment": null, "class": "" },
+          "content": [{ "type": "text", "text": "Level one" }]
+        },
+        {
+          "type": "heading",
+          "attrs": { "level": 2, "style": "", "alignment": null, "class": "" },
+          "content": [{ "type": "text", "text": "Level two" }]
+        },
+        {
+          "type": "heading",
+          "attrs": { "level": 3, "style": "", "alignment": "center", "class": "" },
+          "content": [{ "type": "text", "text": "Level three, centred" }]
+        },
+        {
+          "type": "heading",
+          "attrs": { "level": 4, "style": "", "alignment": null, "class": "" },
+          "content": [{ "type": "text", "text": "Level four" }]
+        },
+        {
+          "type": "heading",
+          "attrs": { "level": 5, "style": "", "alignment": null, "class": "" },
+          "content": [{ "type": "text", "text": "Level five" }]
+        },
+        {
+          "type": "heading",
+          "attrs": { "level": 6, "style": "", "alignment": null, "class": "" },
+          "content": [{ "type": "text", "text": "Level six" }]
+        }
+      ]
+    }
+  ]
+}

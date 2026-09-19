@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ConfigError, loadConfig, parseRecipientPolicy, parseRecipients } from './config.ts'
+import { ConfigError, loadConfig, loadFeatures, parseRecipientPolicy, parseRecipients } from './config.ts'
 
 describe('loadConfig', () => {
   it('is disabled by default and never throws for a disabled setup', () => {
@@ -74,8 +74,9 @@ describe('parseRecipientPolicy', () => {
     expect(parseRecipientPolicy('*')).toEqual({ policy: 'any', addresses: [] })
     expect(parseRecipientPolicy(' * ')).toEqual({ policy: 'any', addresses: [] })
     expect(parseRecipientPolicy('a@b.co')).toEqual({ policy: 'allow-list', addresses: ['a@b.co'] })
-    // ConfigError specifically: worker/index.ts only turns that class into the
-    // "server-misconfigured" 500; any other Error escapes as a bare crash.
+    // ConfigError specifically: worker/index.ts only treats that class as
+    // "sending is off, the rest of the API still works"; any other Error
+    // escapes as a bare crash.
     expect(() => parseRecipientPolicy('*, a@b.co')).toThrow(ConfigError)
     expect(() => parseRecipientPolicy('*, a@b.co')).toThrow(/either "\*" or a comma-separated list/)
     expect(() => parseRecipientPolicy('a@b.co,*')).toThrow(ConfigError)
@@ -87,5 +88,20 @@ describe('loadConfig edge cases', () => {
   it('treats empty values as unset and only the literal "true" as enabled', () => {
     expect(loadConfig({ STUDIO_SEND_ENABLED: 'yes', SES_FROM_ADDRESS: '' }).enabled).toBe(false)
     expect(loadConfig({ STUDIO_SEND_ENABLED: 'false', SES_FROM_ADDRESS: '   ' }).enabled).toBe(false)
+  })
+})
+
+describe('loadFeatures', () => {
+  it('has everything on by default, so a missing variable never hides the editor', () => {
+    expect(loadFeatures({})).toEqual({ visualEditor: true })
+    expect(loadFeatures({ STUDIO_VISUAL_EDITOR: '' })).toEqual({ visualEditor: true })
+    expect(loadFeatures({ STUDIO_VISUAL_EDITOR: 'true' })).toEqual({ visualEditor: true })
+    // A typo must not switch a feature off by accident; only the literal word does.
+    expect(loadFeatures({ STUDIO_VISUAL_EDITOR: 'flase' })).toEqual({ visualEditor: true })
+  })
+
+  it('switches the visual editor off for the literal "false", however it is typed', () => {
+    expect(loadFeatures({ STUDIO_VISUAL_EDITOR: 'false' })).toEqual({ visualEditor: false })
+    expect(loadFeatures({ STUDIO_VISUAL_EDITOR: ' FALSE ' })).toEqual({ visualEditor: false })
   })
 })

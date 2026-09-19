@@ -26,6 +26,8 @@ The only difference between the runtimes is where the variables come from: `.env
 
 `STUDIO_RUNTIME=node` in `.env` makes the Node runtime the default for `npm run dev` on that machine. The deployed Worker is described in `docs/DEPLOYMENT.md`.
 
+The Node server keeps templates **in memory**, seeded from the same starters migration 0002 writes into D1: restarting it loses every edit, and its startup banner says so. `npm run dev` runs the Worker against the real local D1 instead. Image uploads need R2, which only the Worker has, so `POST /api/uploads` answers `503` on the Node path.
+
 ## Guards
 
 | Guard                 | Where                      | Effect                                                                                                                        |
@@ -35,7 +37,8 @@ The only difference between the runtimes is where the variables come from: `.env
 | Recipients per send   | `server/app.ts`            | At most 10 addresses per request, after duplicates are removed. One request, one email, one message id.                       |
 | Subject prefix        | `server/app.ts`            | Every test subject starts with `[TEST]`.                                                                                      |
 | Rate limit            | `server/app.ts`            | `STUDIO_SEND_RATE_LIMIT_PER_MINUTE` (default 5) sends per minute, so up to 50 recipients per minute. Sliding window.          |
-| HTML size cap         | `server/app.ts`            | 500 KB.                                                                                                                       |
+| Body size cap         | `server/app.ts`            | 500 KB for the HTML and the plain-text part **together**; the text part is also capped at 200 000 characters on its own.      |
+| Reply-to              | `server/app.ts`            | Up to 5 addresses, de-duplicated and refused if they contain control characters. **Not** checked against the allow-list.      |
 | Authentication        | `server/auth.ts`           | Every `/api/*` route needs a verified Access JWT, a shared-password session cookie, or a fixed local identity. 401 otherwise. |
 | Login throttle        | `server/app.ts`            | 10 password attempts per minute on `POST /api/session`.                                                                       |
 | Host policy           | `server/app.ts`            | Node: Host and Origin must be localhost (`loopback`). Worker: Origin must equal Host (`same-origin`).                         |
@@ -88,10 +91,23 @@ To exercise the exact code path that runs on Cloudflare, put the same values in 
 curl -s http://127.0.0.1:8787/api/send-test/status
 curl -s -X POST http://127.0.0.1:8787/api/send-test \
   -H 'content-type: application/json' -H 'x-studio-send: 1' \
-  -d '{"to":["you@example.com"],"subject":"Hello","html":"<p>Hi</p>","templateId":"manual"}'
+  -d '{"to":["you@example.com"],"subject":"Hello","html":"<p>Hi</p>","text":"Hi","replyTo":"support@example.com","templateId":"manual"}'
 ```
 
-`to` also accepts a single string, so an older script keeps working.
+### `POST /api/send-test` body
+
+| Field        | Required | Shape                                | Notes                                                                                  |
+| ------------ | -------- | ------------------------------------ | -------------------------------------------------------------------------------------- |
+| `to`         | yes      | one address, or an array of 1–50     | De-duplicated, then capped at 10. Checked against `SES_ALLOWED_RECIPIENTS`.            |
+| `subject`    | yes      | string, 1–200, no control characters | `[TEST]` is prefixed by the server if it is not already there.                         |
+| `html`       | yes      | string                               | With `text`, at most 500 KB.                                                           |
+| `text`       | no       | string, up to 200 000 characters     | The plain-text alternative part. Empty or absent sends an HTML-only message.           |
+| `replyTo`    | no       | one address, or an array of 1–5      | De-duplicated, control-char checked. **Not** allow-listed: nothing is delivered to it. |
+| `templateId` | yes      | string, 1–100, no control characters | Appears in the audit line.                                                             |
+
+`to` and `replyTo` both also accept a single string, so an older script keeps working. The studio
+sends the **merge-resolved** subject, HTML and text: `{{firstName}}` has already become a name by the
+time the request is made, while what is SAVED with the template keeps its tokens (ADR-26).
 
 ## Free-form recipients
 

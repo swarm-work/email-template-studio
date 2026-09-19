@@ -1,3 +1,4 @@
+import { useId } from 'react'
 import { ChevronDown } from 'lucide-react'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { isRealCheck, type DiagnosticItem } from '@/domain'
@@ -9,15 +10,19 @@ export interface DiagnosticsPanelProps {
 }
 
 export function DiagnosticsPanel({ items }: DiagnosticsPanelProps) {
+  // The panel is on screen twice at once — the code rail and the preview both
+  // carry one — so the heading's id has to be unique per instance, or both
+  // regions would end up named by whichever heading comes first in the document.
+  const headingId = useId()
   const checks = items.filter((item) => isRealCheck(item.state))
   const placeholders = items.filter((item) => !isRealCheck(item.state))
   const errors = checks.filter((item) => item.state === 'error').length
   const warnings = checks.filter((item) => item.state === 'warning').length
 
   return (
-    <section aria-labelledby="diagnostics-heading" className="bg-card overflow-hidden rounded-lg border">
+    <section aria-labelledby={headingId} className="bg-card overflow-hidden rounded-lg border">
       <div className="flex items-center gap-2 border-b px-3 py-2">
-        <h2 id="diagnostics-heading" className="text-xs font-medium">
+        <h2 id={headingId} className="text-xs font-medium">
           Diagnostics
         </h2>
         {errors > 0 ? (

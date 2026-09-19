@@ -1,13 +1,21 @@
 import { describe, expect, it } from 'vitest'
-import { TEMPLATES } from '@/infrastructure/templates/registry'
+import { templateSource } from '@/domain'
+import { STARTER_TEMPLATES } from '@/infrastructure/templates/registry'
 import { renderTemplate } from './renderTemplate'
 
+/**
+ * Only the CODE starters go through this pipeline. A visual starter has no TSX
+ * at all; it is composed in the browser from the editor (see
+ * infrastructure/render/visualEmailRenderer.ts).
+ */
+const CODE_STARTERS = STARTER_TEMPLATES.filter((template) => template.kind === 'code')
+
 describe('renderTemplate', () => {
-  it.each(TEMPLATES.map((t) => [t.metadata.name, t] as const))(
+  it.each(CODE_STARTERS.map((t) => [t.metadata.name, t] as const))(
     'renders the "%s" sample template',
     async (_name, template) => {
       const props = JSON.parse(template.samplePayloadText) as Record<string, unknown>
-      const result = await renderTemplate(template.source, props)
+      const result = await renderTemplate(templateSource(template), props)
       expect(result.ok).toBe(true)
       if (!result.ok) return
       expect(result.html).toContain('<!DOCTYPE html')
@@ -17,8 +25,8 @@ describe('renderTemplate', () => {
   )
 
   it('interpolates props into the HTML', async () => {
-    const template = TEMPLATES[0]
-    const result = await renderTemplate(template.source, {
+    const template = STARTER_TEMPLATES[0]
+    const result = await renderTemplate(templateSource(template), {
       recipientName: 'Zed Zephyr',
       verificationUrl: 'https://example.test/verify',
       expiresInHours: 12,
@@ -32,6 +40,20 @@ describe('renderTemplate', () => {
     expect(text).toContain('Zed Zephyr')
     expect(text).toContain('https://example.test/verify')
     expect(text).toContain('expires in 12 hours')
+  })
+
+  it('renders a plain-text part next to the HTML', async () => {
+    const template = STARTER_TEMPLATES[0]
+    const props = JSON.parse(template.samplePayloadText) as Record<string, unknown>
+    const result = await renderTemplate(templateSource(template), props)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    // The words of the template are there (the heading is upper-cased by its style)...
+    expect(result.text).toMatch(/welcome, ada/i)
+    expect(result.text).toContain('app.meridian.example/verify')
+    // ...and no markup is: this is the alternative part, not a second copy of the HTML.
+    expect(result.text).not.toContain('<')
+    expect(result.text).not.toMatch(/<\/?[a-z]/i)
   })
 
   it('supports both default and namespace React imports', async () => {

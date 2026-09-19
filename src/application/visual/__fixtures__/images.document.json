@@ -1,0 +1,41 @@
+{
+  "type": "doc",
+  "content": [
+    {
+      "type": "container",
+      "content": [
+        {
+          "type": "image",
+          "attrs": {
+            "src": "https://studio.example/media/img_hero.png",
+            "alt": "The new dashboard",
+            "width": "600",
+            "height": "280",
+            "style": "border-radius: 8px",
+            "href": "https://example.com/whats-new"
+          }
+        },
+        {
+          "type": "image",
+          "attrs": {
+            "src": "https://studio.example/media/img_logo.png",
+            "alt": "Meridian",
+            "width": 120,
+            "style": ""
+          }
+        },
+        {
+          "type": "image",
+          "attrs": {
+            "src": "https://studio.example/media/img_inline.png?size=large&amp;dpr=2",
+            "alt": "A screenshot",
+            "width": "auto",
+            "height": "auto",
+            "alignment": "center",
+            "href": null
+          }
+        }
+      ]
+    }
+  ]
+}

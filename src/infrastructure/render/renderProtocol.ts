@@ -14,5 +14,10 @@ export interface RenderRequestMessage {
 export interface RenderResponseMessage {
   readonly type: 'result'
   readonly id: number
+  /**
+   * Both parts of the email at once: `result.html` and `result.text` come from
+   * the same render, so nothing downstream can pair one with the other's source
+   * (ADR-25). One request, one message, one answer.
+   */
   readonly result: RenderResult
 }
