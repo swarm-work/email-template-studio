@@ -42,6 +42,8 @@ export interface StudioSubHeaderProps {
   onDownloadText: () => void
   /** Why the two downloads cannot be used; `undefined` means they can. */
   downloadReason?: string
+  /** Opens the read-only list of saved versions. */
+  onShowVersionHistory: () => void
   /** Opens the read-only Exported HTML / Plain text / document.json views. */
   onViewExportedCode: () => void
   /** Opens the convert-to-code dialog; only a visual template has one. */
@@ -88,6 +90,7 @@ export function StudioSubHeader({
   onDownloadHtml,
   onDownloadText,
   downloadReason,
+  onShowVersionHistory,
   onViewExportedCode,
   onConvertToCode,
   onSave,
@@ -144,6 +147,7 @@ export function StudioSubHeader({
           onDownloadHtml={onDownloadHtml}
           onDownloadText={onDownloadText}
           downloadReason={downloadReason}
+          onShowVersionHistory={onShowVersionHistory}
           onViewExportedCode={onViewExportedCode}
           onConvertToCode={onConvertToCode}
           onToggleStatus={onToggleStatus}

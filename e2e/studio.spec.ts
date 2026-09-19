@@ -779,3 +779,49 @@ test('a merge field with no value stays visible and is reported', async ({ page 
     'Unknown variable {{unknownKey}} · not in payload',
   )
 })
+
+test('version history lists the saved versions and offers no way to roll one back', async ({ page }) => {
+  // The dialog is the only consumer of `GET /api/templates/:id/versions`, so
+  // this is the browser test that proves the route is reachable from the UI.
+  await openTemplate(page, WELCOME)
+
+  await actionsToolbar(page).getByRole('button', { name: 'More actions' }).click()
+  await page.getByRole('menuitem', { name: 'Version history' }).click()
+
+  const dialog = page.getByRole('dialog').filter({ hasText: 'Version history' })
+  await expect(dialog).toBeVisible()
+  // Every template has a v1: versions are append-only and never deleted.
+  await expect(dialog.getByText('v1', { exact: true })).toBeVisible()
+  await expect(dialog.getByRole('listitem').first()).toContainText('Code')
+  await expect(dialog).toContainText('Read only')
+  // Bringing an old version back is M4 work; a button here would be a promise
+  // this studio does not keep.
+  await expect(dialog.getByRole('button', { name: /^Restore/ })).toHaveCount(0)
+
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
+})
+
+test('the sample data picker fills the props editor, and an edit makes it Custom', async ({ page }) => {
+  await openTemplate(page, WELCOME)
+  await waitForRender(page)
+
+  const picker = payloadPanel(page).getByRole('combobox', { name: 'Sample data' })
+  await expect(picker).toHaveText('Default')
+
+  await openEditorTab(page, 'preview-props.json')
+  const payload = page.getByLabel(PAYLOAD_LABEL)
+  await expect(payload).toContainText('"recipientName": "Ada"')
+
+  await picker.click()
+  await page.getByRole('option', { name: 'Long values' }).click()
+  await expect(picker).toHaveText('Long values')
+  await expect(payload).toContainText('Ada Ada Ada')
+  // A stretched value is still a VALID value: a preset never red-lines the card.
+  await expect(payloadPanel(page).getByText('JSON valid')).toBeVisible()
+
+  // Choosing a preset is an ordinary draft edit, so typing over it is simply the
+  // next edit — and the label says so by itself, because it is derived.
+  await replaceEditorText(page, PAYLOAD_LABEL, '{ "recipientName": "Grace" }')
+  await expect(picker).toHaveText('Custom')
+})

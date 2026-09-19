@@ -2,6 +2,12 @@
 
 Written 2026-09-08 at the start of the MVP, kept as the record of what was found and decided.
 
+> **This is a dated snapshot, not a maintained document.** It says what the repository looked like on
+> 2026-09-08 and what was decided then; it is deliberately not rewritten as the code moves. For what
+> is true today read `README.md`, `docs/ARCHITECTURE.md` and `docs/DECISIONS.md`; for what to do next
+> read `docs/PRIORITIES.md`. Three statements below have been annotated where later work made the
+> original wording read as a claim about the present (checked 2026-09-19).
+
 ## 1. What was in the repository
 
 | Item                          | Finding                                                                                                                       |
@@ -51,7 +57,7 @@ None that block the MVP. For later milestones: an AWS account/SES identity, a Cl
 - `src/infrastructure/templates/*` — three sample templates and the registry with Zod schemas
 - `src/infrastructure/validation/zodPropsValidator.ts`, `src/infrastructure/session/sessionStore.ts`, `src/infrastructure/providers/emailProvider.ts`
 - `src/presentation/**` — hooks, layout, studio panels, shared components (+ tests)
-- `src/components/ui/*` (shadcn), `src/components/motion/animated-badge.tsx` (beUI), `src/lib/*`
+- `src/components/ui/*` (shadcn), `src/components/motion/animated-badge.tsx` (beUI; still there, but reimplemented on CSS keyframes in phase 6 of the visual-editor work — the `motion` dependency was removed, see the ADR-4 update), `src/lib/*`
 - `e2e/studio.spec.ts` — browser tests
 - `docs/*` and this file
 
@@ -64,7 +70,7 @@ None that block the MVP. For later milestones: an AWS account/SES identity, a Cl
 5. Unit tests for every pure module; fix what they found.
 6. Presentation layer: hooks, panels, dialogs, page; design tokens.
 7. Production build; Playwright E2E in headless Chromium; fix the Prism worker crash and locator issues.
-8. Add beUI's animated badge for validation/loading state transitions (reduced-motion aware).
+8. Add beUI's animated badge for validation/loading state transitions (reduced-motion aware). _Later: `motion` was dropped and the same gesture rewritten in CSS; see the ADR-4 update in `docs/DECISIONS.md`._
 9. Documentation, formatting, final checks.
 
 ## 7. Validation commands
@@ -72,10 +78,14 @@ None that block the MVP. For later milestones: an AWS account/SES identity, a Cl
 ```bash
 npm run typecheck        # tsc -b --noEmit
 npm run lint             # oxlint
-npm test                 # vitest: 47 unit/component tests
+npm test                 # vitest: 47 unit/component tests AT THE TIME
 npm run build            # production build (also type-checks)
 npx playwright install chromium   # once
-npm run test:e2e         # 8 browser tests against the production build
+npm run test:e2e         # 8 browser tests against the production build AT THE TIME
 ```
 
-All of the above pass as of the end of the MVP work (see the final summary in the pull request or session notes).
+All of the above passed as of the end of the MVP work. The counts are the ones from that day and are
+not updated here: on 2026-09-19 the same commands run **755 unit and component tests** and **58
+browser tests**, and the gate to run is `npm run check` (typecheck, lint, `prettier --check` and the
+unit tests in one go), followed by `npm run db:migrate` before `npm run dev`. `README.md` has the
+current list.

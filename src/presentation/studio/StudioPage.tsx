@@ -24,6 +24,7 @@ import { parsePreviewPayload } from '@/application/parsePreviewPayload'
 import type {
   RepositoryResult,
   TemplateMetadataPatch,
+  TemplateVersionSummary,
   VersionInput,
 } from '@/application/repositories/templateRepository'
 import { describeVersionConflict, type VersionConflictCopy } from '@/application/versionConflict'
@@ -78,6 +79,7 @@ import { ConvertToCodeDialog } from './dialogs/ConvertToCodeDialog'
 import { ExportedCodeDialog } from './dialogs/ExportedCodeDialog'
 import { ShortcutsDialog } from './dialogs/ShortcutsDialog'
 import { VersionConflictDialog } from './dialogs/VersionConflictDialog'
+import { VersionHistoryDialog } from './dialogs/VersionHistoryDialog'
 import { DeleteTemplateDialog } from '@/presentation/templates/DeleteTemplateDialog'
 import { EMPTY_EMAIL_DOCUMENT } from './visual/canvas'
 import { VisualEditorSkeleton } from './visual/VisualEditorSkeleton'
@@ -112,6 +114,8 @@ export interface StudioPageProps {
   onReloadLibrary: () => void
   /** Goes back to the library; the sub-header's breadcrumb calls it. */
   onBackToLibrary: () => void
+  /** Lists this template's saved versions, for the read-only history dialog. */
+  onListVersions: (id: TemplateId) => Promise<RepositoryResult<readonly TemplateVersionSummary[]>>
   /** Reports the last render time up to the header's latency pill. */
   onRenderTime: (ms: number | null) => void
 }
@@ -125,6 +129,7 @@ export function StudioPage({
   onDeleteTemplate,
   onReloadLibrary,
   onBackToLibrary,
+  onListVersions,
   onRenderTime,
 }: StudioPageProps) {
   const { template, draft, sourceDirty, documentDirty, payloadDirty, envelopeDirty, state, actions } = studio
@@ -394,6 +399,7 @@ export function StudioPage({
   const [sendOpen, setSendOpen] = useState(false)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [exportedCodeOpen, setExportedCodeOpen] = useState(false)
+  const [versionHistoryOpen, setVersionHistoryOpen] = useState(false)
   const [activeTab, setActiveTab] = useState<EditorTabId>('tsx')
   // Undo/redo and selection state, published by the canvas for the sub-header.
   // null until the editor chunk has arrived.
@@ -677,6 +683,7 @@ export function StudioPage({
         onDownloadHtml={downloadHtml}
         onDownloadText={downloadText}
         downloadReason={downloadReason}
+        onShowVersionHistory={() => setVersionHistoryOpen(true)}
         onViewExportedCode={() => setExportedCodeOpen(true)}
         onConvertToCode={canvasEnabled ? conversion.openDialog : undefined}
         onSave={requestSave}
@@ -779,6 +786,10 @@ export function StudioPage({
                       actions.resetPayload()
                       toast.success('Preview payload restored to the sample data.')
                     }}
+                    samplePayloadText={template.samplePayloadText}
+                    propsSchemaText={template.propsSchemaText}
+                    payloadText={draft.payloadText}
+                    onPayloadChange={actions.updatePayload}
                   />
                 }
               />
@@ -887,6 +898,12 @@ export function StudioPage({
         text={resolved.text}
       />
       <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
+      <VersionHistoryDialog
+        open={versionHistoryOpen}
+        onOpenChange={setVersionHistoryOpen}
+        templateId={templateId}
+        onListVersions={onListVersions}
+      />
       <ExportedCodeDialog
         open={exportedCodeOpen}
         onOpenChange={setExportedCodeOpen}

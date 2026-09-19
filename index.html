@@ -8,7 +8,38 @@
       name="description"
       content="Internal Email Template Studio: edit React Email templates and preview them locally."
     />
+    <meta name="color-scheme" content="light" />
     <title>Email Template Studio</title>
+    <!--
+      The dark theme, applied before the first paint.
+
+      This has to be a blocking inline script rather than React's job: the
+      stylesheet paints the light `:root` palette as soon as it lands, and the
+      bundle that mounts `useTheme` is hundreds of milliseconds behind it. Every
+      dark-mode load would flash white without these few lines (ADR-29).
+
+      It is deliberately a copy of `resolveTheme` and `THEME_STORAGE_KEY` from
+      `src/presentation/layout/theme.ts`; nothing from the bundle can run this
+      early. `src/presentation/layout/themeBootstrap.test.ts` runs this script against
+      the real `resolveTheme` so the copy cannot drift.
+    -->
+    <script>
+      ;(function () {
+        try {
+          var stored = window.localStorage.getItem('email-template-studio:theme')
+          var dark =
+            stored === 'dark' ||
+            (stored !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+          if (dark) {
+            document.documentElement.classList.add('dark')
+            document.querySelector('meta[name="color-scheme"]').content = 'dark'
+          }
+        } catch {
+          // A private window throws on the storage access itself. The page is
+          // then simply light, which is the default anyway.
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

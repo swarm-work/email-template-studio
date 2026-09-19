@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
+import { buildPropsPresets } from '@/application/propsPresets'
+import { jsonSchemaPropsValidator } from '@/infrastructure/validation/jsonSchemaPropsValidator'
 import { STARTER_PROPS_SCHEMAS, STARTER_TEMPLATES } from './registry'
 
 /** Only code starters are authored as TSX with a hand-written Zod schema. */
@@ -63,4 +65,37 @@ describe('visual starters', () => {
       expect(topLevel.map((node) => node.type)).toEqual(['container'])
     },
   )
+})
+
+/**
+ * The Sample data picker offers a preset per template; a preset that fails the
+ * template's own schema would red-line the props card and stop the preview, so
+ * this is the test that keeps the derivation honest against the REAL starters
+ * (the unit tests in `propsPresets.test.ts` use synthetic schemas).
+ */
+describe('starter props presets', () => {
+  it.each(STARTER_TEMPLATES.map((template) => [template.metadata.slug, template] as const))(
+    "every preset offered for %s validates against that template's schema",
+    (slug, template) => {
+      const validate = jsonSchemaPropsValidator(template.propsSchemaText)
+
+      for (const preset of buildPropsPresets(template.samplePayloadText, template.propsSchemaText)) {
+        const result = validate(JSON.parse(preset.text) as Record<string, unknown>)
+        expect(
+          result.ok,
+          `${slug} / ${preset.label}: ${result.ok ? '' : JSON.stringify(result.issues)}`,
+        ).toBe(true)
+      }
+    },
+  )
+
+  it('never offers two presets with the same data', () => {
+    for (const template of STARTER_TEMPLATES) {
+      const texts = buildPropsPresets(template.samplePayloadText, template.propsSchemaText).map((preset) =>
+        preset.text.trim(),
+      )
+
+      expect(new Set(texts).size, `${template.metadata.slug} repeats a preset`).toBe(texts.length)
+    }
+  })
 })

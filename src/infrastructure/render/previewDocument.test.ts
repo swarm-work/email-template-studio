@@ -15,6 +15,15 @@ describe('buildPreviewDocument', () => {
     expect(doc).toContain('<p>fragment</p>')
   })
 
+  // A frame inherits the embedder's colour scheme, so without this the email
+  // would go dark with the app and style nothing to stay readable.
+  it('pins the email to the light colour scheme', () => {
+    expect(buildPreviewDocument('<p>fragment</p>')).toContain('<meta name="color-scheme" content="light">')
+    expect(buildPreviewDocument('<html><head></head><body>hi</body></html>')).toContain(
+      '<meta name="color-scheme" content="light">',
+    )
+  })
+
   it('forbids scripts in the policy', () => {
     expect(PREVIEW_CSP).toContain("default-src 'none'")
     expect(PREVIEW_CSP).not.toContain('script-src')

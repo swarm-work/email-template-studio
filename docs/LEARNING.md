@@ -2,6 +2,25 @@
 
 For a developer coming from Salesforce (Apex, LWC, Flows) into this codebase. Each concept points at the file that uses it, so you can read code and theory together.
 
+The table below is the index by CONCEPT. The long sections after it are the index by IDEA: each one
+was written while the feature it describes was being built, and each teaches one thing properly
+rather than mentioning ten.
+
+| Section                                                                                                                          | What it teaches                                                                                                                           | Read it when                                        |
+| -------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| [Discriminated unions drive exhaustive switches](#discriminated-unions-drive-exhaustive-switches)                                | Making illegal states unrepresentable, and letting the compiler find every place that must change                                         | You are about to add a variant to a union           |
+| [Ports and adapters: the repository pattern and `VITE_DATA_MODE`](#ports-and-adapters-the-repository-pattern-and-vite_data_mode) | Declaring what you need as an interface in the inner layer, implementing it in the outer one, and testing both against one contract suite | You want to swap a data source, or test without one |
+| [Migrations and optimistic concurrency](#migrations-and-optimistic-concurrency-revision--apex-systemmodstamp)                    | SQL schema as numbered files, and the `revision` counter that is this codebase's `SystemModstamp`                                         | You are touching the database or a save path        |
+| [Controlled inputs and a single reducer: the envelope panel](#controlled-inputs-and-a-single-reducer-the-envelope-panel)         | Why React forms hold their value in state, and how one reducer serves a whole panel                                                       | You are building a form                             |
+| [`useMemo`: why one render feeds two views](#usememo-why-one-render-feeds-two-views)                                             | Derived values, stable identities, and the cost of recomputing                                                                            | Something re-renders when it should not             |
+| [`React.lazy`, `Suspense` and code splitting](#reactlazy-suspense-and-code-splitting)                                            | How 729 KB of editor stays off the page until somebody needs it, and how that is enforced                                                 | You are adding a big dependency                     |
+| [Pure functions and table-driven tests: merge fields](#pure-functions-and-table-driven-tests-merge-fields)                       | Writing a whole feature with no framework in it, and testing it as a table of cases                                                       | You are writing new logic of any size               |
+| [HTTP without exceptions: result types and error mapping](#http-without-exceptions-result-types-and-error-mapping)               | Returning failure as a value, and turning status codes into sentences a person can act on                                                 | You are calling an API                              |
+| [Walking a tree and generating code](#walking-a-tree-and-generating-code)                                                        | Recursion over a document, and why an unknown node is a refusal rather than a guess                                                       | You are transforming structured data                |
+| [Talking to the browser, carefully](#talking-to-the-browser-carefully)                                                           | Effects versus layout effects, why every `localStorage` access is wrapped, and deriving state instead of storing it                       | You are reaching outside React                      |
+| [Suggested reading order through the code](#suggested-reading-order-through-the-code)                                            | Twelve entries, in the order that makes each one explain the next                                                                         | Day one                                             |
+| [Things worth practising](#things-worth-practising)                                                                              | Small changes that break something on purpose, so a test can teach you                                                                    | You have an hour                                    |
+
 | Concept                                                          | Closest Salesforce idea                                               | Where it is used                                                                        | Read                                                            |
 | ---------------------------------------------------------------- | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
 | TypeScript union types with a discriminant (`ok: true \| false`) | Apex enums + wrapper classes, but checked by the compiler             | `src/domain/preview.ts` (`ValidationResult`, `RenderResult`)                            | TS handbook: Narrowing, Discriminated unions                    |
@@ -638,6 +657,104 @@ byte equality would be asserting that nobody ever improves either of them.
 `__fixtures__/*.tsx` (what the output actually looks like), then the three test files named above.
 ADR-28 records why an unknown node is a refusal rather than a guess.
 
+## Talking to the browser, carefully
+
+Written while the theme toggle and the sample-data picker were built (ADR-29, ADR-30). Three ideas,
+all of them about the same question: **where does something live, and who is allowed to touch it?**
+
+### An effect is a door out of React
+
+React components are supposed to be a function of their props and state. `.dark` on `<html>`, a
+`localStorage` entry and `prefers-color-scheme` are none of those — they are the outside world. The
+door out is `useEffect`, and `src/presentation/hooks/useTheme.ts` uses it twice:
+
+```ts
+// Subscribe to something outside React, and unsubscribe on the way out.
+useEffect(() => {
+  const query = window.matchMedia('(prefers-color-scheme: dark)')
+  const onChange = (event: MediaQueryListEvent) => setPrefersDark(event.matches)
+  query.addEventListener('change', onChange)
+  return () => query.removeEventListener('change', onChange) // ← the cleanup is not optional
+}, [])
+```
+
+The returned function runs when the component unmounts **and** before the effect runs again. Forget
+it and you leak a listener per mount; in Apex terms it is the `finally` block you always write.
+
+The second effect uses `useLayoutEffect` instead, and the difference is the whole reason it exists:
+a plain effect runs _after_ the browser has painted, a layout effect _before_. Toggling `.dark` in a
+plain effect means switching the theme shows the old palette for one frame and then blinks. Reach
+for `useLayoutEffect` only when you are changing something the user would see flash — it blocks paint,
+so it is the more expensive of the two.
+
+**And know what it cannot do.** A layout effect only beats the paint that follows React's _first
+render_. On a reload the browser paints the stylesheet's light palette as soon as the CSS lands,
+which is hundreds of milliseconds before a 430 KB bundle has downloaded, parsed and mounted anything.
+No React hook can win that race, because React is not running yet. The fix is older than React: a few
+lines of blocking `<script>` in `index.html`, before the stylesheet, that read the same key and set
+the same class. That is a genuine duplicate of `resolveTheme` — so
+`src/presentation/layout/themeBootstrap.test.ts` reads the script out of `index.html`, runs it, and
+compares it with the real function for all six combinations. **When you are forced to copy logic,
+write the test that notices when the copy drifts**; that is the rule, not "never copy".
+
+### Not every browser API is there, and some of them throw
+
+`localStorage` looks like a plain object. It is not:
+
+```ts
+try {
+  return parseThemePreference(window.localStorage.getItem(THEME_STORAGE_KEY))
+} catch {
+  return 'system'
+}
+```
+
+In a private window, or with site data blocked, **the property access itself throws** — not the read,
+the access. Same family of problem as `window.matchMedia` being absent in jsdom, which is why the
+component test stubs it, and as `Element.prototype.hasPointerCapture` being absent in jsdom, which is
+why `src/test/setup.ts` stubs that too so a Radix `Select` can open in a test. The rule that falls out
+of all three: **treat the browser as an external system that may say no**, render correctly without
+it, and never let a convenience break the page. Nothing here is Salesforce's `Schema.sObjectType`
+world, where the platform guarantees the API is present.
+
+### If you can derive it, do not store it
+
+The sample-data picker (`PropsPayloadCard`) has three options and no state:
+
+```ts
+const presets = useMemo(
+  () => buildPropsPresets(samplePayloadText, propsSchemaText),
+  [samplePayloadText, propsSchemaText],
+)
+const selected = presets.find((preset) => preset.text === payloadText) // undefined ⇒ "Custom"
+```
+
+The obvious implementation remembers which preset was chosen. Then somebody edits the JSON, the
+remembered value still says `Long values`, and the label is lying about what is on screen. Deriving
+the label from the payload makes that impossible: the moment the text stops matching, the picker
+says `Custom` by itself. There is nothing to reset, nothing to persist and no way for the two to
+disagree — the same instinct as a formula field instead of a field somebody has to remember to update.
+
+`buildPropsPresets` itself is the same idea one level up: the presets are computed from the sample
+payload **and the props schema** the template already stores, so a template created a minute ago has
+them and none of them can go stale (ADR-30).
+
+The second argument is the lesson that cost a review round. The first version took only the payload,
+and it read fine: empty every value, stretch every string. Run it against the shipped starters and
+three of the four red-lined their own props card — `role` is an `enum` of three words and
+`"member member member…"` is not one of them; `recipientName` is `required` and `''` is not a name.
+**A derived value is only as honest as the constraints you derived it against.** The schema was
+already stored, one prop away. And the test that would have caught it is not a unit test of clever
+string logic but the boring one in `registry.test.ts`: take every real starter, build every preset,
+run it through that starter's own validator.
+
+### Where to look
+
+`src/presentation/layout/theme.ts` (the pure rules, and their test), `useTheme.ts` (the effects),
+`ThemeToggle.tsx` (the control), `src/application/propsPresets.ts` and its table test, and
+`e2e/theme.spec.ts` — which is where the rule that matters is actually enforced: the app goes dark,
+the email does not.
+
 ## Suggested reading order through the code
 
 1. `src/domain/*` — the vocabulary (10 minutes).
@@ -651,6 +768,7 @@ ADR-28 records why an unknown node is a refusal rather than a guess.
 9. `server/templateRoutes.test.ts` — every HTTP rule the API promises, one case each.
 10. `src/infrastructure/templates/httpTemplateRepository.ts` — the browser's side of that API, and what "no method throws" looks like in practice.
 11. `e2e/studio.spec.ts` and `e2e/templates.spec.ts` — the behaviours we promise, written as a user would experience them.
+12. `e2e/theme.spec.ts` — the shortest example of a test that exists to stop one specific mistake, with the reason written above it.
 
 ## Things worth practising
 
@@ -663,3 +781,5 @@ ADR-28 records why an unknown node is a refusal rather than a guess.
 - Change the debounce or timeout constants and watch the E2E tests react.
 - Break the error mapping on purpose: make `failureFor` return `unexpected` for 409 and watch which test in `httpTemplateRepository.test.ts` fails, and what the conflict dialog does instead.
 - Provoke a real conflict: open the same template in two tabs, save in one, then save in the other.
+- Break the theme rule on purpose: delete the `color-scheme: light` line from `.studio-sheet` in `src/index.css`, run `npx playwright test e2e/theme.spec.ts`, and read which assertion fails and what it says.
+- Add a fourth sample-data preset (`Very long single word`, say) — one entry in `buildPropsPresets`, one case in its table test, and the picker grows by itself.

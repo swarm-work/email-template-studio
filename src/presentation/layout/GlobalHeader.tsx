@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { StatusBadge } from '@/presentation/shared/StatusBadge'
 import { cn } from '@/lib/utils'
+import { ThemeToggle } from './ThemeToggle'
 
 /** The product areas that actually have a screen behind them today. */
 export type ScreenPage = 'api' | 'templates'
@@ -137,17 +138,24 @@ export function GlobalHeader({
         </nav>
 
         <div className="ml-auto flex min-w-0 items-center gap-2">
+          {/* 2xl, not xl: the theme toggle joined this cluster in phase 9, and at
+              1440 the three of them together took the width the nav needs — the
+              ACTIVE page's label was clipped to "Temp" in the README's own
+              screenshots. The latency pill is the one thing here that is
+              information rather than navigation, so it is the one that waits. */}
           <Tooltip>
             <TooltipTrigger asChild>
               <span
                 tabIndex={0}
-                className="text-muted-foreground focus-visible:ring-ring/50 hidden h-7 items-center gap-1.5 rounded-md border px-2 font-mono text-[11px] tabular-nums outline-none focus-visible:ring-3 xl:inline-flex"
+                className="text-muted-foreground focus-visible:ring-ring/50 hidden h-7 items-center gap-1.5 rounded-md border px-2 font-mono text-[11px] tabular-nums outline-none focus-visible:ring-3 2xl:inline-flex"
               >
                 {live ? 'LIVE' : 'Local'} · render worker {lastRenderMs === null ? '—' : `${lastRenderMs} ms`}
               </span>
             </TooltipTrigger>
             <TooltipContent>{LATENCY_TOOLTIP}</TooltipContent>
           </Tooltip>
+
+          <ThemeToggle />
 
           <Button asChild variant="ghost" size="sm">
             <a href="https://react.email/docs" target="_blank" rel="noreferrer">

@@ -6,9 +6,16 @@ Companion documents: `docs/DEPLOYMENT.md` (how deploys work and how to switch li
 
 Facts about GitHub and Cloudflare below were verified against the official documentation on 2026-09-10. Where a claim could not be confirmed it says so instead of guessing.
 
-## Do it now, before phase 2
+## Do it now — and the cheap window has closed
 
-Nothing has to be migrated yet. There is no database, no stored user data and no custom domain. The moment `docs/PLAN.md` phase 2 adds D1, this becomes a data migration with a freeze window. Doing it now is an afternoon; doing it later is a project.
+**Superseded, 2026-09-19.** This section used to say "there is no database, no stored user data and no
+custom domain", and that the move was an afternoon. That was true until `docs/PLAN.md` phase 2 landed.
+**There is data now**: templates and their immutable versions in a Cloudflare D1 database, and
+uploaded images in an R2 bucket, both on the account `wrangler.jsonc` pins (ADR-21, ADR-22). The move
+is therefore a data migration with a freeze window — export, create on the new account, apply
+migrations, import, copy the R2 objects — exactly as part B below now describes. Doing it is no
+longer an afternoon, and every week it waits adds rows. There is still no custom domain, which is
+what Cloudflare Access needs (TECH_DEBT #19).
 
 ## Which order, and why
 

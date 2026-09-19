@@ -24,9 +24,12 @@ export default defineConfig({
   timeout: 75_000,
   use: {
     baseURL: 'http://localhost:4173',
-    viewport: { width: 1440, height: 900 },
     trace: 'retain-on-failure',
   },
+  // `devices['Desktop Chrome']` carries its own 1280x720 viewport and a project's
+  // `use` beats the top-level one, so stating a viewport up there would be a dead
+  // line. 1280 is `xl`: the width where the studio shows its full desktop layout.
+  // `e2e/screenshots.spec.ts` asks for 1440x900 per test, which does work.
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: {
     // Build with the e2e environment, drop any local secrets that leaked into

@@ -30,13 +30,13 @@ Screens and capabilities, in the order they will be built:
 
 1. **Studio** (exists): edit TSX and props, isolated preview, diagnostics, test send.
 2. **Sign-in and identity**: Cloudflare Access; the header shows who is signed in.
-3. **Template library as data**: create, rename, archive; templates and drafts live in D1, not in `registry.ts`.
+3. **Template library as data** (done, differently — see the phase 2 note below): create, rename, delete; templates and their versions live in D1. DRAFTS did not move: they stay in `sessionStorage` (ADR-10), because a draft is a fact about one browser.
 4. **Versions and publishing**: publish creates an immutable version; version list, diff, rollback; environment targets `sandbox` and `production`; hold-to-confirm and type-to-confirm as the brief specifies.
 5. **Sending API**: `POST /api/v1/emails` with `{ template, version?, props, to }`, API keys, idempotency keys, queue-backed delivery.
 6. **Delivery log**: every send with status (`queued`, `sent`, `bounced`, `complained`, `failed`), message id, timestamps; SES feedback arrives through an SNS webhook.
 7. **Operations**: staging and production, CI deploys, logs, D1 backups, cost visibility.
 
-Still out of scope (unchanged from the roadmap): marketing campaigns, contacts, customer-managed domains, drag-and-drop building, attachments, collaborative editing, AI content.
+Still out of scope (unchanged from the roadmap): marketing campaigns, contacts, customer-managed domains, attachments, collaborative editing, AI content. **Drag-and-drop email building is no longer on that list** — ADR-18 superseded it and the studio has a visual canvas (see `docs/ROADMAP.md`).
 
 ## 3. Target architecture
 
@@ -93,7 +93,7 @@ Rules that keep it understandable:
 
 - `server/` never imports from `node:*` or from `cloudflare:*`. Adapters (`server/node.ts`, `worker/index.ts`) do the platform work and hand plain objects in.
 - Every route validates its body with a schema from `shared/` and the browser parses every response with the same schema. One source of truth for the API contract; the duplication that exists today between `server/app.ts` and `emailProvider.ts` goes away.
-- The browser talks to repositories through interfaces declared in `application/` (`TemplateRepository`), the same way `EmailProvider` works now. `registry.ts` becomes one implementation used by tests and by the offline fallback.
+- The browser talks to repositories through interfaces declared in `application/` (`TemplateRepository`), the same way `EmailProvider` works now. (Done: `HttpTemplateRepository` and `InMemoryTemplateRepository` both implement it, picked by `VITE_DATA_MODE`; `registry.ts` became `STARTER_TEMPLATES`, the seed input for migration 0002 and for test fixtures, rather than a repository of its own — ADR-20, ADR-23.)
 
 ## 5. Phases
 
@@ -145,6 +145,28 @@ Learning items: JWT verification with WebCrypto, IAM condition keys, SigV4 (you 
 
 Goal: templates, drafts and metadata live in D1; the UI can create a template; `registry.ts` becomes seed data.
 
+> **Progress, 2026-09-19. This phase is delivered**, by phases 7a and 7b of the visual-editor plan,
+> with four deliberate differences from the sketch below.
+>
+> 1. **Drafts did not move to the server.** They stay in `sessionStorage`, per template, with the
+>    server `revision` they were started from. A draft is one person's unfinished work in one
+>    browser; syncing it would have meant a write per keystroke and a second concurrency problem on
+>    top of the one that matters. So there is no `drafts` table.
+> 2. **The column names differ** from the sketch: `source` (not `tsx_source`), `props_sample` (not
+>    `default_props`), `version_number` (not `number`/`version`), `plain_text`, plus `document`,
+>    `theme` and `html` for the visual kind. `compiled_js` is not stored at all — the studio compiles
+>    in the browser and stores the rendered HTML instead. `docs/FEATURE_PLAN.md` §10 was corrected to
+>    match.
+> 3. **Concurrency is a `revision` counter, not a timestamp** (ADR-22), and every write is one
+>    `db.batch`, so a stale save writes nothing and gets a 409 carrying the server's copy.
+> 4. **Repository tests do not use `@cloudflare/vitest-pool-workers`**: it peer-requires Vitest 4 and
+>    this repo is on 5. The contract suite runs against the in-memory store and against Node's
+>    built-in SQLite driving the real migration file; local D1 itself is covered by
+>    `e2e/templates.spec.ts` (TECH_DEBT #24).
+>
+> Also delivered here rather than in phase 3: the create-template dialog, the delete dialog, the
+> version-conflict dialog and `Mark as ready / Mark as draft`.
+
 Schema (first migration):
 
 ```sql
@@ -172,7 +194,7 @@ Goal: "Publish" is real. A version is immutable, has a number, can be diffed and
 
 1. Publish flow: the browser compiles the draft with the existing sucrase pipeline, renders the sample once to prove it works, then `POST /api/templates/:id/versions` with `{ source, compiled_js, props_schema_json, sample_props_json, notes }`. The Worker stores it; it does not execute it.
 2. Add `template_environments (template_id, environment, version_id, set_by, set_at)`; "Promote to production" is a separate action with hold-to-confirm. Rollback sets an older version.
-3. Version list panel (VERSIONS label from the brief), side-by-side source diff (CodeMirror merge view), "Publish version" replaces the simulated dialog.
+3. Version list panel (VERSIONS label from the brief): the **read-only** half of this shipped in phase 9 — `Version history` in the studio's overflow menu lists every saved version, newest first, with its number, kind, author, time and note. What is still phase 3 work is the side-by-side source diff (CodeMirror merge view), restoring a version, and a real "Publish version" action. (There is no longer a simulated publish dialog to replace: it was deleted in phase 2 of the visual-editor plan.)
 4. Approval step (roadmap M4): a `production` promotion requires a different user than the publisher. Simple rule, one column (`approved_by`), no workflow engine.
 5. Diagnostics gain a real check: "sample props validate against the version schema".
 
@@ -211,11 +233,11 @@ Learning items: at-least-once delivery and idempotency, webhooks and signature v
 
 **Testing.** Unit tests in `src/` and `server/` stay on Vitest in Node. Worker-specific code (bindings, D1 repositories, queue handler) uses `@cloudflare/vitest-pool-workers` 0.22 so tests run inside workerd with a local D1. Playwright keeps targeting `vite preview`, which now runs the Worker, so end-to-end tests cover the real API. Every phase adds E2E coverage for its exit criteria.
 
-**Local development.** `npm run dev` runs the SPA and the Worker together in workerd with a local D1 and a dry-run sender by default. `.dev.vars` holds `STUDIO_SEND_ENABLED`, AWS keys and a `DEV_USER_EMAIL` for the auth bypass. The Node send server remains for people who only want the MVP behaviour; it is not on the deploy path.
+**Local development.** `npm run dev` runs the SPA and the Worker together in workerd with a local D1 and whatever send posture the top-level `vars` in `wrangler.jsonc` give it — **today that is sending enabled and dry run off**, so with AWS credentials in `.dev.vars` a local dev server is a live sender. `STUDIO_SEND_DRY_RUN=true` in `.dev.vars` is the setting for day-to-day work (`README.md`, `docs/PRIORITIES.md` §3.3). `.dev.vars` also holds `STUDIO_SEND_ENABLED`, the AWS keys and `STUDIO_DEV_IDENTITY` for the auth bypass. The Node send server remains for people who only want the MVP behaviour; it is not on the deploy path. _Corrected 2026-09-19: this paragraph used to say "a dry-run sender by default"._
 
 **Secrets inventory.** `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (SES-only IAM user), `ACCESS_AUD` and `ACCESS_TEAM_DOMAIN` (public, as vars), `SNS_TOPIC_ARN` (var). Rotation: create the new IAM key, `wrangler secret put`, delete the old key. Nothing else.
 
-**Migrating existing data.** There is none; the three templates are seed rows. Session drafts in `sessionStorage` are discarded when phase 2 ships.
+**Migrating existing data.** _Superseded 2026-09-19: **there is data now.**_ Templates and their immutable versions live in Cloudflare D1 and uploaded images live in an R2 bucket (ADR-21, ADR-22). The four starters are still seed rows, written by migrations `0002` and `0003` and editable like any other template. Moving that data to another Cloudflare account is a real procedure, not a no-op: `docs/DEPLOYMENT.md`, "Moving to the production account". Session drafts in `sessionStorage` survived phase 2 and are still there — they are the unsaved draft on top of the saved version, not the storage.
 
 ## 7. Decisions to record
 

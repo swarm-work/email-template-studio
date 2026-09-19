@@ -179,6 +179,10 @@ export function CodeWorkspace({
             payloadDirty={payloadDirty}
             onFormat={() => onFormat('props')}
             onReset={() => setConfirmReset('props')}
+            samplePayloadText={template.samplePayloadText}
+            propsSchemaText={template.propsSchemaText}
+            payloadText={payloadText}
+            onPayloadChange={onPayloadChange}
           />
           {previewThumbnail}
           <RenderReportCard

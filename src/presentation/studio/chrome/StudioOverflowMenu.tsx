@@ -7,7 +7,7 @@
  * finished studio is visible from the start.
  */
 import { useId } from 'react'
-import { Code2, Download, FileCode2, Keyboard, MoreHorizontal, Send, Trash2 } from 'lucide-react'
+import { Code2, Download, FileCode2, History, Keyboard, MoreHorizontal, Send, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -33,6 +33,8 @@ export interface StudioOverflowMenuProps {
   onDownloadText: () => void
   /** Why the downloads cannot be used; `undefined` means they can. */
   downloadReason?: string
+  /** Opens the read-only list of saved versions. */
+  onShowVersionHistory: () => void
   /** Opens the read-only export views. The only route to them for a visual template. */
   onViewExportedCode: () => void
   /** Opens the convert-to-code dialog. Absent while the canvas is not available. */
@@ -51,6 +53,7 @@ export function StudioOverflowMenu({
   onDownloadHtml,
   onDownloadText,
   downloadReason,
+  onShowVersionHistory,
   onViewExportedCode,
   onConvertToCode,
   onToggleStatus,
@@ -90,6 +93,11 @@ export function StudioOverflowMenu({
           <ReasonedMenuItem reason={downloadReason} reasonId={downloadReasonId} onSelect={onDownloadText}>
             <Download aria-hidden="true" />
             Download plain text
+          </ReasonedMenuItem>
+          <DropdownMenuSeparator />
+          <ReasonedMenuItem onSelect={onShowVersionHistory}>
+            <History aria-hidden="true" />
+            Version history
           </ReasonedMenuItem>
           {kind === 'visual' ? (
             <>

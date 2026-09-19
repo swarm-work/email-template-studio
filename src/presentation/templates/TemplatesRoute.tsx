@@ -19,7 +19,9 @@ import type { EmailTemplate, TemplateId } from '@/domain'
 import type {
   NewTemplateInput,
   RepositoryFailure,
+  RepositoryResult,
   TemplateRepository,
+  TemplateVersionSummary,
   VersionInput,
 } from '@/application/repositories/templateRepository'
 import type { EmailProvider } from '@/infrastructure/providers/emailProvider'
@@ -58,6 +60,13 @@ export function TemplatesRoute({
   const [view, setView] = useState<StudioView>({ kind: 'library' })
 
   const openTemplate = useCallback((id: TemplateId) => setView({ kind: 'editor', templateId: id }), [])
+  /**
+   * The one repository READ the studio needs beyond the library list: the
+   * version-history dialog asks for it when it opens. It is passed as a
+   * callback rather than handing the whole repository down, so the studio still
+   * cannot reach anything else (ADR-20).
+   */
+  const listVersions = useCallback((id: TemplateId) => repository.listVersions(id), [repository])
   const backToLibrary = useCallback(() => setView({ kind: 'library' }), [])
 
   const { create, remove } = library
@@ -128,6 +137,7 @@ export function TemplatesRoute({
       onCreateTemplate={createTemplate}
       onDeleteTemplate={deleteTemplate}
       writes={library.writes}
+      onListVersions={listVersions}
       reloadLibrary={library.reload}
       renderer={renderer}
       store={store}
@@ -153,6 +163,7 @@ interface TemplatesWorkspaceProps {
   ) => Promise<RepositoryFailure | null>
   onDeleteTemplate: (id: TemplateId) => Promise<void>
   writes: TemplateWrites
+  onListVersions: (id: TemplateId) => Promise<RepositoryResult<readonly TemplateVersionSummary[]>>
   reloadLibrary: () => void
   renderer: TemplateRenderer
   store: StudioSessionStore
@@ -173,6 +184,7 @@ function TemplatesWorkspace({
   onCreateTemplate,
   onDeleteTemplate,
   writes,
+  onListVersions,
   reloadLibrary,
   renderer,
   store,
@@ -215,6 +227,7 @@ function TemplatesWorkspace({
       onDeleteTemplate={onDeleteTemplate}
       onReloadLibrary={reloadLibrary}
       onBackToLibrary={leaveEditor}
+      onListVersions={onListVersions}
       onRenderTime={onRenderTime}
     />
   )
