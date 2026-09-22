@@ -56,7 +56,7 @@ GitHub first, because the deploy credentials live on the repository and you only
 
 # Part A. GitHub
 
-The repository is `Jericho0912/email-template-studio` on a personal account.
+The repository is `swarm-work/email-template-studio`, and it is **public** (checked 2026-09-22). It was `Jericho0912/email-template-studio` on a personal account when this was written.
 
 ## A1. Transfer, do not re-push
 
@@ -115,7 +115,7 @@ The deploy job runs on every push to `main`, so `main` is production. Add a rule
 
 # Part B. Cloudflare
 
-Today: Worker `email-template-studio` on the personal account `d0fa6b3d72170539438800a907ec5323` (the id `wrangler.jsonc` pins), at `https://email-template-studio.jerichodelrosario35.workers.dev`.
+Today: Worker `email-template-studio` on the account `d0fa6b3d72170539438800a907ec5323` (the id `wrangler.jsonc` pins), at `https://email-template-studio.swarm-work-emailer.workers.dev`. **That account is named `swarm-work-emailer`, not a personal account** — verified with `npx wrangler whoami` on 2026-09-22. The separate `email-template-studio.jerichodelrosario35.workers.dev` host is a different, stale Worker that still answers with no credential; `docs/PRIORITIES.md` item 4.3 covers deleting it.
 
 **There is data now.** Templates live in a Cloudflare D1 database and uploaded images in an R2 bucket, both on that same account (ADR-21). Moving accounts therefore means moving data: export the database, create it on the new account, apply migrations, import, and copy the R2 objects. The exact commands are in "Moving to the production account" in `docs/DEPLOYMENT.md`. Do the move during a short freeze of edits.
 
@@ -253,7 +253,7 @@ Only after production has served a real send.
 
 ```bash
 npx wrangler logout
-npx wrangler login            # personal account
+npx wrangler login            # the swarm-work-emailer account
 npx wrangler whoami           # triple-check: this deletes a Worker
 npx wrangler delete --name email-template-studio
 npx wrangler logout
