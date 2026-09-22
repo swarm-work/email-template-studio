@@ -94,6 +94,9 @@ describe('send server API', () => {
       provider: 'amazon-ses',
       reason: 'off',
       user: 'tester@example.test',
+      // How the caller was identified, so the browser can tell whether a
+      // sign-out control makes sense. Names a mechanism, not a secret.
+      authMode: 'developer',
       // Reported even here: which workspaces the studio offers has nothing to
       // do with whether SES is reachable.
       features: { visualEditor: true },
@@ -115,6 +118,7 @@ describe('send server API', () => {
     expect(body).toEqual({
       enabled: true,
       user: 'tester@example.test',
+      authMode: 'developer',
       features: { visualEditor: true },
       provider: 'amazon-ses',
       mode: 'dry-run',

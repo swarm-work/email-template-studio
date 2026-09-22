@@ -285,6 +285,12 @@ export function createApp({
         provider: 'amazon-ses',
         reason: config.reason,
         user,
+        // How the caller was identified. The 401 body already carries this; it
+        // names a mechanism, not a secret. The browser uses it to decide whether
+        // a sign-out control makes sense - it does under Stytch, and does not
+        // under Access (the identity provider owns that) or the shared password
+        // (there is no person to sign out).
+        authMode: authenticator.mode,
         features,
       })
     }
@@ -292,6 +298,7 @@ export function createApp({
       enabled: true as const,
       provider: 'amazon-ses',
       user,
+      authMode: authenticator.mode,
       features,
       mode: sender?.mode ?? 'dry-run',
       from: config.from,

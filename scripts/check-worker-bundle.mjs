@@ -126,6 +126,10 @@ const STYTCH_ALLOWED = new Map([
     'src/presentation/auth/StytchSignIn.tsx',
     'the one module that mounts the Stytch SDK, reached only through React.lazy',
   ],
+  [
+    'src/presentation/auth/stytchSignOut.ts',
+    'reaches the SDK through a dynamic import(), so the always-mounted header does not pull the chunk in',
+  ],
 ])
 
 function* sourceFiles(path) {
