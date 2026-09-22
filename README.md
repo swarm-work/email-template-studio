@@ -16,7 +16,7 @@ The studio has three modes. The screenshots below are taken by `e2e/screenshots.
 
 ![Preview mode: the rendered email in a sandboxed frame with the envelope summary above it](docs/screenshots/studio-preview.png)
 
-**Status** (deployment facts last verified 2026-09-15; see `docs/PRIORITIES.md` §1 and §3, which is where the corrections to them are tracked): MVP plus test sending in both runtimes, deployed to Cloudflare at https://email-template-studio.jerichodelrosario35.workers.dev. Live sending is on there for this test deployment, behind the shared-password gate, with the AWS keys as Worker secrets (a deliberate exception, while it is a test sender, to the rule that this personal account holds no AWS credentials); see "Turning live sending on" in `docs/DEPLOYMENT.md` and, for the move to the company accounts, `docs/HANDOVER.md`. The browser never holds credentials: test emails go through the API in `server/`, which talks to Amazon SES only when you enable it, and only to the recipients `SES_ALLOWED_RECIPIENTS` permits (a list, or any typed address when it is `*`). The same sender runs in the local Node server and in the Cloudflare Worker. See `docs/SENDING.md`.
+**Status** (deployment facts verified 2026-09-22; see `docs/PRIORITIES.md` §1 and §3, which is where the corrections to them are tracked): MVP plus test sending in both runtimes, deployed to Cloudflare at https://email-template-studio.swarm-work-emailer.workers.dev — the Worker `email-template-studio` on the Cloudflare account **`swarm-work-emailer`** (`d0fa6b3d72170539438800a907ec5323`, the account `wrangler.jsonc` pins). Live sending is on there, behind the shared-password gate, with the AWS keys as Worker secrets (a deliberate exception while it is a test sender); see "Turning live sending on" in `docs/DEPLOYMENT.md` and, for what is left of the move to the company accounts, `docs/HANDOVER.md`. Two things that trip people up: every deployed Worker still runs pre-#14 code, so Stytch sign-in and the upload rate limit are on main but not live; and `https://email-template-studio.jerichodelrosario35.workers.dev` is a **different, personal account** serving a stale pre-auth build whose API answers 200 with no credential — it is to be deleted, not used. The browser never holds credentials: test emails go through the API in `server/`, which talks to Amazon SES only when you enable it, and only to the recipients `SES_ALLOWED_RECIPIENTS` permits (a list, or any typed address when it is `*`). The same sender runs in the local Node server and in the Cloudflare Worker. See `docs/SENDING.md`.
 
 ## What you can do
 
@@ -77,32 +77,35 @@ send dialog says so, while templates, uploads and previews keep working; **with*
 `npm run dev` is a live sender. `STUDIO_SEND_DRY_RUN=true` in `.dev.vars` is the setting for day-to-day
 work (`docs/SENDING.md`, and `docs/PRIORITIES.md` §3.5–3.6 for why this is the way it is).
 
-Deploy: `npm run deploy` (needs `npx wrangler login`, and `npm run db:migrate:prod` first; see
-`docs/DEPLOYMENT.md`).
+Deploy: `npm run deploy` (needs `npx wrangler login`). With no `--env` it deploys the top-level
+Worker, which is production: `email-template-studio` on the `swarm-work-emailer` account.
+`npm run db:migrate:prod` cannot run yet — no remote D1 database exists on that account
+(`npx wrangler d1 list` is empty and every `database_id` in `wrangler.jsonc` is a placeholder), so
+create it first. See `docs/DEPLOYMENT.md`.
 
 ## Scripts
 
-| Command                   | What it does                                                                                                         |
-| ------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `npm run dev`             | Start the Vite dev server with hot reload; `/api` runs in workerd via the Cloudflare plugin.                         |
-| `npm run dev:node`        | Same, but `/api` is proxied to the Node send server (`npm run server`).                                              |
-| `npm run build`           | Generate Worker types, type-check (`tsc -b`) and build the client and the Worker into `dist/`.                       |
-| `npm run preview`         | Serve the production build locally (workerd for `/api`). `preview:node` proxies to the Node server.                  |
-| `npm run server`          | Start the Node send server (the only runtime that has talked to real SES). `server:dry-run` logs instead of sending. |
-| `npm run deploy`          | Build and deploy the Worker with wrangler.                                                                           |
-| `npm test`                | Run unit and component tests once (Vitest).                                                                          |
-| `npm run test:watch`      | Run tests in watch mode.                                                                                             |
-| `npm run test:e2e`        | Run Playwright browser tests against the production build (needs `npx playwright install chromium` once).            |
-| `npm run typecheck`       | Type-check without emitting files.                                                                                   |
-| `npm run lint`            | Lint with oxlint (the linter the Vite template ships with).                                                          |
-| `npm run format`          | Format with Prettier. `format:check` only reports, which is what CI and `npm run check` run.                         |
-| `npm run cf:types`        | Regenerate `worker-configuration.d.ts` from `wrangler.jsonc` (run after changing bindings or vars).                  |
-| `npm run check`           | Typecheck, lint, format check and unit tests in one go (the same gate CI runs).                                      |
-| `npm run db:migrate`      | Apply the SQL migrations to the **local** template database (`.wrangler/state/v3`).                                  |
-| `npm run db:migrate:e2e`  | The same, for the separate database the Playwright suite uses (`--env e2e`).                                         |
-| `npm run db:migrate:prod` | Apply them to the real Cloudflare D1 database. Always before `npm run deploy`.                                       |
-| `npm run db:console`      | Run one SQL statement against the local database: `npm run db:console -- "SELECT * FROM templates"`.                 |
-| `npm run seed:generate`   | Regenerate the starter-template seed migration after editing a starter.                                              |
+| Command                   | What it does                                                                                                                 |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `npm run dev`             | Start the Vite dev server with hot reload; `/api` runs in workerd via the Cloudflare plugin.                                 |
+| `npm run dev:node`        | Same, but `/api` is proxied to the Node send server (`npm run server`).                                                      |
+| `npm run build`           | Generate Worker types, type-check (`tsc -b`) and build the client and the Worker into `dist/`.                               |
+| `npm run preview`         | Serve the production build locally (workerd for `/api`). `preview:node` proxies to the Node server.                          |
+| `npm run server`          | Start the Node send server. `server:dry-run` logs instead of sending. The deployed Worker sends live as well.                |
+| `npm run deploy`          | Build and deploy the Worker with wrangler.                                                                                   |
+| `npm test`                | Run unit and component tests once (Vitest).                                                                                  |
+| `npm run test:watch`      | Run tests in watch mode.                                                                                                     |
+| `npm run test:e2e`        | Run Playwright browser tests against the production build (needs `npx playwright install chromium` once).                    |
+| `npm run typecheck`       | Type-check without emitting files.                                                                                           |
+| `npm run lint`            | Lint with oxlint (the linter the Vite template ships with).                                                                  |
+| `npm run format`          | Format with Prettier. `format:check` only reports, which is what CI and `npm run check` run.                                 |
+| `npm run cf:types`        | Regenerate `worker-configuration.d.ts` from `wrangler.jsonc` (run after changing bindings or vars).                          |
+| `npm run check`           | Typecheck, lint, format check and unit tests in one go (the same gate CI runs).                                              |
+| `npm run db:migrate`      | Apply the SQL migrations to the **local** template database (`.wrangler/state/v3`).                                          |
+| `npm run db:migrate:e2e`  | The same, for the separate database the Playwright suite uses (`--env e2e`).                                                 |
+| `npm run db:migrate:prod` | Apply them to the remote Cloudflare D1 database — which does not exist yet; create it first. Always before `npm run deploy`. |
+| `npm run db:console`      | Run one SQL statement against the local database: `npm run db:console -- "SELECT * FROM templates"`.                         |
+| `npm run seed:generate`   | Regenerate the starter-template seed migration after editing a starter.                                                      |
 
 ## How it is put together
 
@@ -143,7 +146,7 @@ The dependency direction is one way: `presentation -> application -> domain`, an
 
 - `docs/ASSESSMENT.md` — repository assessment, assumptions, risks, prerequisites, plan and validation commands
 - `docs/ARCHITECTURE.md` — layers, render pipeline, isolation, state model
-- `docs/DECISIONS.md` — architecture decision records, ADR-1 to ADR-30 (framework, editors, compiler, persistence, concurrency, merge fields, conversion, theme…)
+- `docs/DECISIONS.md` — architecture decision records, ADR-1 to ADR-31 (framework, editors, compiler, persistence, concurrency, merge fields, conversion, theme, Stytch sign-in…)
 - `docs/TECH_DEBT.md` — known shortcuts and how to pay them down
 - `docs/ROADMAP.md` — milestones and the backlog of deliberately deferred work
 - `docs/PLAN.md` — build plan for the full application and the move to Cloudflare (phases, decisions, risks)
@@ -153,6 +156,7 @@ The dependency direction is one way: `presentation -> application -> domain`, an
 - `docs/DESIGN.md` — visual system, tokens, microcopy and motion rules
 - `docs/SENDING.md` — enabling and using test sends through Amazon SES
 - `docs/DEPLOYMENT.md` — where the studio runs, how to deploy, and how to switch live sending on
+- `docs/STYTCH_PLAN.md` — the Stytch B2B sign-in plan (ADR-31) and what is left before it can be deployed
 - `docs/HANDOVER.md` — step-by-step move to the company Cloudflare account and GitHub organisation
 
 ## Guarantees

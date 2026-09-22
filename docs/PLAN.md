@@ -125,8 +125,12 @@ Goal: teammates sign in through Access and can send allow-listed test emails fro
 > an hour), and `createApp` now refuses any `/api/*` request it cannot attribute to a person —
 > including when no authenticator is wired in at all, so a forgetful adapter fails closed.
 > Local runs and the Playwright suite use a fixed `STUDIO_DEV_IDENTITY` instead of a tunnel.
-> Step 1 is **not** done and is the remaining blocker: Access needs a hostname in a zone, and
-> the current target is the personal account, which must not get a custom domain (`docs/HANDOVER.md`).
+> Step 1 is **not** done and is the remaining blocker: Access needs a hostname in a zone, and no zone
+> has been added to the deploy target — which is the account **swarm-work-emailer** (`d0fa6b3d…`,
+> pinned in `wrangler.jsonc`), not a personal one. `workers.dev` cannot host an Access application
+> (Public Suffix List, ADR-31), so a custom domain is the prerequisite, shared with PRIORITIES items
+> 4.12 and section 5. Meanwhile ADR-31 landed a sign-in that needs no domain: Stytch B2B, session JWT
+> verified in the Worker, password gate as the rollback (`docs/STYTCH_PLAN.md`) — on main, not deployed.
 > The dashboard walkthrough is in `docs/DEPLOYMENT.md` under "Putting Cloudflare Access in front".
 
 1. Put the Worker on a custom domain; create an Access application for it with an allow policy for the team's email domain.

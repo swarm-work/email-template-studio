@@ -1,6 +1,6 @@
 # Handover: moving the studio to the company accounts
 
-Today the studio lives in two personal places: a personal GitHub repository and a personal Cloudflare account. This document is the runbook for moving both to the company, in order, with a check after every step.
+Today the studio lives on the `swarm-work` GitHub organisation and on the Cloudflare account **swarm-work-emailer** (`d0fa6b3d72170539438800a907ec5323`), which `wrangler.jsonc` pins. Part A below is done. What is left of this runbook is a custom domain, a login in front of the live sender, ending the production naming inversion, and retiring the one stale Worker still served from a personal account.
 
 Companion documents: `docs/DEPLOYMENT.md` (how deploys work and how to switch live sending on), `docs/PLAN.md` (what gets built next), `docs/DECISIONS.md` (why things are the way they are).
 
@@ -8,14 +8,15 @@ Facts about GitHub and Cloudflare below were verified against the official docum
 
 ## Do it now — and the cheap window has closed
 
-**Superseded, 2026-09-19.** This section used to say "there is no database, no stored user data and no
-custom domain", and that the move was an afternoon. That was true until `docs/PLAN.md` phase 2 landed.
-**There is data now**: templates and their immutable versions in a Cloudflare D1 database, and
-uploaded images in an R2 bucket, both on the account `wrangler.jsonc` pins (ADR-21, ADR-22). The move
-is therefore a data migration with a freeze window — export, create on the new account, apply
-migrations, import, copy the R2 objects — exactly as part B below now describes. Doing it is no
-longer an afternoon, and every week it waits adds rows. There is still no custom domain, which is
-what Cloudflare Access needs (TECH_DEBT #19).
+**Corrected, 2026-09-22.** A previous revision of this section said "there is data now" and that
+moving accounts had become a data migration with a freeze window. **That was wrong.** D1 and R2 are
+_bound_ in `wrangler.jsonc` (ADR-21, ADR-22), but no remote resource was ever created: every
+`database_id` in the file is still a placeholder and `npx wrangler d1 list` returned nothing on this
+account on 2026-09-22. The studio has only ever read and written local D1 under `.wrangler/state/v3`.
+So there is nothing to export and no freeze window to schedule — and the account question that made
+this urgent is settled: it is `swarm-work-emailer` (`npx wrangler whoami`). What remains genuinely
+undone is the custom domain, which is what Cloudflare Access needs (TECH_DEBT #19), and which is why
+ADR-31 chose Stytch instead for now.
 
 ## Which order, and why
 
@@ -56,7 +57,7 @@ GitHub first, because the deploy credentials live on the repository and you only
 
 # Part A. GitHub
 
-The repository is `Jericho0912/email-template-studio` on a personal account.
+**Part A is done.** The repository is `swarm-work/email-template-studio` (`git remote -v`). Only the visibility half is outstanding: it is still public (`docs/PRIORITIES.md` section 2, question 2). The steps below stay as the record of how it was done.
 
 ## A1. Transfer, do not re-push
 
@@ -115,9 +116,9 @@ The deploy job runs on every push to `main`, so `main` is production. Add a rule
 
 # Part B. Cloudflare
 
-Today: Worker `email-template-studio` on the personal account `d0fa6b3d72170539438800a907ec5323` (the id `wrangler.jsonc` pins), at `https://email-template-studio.jerichodelrosario35.workers.dev`.
+Today: Worker `email-template-studio` on the account **swarm-work-emailer** `d0fa6b3d72170539438800a907ec5323` (the id `wrangler.jsonc` pins), at `https://email-template-studio.swarm-work-emailer.workers.dev`. That is the real production: live SES sending, and `401 {"mode":"password"}` to an anonymous API caller. Three more Workers on the same account — `email-template-studio-dev`, `-staging` and `-production` — hold no secrets and answer `401 {"mode":"disabled"}`, so the naming is inverted (`docs/PRIORITIES.md` item 3.3). Separately, a stale, fully unauthenticated pre-auth build is still served from a **different, personal** account at `https://email-template-studio.jerichodelrosario35.workers.dev` (HTTP 200 with no credential); retiring it is PRIORITIES item 4.3 and B7 below.
 
-**There is data now.** Templates live in a Cloudflare D1 database and uploaded images in an R2 bucket, both on that same account (ADR-21). Moving accounts therefore means moving data: export the database, create it on the new account, apply migrations, import, and copy the R2 objects. The exact commands are in "Moving to the production account" in `docs/DEPLOYMENT.md`. Do the move during a short freeze of edits.
+**There is no remote data.** D1 (`STUDIO_DB`) and R2 (`STUDIO_ASSETS`) are bound here and for each `env.*` (ADR-21), but nothing remote has been created: the `database_id` values are placeholders and `npx wrangler d1 list` returned nothing on 2026-09-22. Everything the studio has stored lives in local D1 under `.wrangler/state/v3`. Moving accounts is therefore still free, and stays free only until the first remote database exists — which is why `docs/PRIORITIES.md` item 3.2 says to settle the account first. The export/import path in "Moving to the production account" (`docs/DEPLOYMENT.md`) is what to follow once there IS data.
 
 ## B1. Get into the company account
 
@@ -253,7 +254,7 @@ Only after production has served a real send.
 
 ```bash
 npx wrangler logout
-npx wrangler login            # personal account
+npx wrangler login            # the swarm-work-emailer account
 npx wrangler whoami           # triple-check: this deletes a Worker
 npx wrangler delete --name email-template-studio
 npx wrangler logout

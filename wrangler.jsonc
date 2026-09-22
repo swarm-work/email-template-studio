@@ -2,8 +2,11 @@
  * Cloudflare Worker configuration. One Worker serves the built studio as static
  * assets and runs the Hono API for /api/*. See docs/DEPLOYMENT.md.
  *
- * The top-level settings are the deploy target used today (a personal account,
- * see docs/DEPLOYMENT.md). `env.e2e` is only used by the Playwright suite.
+ * The top-level settings are the deploy target used today: the Cloudflare account
+ * swarm-work-emailer, pinned below and confirmed with `npx wrangler whoami`. It is
+ * the REAL production Worker (email-template-studio.swarm-work-emailer.workers.dev),
+ * with live SES sending on - see docs/DEPLOYMENT.md. `env.e2e` is only used by the
+ * Playwright suite.
  */
 {
   "$schema": "node_modules/wrangler/config-schema.json",
@@ -58,9 +61,11 @@
     // on the AWS key (infra/ses-policy.json) and the SES account suppression
     // list are the real backstops; rolling back is this one value plus a deploy.
     //
-    // This deploy target is a personal account, which docs/HANDOVER.md says should
-    // not hold AWS credentials. That rule is being set aside on purpose while this
-    // is a test deployment with a test sender behind the password gate. Revisit it
+    // The AWS keys live on swarm-work-emailer, the account this repo deploys to.
+    // docs/HANDOVER.md's "this account must hold no AWS credentials" was written
+    // about a personal account and does not apply here. Sending is deliberately
+    // narrow all the same: a test sender (testing@swarm.camp) behind the shared
+    // password gate, to SES_ALLOWED_RECIPIENTS only. Revisit the blast radius
     // before anyone outside the team can reach the studio.
     //
     // THREE SECRETS ARE REQUIRED before deploying with this on. They never belong
