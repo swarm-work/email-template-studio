@@ -36,6 +36,31 @@ describe('PasswordGate', () => {
     expect(await screen.findByText('studio')).toBeInTheDocument()
   })
 
+  it('probes once with its DEFAULT fetch, not in a loop', async () => {
+    // Every other test here injects a fetchImpl, which is a STABLE reference -
+    // so none of them exercised the default, and none of them could catch this.
+    // Before the fix the default was a new arrow per render, feeding probe,
+    // feeding the effect: 3,767 requests in 600ms, per open tab, forever.
+    const spy = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ enabled: true }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+    )
+    vi.stubGlobal('fetch', spy)
+
+    render(
+      <PasswordGate>
+        <p>studio</p>
+      </PasswordGate>,
+    )
+    await screen.findByText('studio')
+    await new Promise((resolve) => setTimeout(resolve, 300))
+
+    expect(spy.mock.calls.length).toBeLessThan(5)
+  })
+
   it('shows the Stytch sign-in when the API reports the stytch mode', async () => {
     render(
       <PasswordGate fetchImpl={fetchStub([() => json({ code: 'unauthenticated', mode: 'stytch' }, 401)])}>

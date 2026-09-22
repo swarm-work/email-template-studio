@@ -45,6 +45,22 @@ const StytchSignIn = lazy(() => import('./StytchSignIn'))
  */
 const AUTHENTICATE_PATH = '/authenticate'
 
+/**
+ * The default fetch, hoisted to module scope so it is the SAME function on
+ * every render.
+ *
+ * As a default parameter it was a new arrow each render, which fed `probe`
+ * (`useCallback([fetchImpl])`), which fed `useEffect([probe])`. The effect then
+ * re-ran on every render, and because its `setState` always stores a fresh
+ * object it never compared equal, so the render it caused ran the effect again.
+ * Measured before this fix: **3,767 requests to `/api/send-test/status` in 600
+ * milliseconds**, per open tab, forever.
+ *
+ * The tests never caught it because they all pass a `fetchImpl` of their own,
+ * which is stable - so the bug only existed in the one path nobody injected.
+ */
+const defaultFetch: typeof fetch = (...args) => fetch(...args)
+
 /** What the gate is currently doing. */
 type GateState =
   | { readonly kind: 'checking' }
@@ -59,7 +75,7 @@ interface PasswordGateProps {
   readonly fetchImpl?: typeof fetch
 }
 
-export function PasswordGate({ children, fetchImpl = (...args) => fetch(...args) }: PasswordGateProps) {
+export function PasswordGate({ children, fetchImpl = defaultFetch }: PasswordGateProps) {
   const [state, setState] = useState<GateState>({ kind: 'checking' })
   const [password, setPassword] = useState('')
   const [submitting, setSubmitting] = useState(false)
