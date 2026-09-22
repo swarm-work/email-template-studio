@@ -32,6 +32,12 @@ export interface UploadRouteDependencies {
   readonly objectStore?: ObjectStore | null
   /** Injectable key factory, so tests get predictable object keys. */
   readonly newAssetId?: () => string
+  /**
+   * How many uploads a minute this isolate accepts. Absent means unlimited,
+   * which is what the Node adapter and most tests want; `createApp` always
+   * supplies one.
+   */
+  readonly limiter?: { tryAcquire(): boolean }
 }
 
 /**
@@ -55,7 +61,7 @@ const MAGIC_BYTES: readonly { readonly contentType: string; readonly bytes: read
 ]
 
 export function registerUploadRoutes(app: UploadApp, deps: UploadRouteDependencies): void {
-  const { objectStore = null, newAssetId = () => crypto.randomUUID() } = deps
+  const { objectStore = null, newAssetId = () => crypto.randomUUID(), limiter } = deps
 
   app.post('/api/uploads', async (c) => {
     if (!objectStore) return storageUnavailable(c)
@@ -75,6 +81,22 @@ export function registerUploadRoutes(app: UploadApp, deps: UploadRouteDependenci
     const declaredBytes = Number(c.req.header('content-length'))
     if (!Number.isFinite(declaredBytes) || declaredBytes > MAX_UPLOAD_BYTES + MULTIPART_OVERHEAD_BYTES) {
       return tooLarge(c)
+    }
+
+    // Counted HERE, after the cheap doorman checks and before `formData()`.
+    //
+    // Before it, because parsing is the expensive step: `formData()` reads the
+    // whole body into the isolate's memory, so a flood must be refused while it
+    // is still only headers. After the header, content-type and content-length
+    // checks, because a malformed request that never had a chance should not
+    // spend a token that an honest one needs.
+    if (limiter && !limiter.tryAcquire()) {
+      return apiError(
+        c,
+        429,
+        'rate-limited',
+        'Too many uploads in the last minute. Wait a moment and try again.',
+      )
     }
 
     let form: FormData

@@ -12,7 +12,7 @@ import type { ApiErrorCode } from '../shared/templateContracts.ts'
 import { STUDIO_API_HEADER } from '../shared/templateContracts.ts'
 
 /** Status codes this API actually returns; Hono wants a literal union here. */
-export type ApiStatus = 400 | 401 | 403 | 404 | 409 | 413 | 415 | 422 | 500 | 503
+export type ApiStatus = 400 | 401 | 403 | 404 | 409 | 413 | 415 | 422 | 429 | 500 | 503
 
 /** One issue as `apiErrorSchema` describes it: where the problem is, and what it is. */
 export interface ApiIssue {

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { createApp } from './app.ts'
+import { createApp, UPLOADS_PER_MINUTE } from './app.ts'
 import { createDeveloperAuthenticator, createDisabledAuthenticator } from './auth.ts'
 import type { SendServerConfig } from './config.ts'
 import { InMemoryObjectStore } from './objectStore.ts'
@@ -71,6 +71,56 @@ async function upload(
     body,
   })
 }
+
+describe('POST /api/uploads rate limiting', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+  })
+
+  /** One PNG upload, small enough that only the limiter can refuse it. */
+  function png() {
+    return new File([imageBytes('image/png')], 'a.png', { type: 'image/png' })
+  }
+
+  it('refuses the upload after the limit and lets an earlier one through', async () => {
+    const { app, objectStore } = makeApp()
+    const accepted: number[] = []
+    for (let attempt = 0; attempt < UPLOADS_PER_MINUTE; attempt += 1) {
+      accepted.push((await upload(app, png())).status)
+    }
+    expect(accepted.every((status) => status === 201)).toBe(true)
+    expect(objectStore!.size).toBe(UPLOADS_PER_MINUTE)
+
+    const refused = await upload(app, png())
+    expect(refused.status).toBe(429)
+    const body = apiErrorSchema.parse(await refused.json())
+    expect(body.code).toBe('rate-limited')
+    // Refused BEFORE the body was parsed, so nothing reached R2.
+    expect(objectStore!.size).toBe(UPLOADS_PER_MINUTE)
+  })
+
+  it('does not spend a token on a request that was never going to work', async () => {
+    // The cheap doorman checks run first on purpose: a flood of malformed
+    // requests must not use up the budget an honest caller needs.
+    const { app } = makeApp()
+    for (let attempt = 0; attempt < UPLOADS_PER_MINUTE * 2; attempt += 1) {
+      const missingHeader = await upload(app, png(), { host: HOST })
+      expect(missingHeader.status).toBe(400)
+    }
+    expect((await upload(app, png())).status).toBe(201)
+  })
+
+  it('counts an upload that fails validation, because its body was already read', async () => {
+    // A wrongly-typed file gets past the doorman and IS parsed, so it costs a
+    // token. That is the honest accounting: the expensive work happened.
+    const { app } = makeApp()
+    const notAnImage = new File([new Uint8Array([1, 2, 3, 4])], 'a.png', { type: 'image/png' })
+    for (let attempt = 0; attempt < UPLOADS_PER_MINUTE; attempt += 1) {
+      expect((await upload(app, notAnImage)).status).toBe(415)
+    }
+    expect((await upload(app, png())).status).toBe(429)
+  })
+})
 
 describe('POST /api/uploads', () => {
   beforeEach(() => {

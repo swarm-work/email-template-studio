@@ -291,6 +291,10 @@ export const apiErrorCode = z.enum([
   'unsupported-media-type',
   'storage-unavailable',
   'not-visual',
+  // The caller is asking too often. Distinct from 'forbidden' on purpose: the
+  // request was legitimate and waiting will fix it, which is what a client
+  // needs to know to decide between retrying and giving up.
+  'rate-limited',
   'unexpected',
 ])
 
