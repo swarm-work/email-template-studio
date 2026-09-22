@@ -83,6 +83,115 @@
     "SES_ALLOWED_RECIPIENTS": "echo@swarm.work",
   },
   "env": {
+    // The three deployed environment Workers. They are separate Worker scripts,
+    // each with its own D1 database and R2 bucket.
+    //
+    // `vars`, `d1_databases` and `r2_buckets` are NON-INHERITABLE keys: a named
+    // environment that omits one gets NOTHING, not the top-level value. An
+    // environment missing its `d1_databases` block still boots and still serves
+    // the studio, and then answers 503 storage-unavailable on every template
+    // route - which reads like a code bug rather than a configuration one. That
+    // is why each block below repeats all three in full even where the values
+    // are identical to the top level.
+    //
+    // `main`, `assets`, `compatibility_*` and `observability` ARE inherited, so
+    // they are not repeated. The evidence is `env.e2e` below: it omits all four
+    // and its Playwright suite drives the full studio UI, which is served from
+    // the inherited `assets` block.
+    //
+    // Every `database_id` here is a PLACEHOLDER. No remote database exists yet
+    // (docs/PRIORITIES.md section 1). Create each one with
+    //   npx wrangler d1 create email-template-studio-<env>
+    // and paste the id it prints over the placeholder. Same for the buckets:
+    //   npx wrangler r2 bucket create email-template-studio-assets-<env>
+    // `preview_database_id` is deliberately absent throughout, for the reason
+    // given on the top-level block.
+    //
+    // Send posture is deliberately conservative: none of these three sends live
+    // mail. Turning `production` into the real live sender is PRIORITIES item
+    // 3.2 (Option A) and is a separate change - it also moves the AWS keys and
+    // STUDIO_PASSWORD secrets onto it and flips the top level to dry run.
+    "dev": {
+      "name": "email-template-studio-dev",
+      "vars": {
+        "STUDIO_ENVIRONMENT": "dev",
+        "STUDIO_SEND_ENABLED": "false",
+        "STUDIO_SEND_DRY_RUN": "true",
+        "STUDIO_VISUAL_EDITOR": "true",
+        "AWS_REGION": "ap-southeast-2",
+        "SES_FROM_ADDRESS": "testing@swarm.camp",
+        "SES_ALLOWED_RECIPIENTS": "echo@swarm.work",
+      },
+      "d1_databases": [
+        {
+          "binding": "STUDIO_DB",
+          "database_name": "email-template-studio-dev",
+          // REPLACE ME with the id from `npx wrangler d1 create email-template-studio-dev`.
+          "database_id": "00000000-0000-4000-8000-0000000000d2",
+          "migrations_dir": "migrations",
+        },
+      ],
+      "r2_buckets": [
+        {
+          "binding": "STUDIO_ASSETS",
+          "bucket_name": "email-template-studio-assets-dev",
+        },
+      ],
+    },
+    "staging": {
+      "name": "email-template-studio-staging",
+      "vars": {
+        "STUDIO_ENVIRONMENT": "staging",
+        "STUDIO_SEND_ENABLED": "true",
+        "STUDIO_SEND_DRY_RUN": "true",
+        "STUDIO_VISUAL_EDITOR": "true",
+        "AWS_REGION": "ap-southeast-2",
+        "SES_FROM_ADDRESS": "testing@swarm.camp",
+        "SES_ALLOWED_RECIPIENTS": "echo@swarm.work",
+      },
+      "d1_databases": [
+        {
+          "binding": "STUDIO_DB",
+          "database_name": "email-template-studio-staging",
+          // REPLACE ME with the id from `npx wrangler d1 create email-template-studio-staging`.
+          "database_id": "00000000-0000-4000-8000-0000000000d3",
+          "migrations_dir": "migrations",
+        },
+      ],
+      "r2_buckets": [
+        {
+          "binding": "STUDIO_ASSETS",
+          "bucket_name": "email-template-studio-assets-staging",
+        },
+      ],
+    },
+    "production": {
+      "name": "email-template-studio-production",
+      "vars": {
+        "STUDIO_ENVIRONMENT": "production",
+        "STUDIO_SEND_ENABLED": "false",
+        "STUDIO_SEND_DRY_RUN": "true",
+        "STUDIO_VISUAL_EDITOR": "true",
+        "AWS_REGION": "ap-southeast-2",
+        "SES_FROM_ADDRESS": "testing@swarm.camp",
+        "SES_ALLOWED_RECIPIENTS": "echo@swarm.work",
+      },
+      "d1_databases": [
+        {
+          "binding": "STUDIO_DB",
+          "database_name": "email-template-studio-production",
+          // REPLACE ME with the id from `npx wrangler d1 create email-template-studio-production`.
+          "database_id": "00000000-0000-4000-8000-0000000000d4",
+          "migrations_dir": "migrations",
+        },
+      ],
+      "r2_buckets": [
+        {
+          "binding": "STUDIO_ASSETS",
+          "bucket_name": "email-template-studio-assets-production",
+        },
+      ],
+    },
     // Playwright: exercises the send dialog end to end without AWS (fake message ids).
     "e2e": {
       "vars": {
