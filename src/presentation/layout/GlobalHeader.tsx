@@ -28,6 +28,17 @@ export interface GlobalHeaderProps {
   activePage: ScreenPage
   /** Only ever called with a page that has a screen; the planned items say so instead. */
   onNavigate: (page: ScreenPage) => void
+  /**
+   * The signed-in person's email, when the API names one. Left undefined under
+   * the shared password, where there is no person to name - the audit trail
+   * says `shared-password` and the avatar keeps standing for the workspace.
+   */
+  signedInAs?: string
+  /**
+   * Ends the session. Rendered only when given, so the control cannot appear in
+   * a mode that has nothing to sign out of.
+   */
+  onSignOut?: () => void
 }
 
 /**
@@ -56,9 +67,16 @@ const PLANNED_REASON_ID = 'header-planned-reason'
 /** The render pill explains itself: it is a browser measurement, not a service level. */
 const LATENCY_TOOLTIP = 'Time of the last preview render in this browser.'
 
-/** First letters of the first two words, e.g. "meridian-platform" → "MP". */
-function initialsOf(workspace: string): string {
-  const words = workspace.split(/[\s\-_]+/).filter(Boolean)
+/**
+ * First letters of the first two words, e.g. "meridian-platform" → "MP".
+ *
+ * Also takes an email address, because the avatar names the signed-in person
+ * once there is one: the domain is dropped and dots count as separators, so
+ * "jericho.delrosario@swarm.work" reads "JD" rather than "J".
+ */
+function initialsOf(name: string): string {
+  const base = name.includes('@') ? name.slice(0, name.indexOf('@')) : name
+  const words = base.split(/[\s\-_.]+/).filter(Boolean)
   return (
     words
       .slice(0, 2)
@@ -74,6 +92,8 @@ export function GlobalHeader({
   live,
   activePage,
   onNavigate,
+  signedInAs,
+  onSignOut,
 }: GlobalHeaderProps) {
   return (
     <header className="bg-card shrink-0 border-b">
@@ -176,14 +196,25 @@ export function GlobalHeader({
           </Button>
 
           {/* A bare <span> is `role=generic`, which does not take a name, so the
-              avatar is an image as far as assistive technology is concerned. */}
+              avatar is an image as far as assistive technology is concerned.
+              Once a real person is signed in the avatar names THEM rather than
+              the workspace - that naming is the whole point of the work in
+              ADR-31, and it is what the send log and D1's created_by column
+              record too. */}
           <span
             role="img"
-            aria-label={`Signed in to ${workspace}`}
+            aria-label={signedInAs ? `Signed in as ${signedInAs}` : `Signed in to ${workspace}`}
+            title={signedInAs}
             className="bg-muted text-muted-foreground flex size-6 shrink-0 items-center justify-center rounded-full text-[10px] font-medium"
           >
-            {initialsOf(workspace)}
+            {initialsOf(signedInAs ?? workspace)}
           </span>
+
+          {onSignOut ? (
+            <Button variant="ghost" size="sm" className="hidden lg:inline-flex" onClick={onSignOut}>
+              Sign out
+            </Button>
+          ) : null}
 
           <span id={PLANNED_REASON_ID} className="sr-only">
             {PLANNED_REASON}

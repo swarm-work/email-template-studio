@@ -58,8 +58,16 @@ jobs:
           cache: npm
       - run: npm ci
         if: env.HAS_TOKEN == 'true'
+      # VITE_ variables are inlined into the bundle HERE, at build time. A
+      # wrangler `var` cannot deliver one, so the Stytch public token has to be
+      # in this step's environment or the deployed bundle carries `undefined`
+      # and the sign-in screen silently fails to initialise (ADR-31). Set it as
+      # a repository VARIABLE (not a secret - it ships in the bundle either way).
+      # Leaving it unset is correct while Stytch is not in use.
       - run: npm run build
         if: env.HAS_TOKEN == 'true'
+        env:
+          VITE_STYTCH_PUBLIC_TOKEN: ${{ vars.VITE_STYTCH_PUBLIC_TOKEN }}
       # Migrations run BEFORE the deploy, and must stay backward compatible with
       # the Worker version still serving traffic while this step runs.
       - name: Apply D1 migrations

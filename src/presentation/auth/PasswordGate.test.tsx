@@ -6,6 +6,13 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { PasswordGate } from './PasswordGate'
 
+// The real sign-in screen pulls in the Stytch SDK, which wants a browser and a
+// project. Mocking the module - not the package - keeps these tests about the
+// GATE's routing decision, which is the part that can regress.
+vi.mock('./StytchSignIn', () => ({
+  default: () => <p>stytch sign-in</p>,
+}))
+
 /** Builds a fetch stub that answers the status check, then the sign-in POST. */
 function fetchStub(responses: Array<() => Response>) {
   let call = 0
@@ -29,7 +36,61 @@ describe('PasswordGate', () => {
     expect(await screen.findByText('studio')).toBeInTheDocument()
   })
 
-  it('shows the password form when the API reports the password mode', async () => {
+  it('probes once with its DEFAULT fetch, not in a loop', async () => {
+    // Every other test here injects a fetchImpl, which is a STABLE reference -
+    // so none of them exercised the default, and none of them could catch this.
+    // Before the fix the default was a new arrow per render, feeding probe,
+    // feeding the effect: 3,767 requests in 600ms, per open tab, forever.
+    const spy = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ enabled: true }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+    )
+    vi.stubGlobal('fetch', spy)
+
+    render(
+      <PasswordGate>
+        <p>studio</p>
+      </PasswordGate>,
+    )
+    await screen.findByText('studio')
+    await new Promise((resolve) => setTimeout(resolve, 300))
+
+    expect(spy.mock.calls.length).toBeLessThan(5)
+  })
+
+  it('shows the Stytch sign-in when the API reports the stytch mode', async () => {
+    render(
+      <PasswordGate fetchImpl={fetchStub([() => json({ code: 'unauthenticated', mode: 'stytch' }, 401)])}>
+        <p>studio</p>
+      </PasswordGate>,
+    )
+    expect(await screen.findByText('stytch sign-in')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Password')).not.toBeInTheDocument()
+    expect(screen.queryByText('studio')).not.toBeInTheDocument()
+  })
+
+  it('completes the round trip on /authenticate even though the probe still refuses', async () => {
+    // Stytch has just redirected back with a token in the URL. No session exists
+    // yet, so the API legitimately answers 401 - and the gate must still render
+    // the sign-in component so it can finish the exchange, rather than showing
+    // the "reload to continue" dead end.
+    window.history.pushState({}, '', '/authenticate')
+    try {
+      render(
+        <PasswordGate fetchImpl={fetchStub([() => json({ code: 'unauthenticated', mode: 'stytch' }, 401)])}>
+          <p>studio</p>
+        </PasswordGate>,
+      )
+      expect(await screen.findByText('stytch sign-in')).toBeInTheDocument()
+    } finally {
+      window.history.pushState({}, '', '/')
+    }
+  })
+
+  it('still shows the password form when the API reports the password mode', async () => {
     render(
       <PasswordGate fetchImpl={fetchStub([() => json({ code: 'unauthenticated', mode: 'password' }, 401)])}>
         <p>studio</p>

@@ -71,11 +71,12 @@ guards the hostname it is attached to; the `*.workers.dev` hostname stays reacha
 anyone can send a header of their own invention to it. Checking the signature against
 the team's published keys is what turns that header into proof.
 
-Four modes, chosen by environment variables. The first one that matches wins:
+**Five** modes, chosen by environment variables. The first one that matches wins:
 
 | Variables set                       | Mode                | Use                                                      |
 | ----------------------------------- | ------------------- | -------------------------------------------------------- |
 | `ACCESS_TEAM_DOMAIN` + `ACCESS_AUD` | `cloudflare-access` | Production. Verifies a real Access JWT.                  |
+| `STYTCH_PROJECT_ID`                 | `stytch`            | Verifies a Stytch B2B session JWT (ADR-31).              |
 | `STUDIO_PASSWORD`                   | `password`          | A shared password, for a test deployment without Access. |
 | `STUDIO_DEV_IDENTITY`               | `developer`         | Local and Playwright only. Trusts a fixed email.         |
 | none of them                        | `disabled`          | Every `/api/*` request gets 401.                         |
@@ -83,7 +84,36 @@ Four modes, chosen by environment variables. The first one that matches wins:
 The order is what makes this safe to leave configured: a forgotten `STUDIO_DEV_IDENTITY`
 or `STUDIO_PASSWORD` can never downgrade a deployment that has real Access set up.
 Setting only one of the two Access variables is refused outright rather than quietly
-falling back to something weaker.
+falling back to something weaker. Stytch sits between Access and the password on
+purpose: **removing `STYTCH_PROJECT_ID` and redeploying falls back to the password
+gate**, which is the rollback lever, and it is rehearsed before it is needed rather
+than discovered during an incident.
+
+### Stytch
+
+Set `STYTCH_PROJECT_ID` to the project id — it is public, it appears in the JWKS URL,
+and it belongs in `wrangler.jsonc` vars rather than in a secret. The Worker downloads
+Stytch's **public** keys and checks the signature itself; no Stytch secret is ever
+needed at the edge, and none belongs in this repository.
+
+Two things about this mode differ from the others and both will be noticed before they
+are understood:
+
+- **The token lives about five minutes.** The browser SDK refreshes it in the
+  background, so the Worker legitimately sees expired tokens from tabs that were
+  asleep and refuses them until the browser catches up. Do not widen
+  `CLOCK_SKEW_SECONDS` to hide this: 60 seconds was nothing against a twelve-hour
+  Access token and is a fifth of this one.
+- **Signing out does not end the session immediately.** Verification is local, so an
+  already-issued token keeps working until it expires. Removing someone from the
+  Stytch organisation takes up to five minutes to bite. That is an accepted property,
+  recorded in ADR-31.
+
+A malformed `STYTCH_PROJECT_ID` fails **closed** with an explanation rather than
+throwing, because a thrown error becomes a 500 the browser gate cannot interpret and
+the studio would show a dead screen with no way in.
+
+The browser half is not built yet: `docs/STYTCH_PLAN.md` tracks what remains.
 
 ### The shared password gate
 

@@ -97,6 +97,8 @@ function describeAuth(authConfig: AuthConfig): string {
   switch (authConfig.mode) {
     case 'cloudflare-access':
       return `Cloudflare Access (${authConfig.teamDomain})`
+    case 'stytch':
+      return `Stytch (${authConfig.projectId})`
     case 'password':
       return 'shared password (STUDIO_PASSWORD)'
     case 'developer':

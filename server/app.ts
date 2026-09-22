@@ -149,6 +149,22 @@ export const SESSION_ROUTE = '/api/session'
 /** Wrong guesses allowed per minute before the gate stops answering. */
 export const LOGIN_ATTEMPTS_PER_MINUTE = 10
 
+/**
+ * How many images one isolate will accept per minute.
+ *
+ * `POST /api/uploads` had no limit at all, which made it the cheapest way to
+ * spend the account's R2 storage: it is authenticated, but every signed-in
+ * person could write without a ceiling, and `formData()` materialises the whole
+ * body in memory before anything can refuse it.
+ *
+ * Twenty is above what a person does by hand - pasting a handful of images into
+ * a template in quick succession stays well under it - and far below what a
+ * script does. Like the send limiter this is per request and per isolate, so a
+ * Worker running several isolates has a real ceiling that is a multiple of this;
+ * the Rate Limiting binding is what fixes that properly, for both routes at once.
+ */
+export const UPLOADS_PER_MINUTE = 20
+
 /** How long a preflight result is reused before SES is asked again. */
 export const PREFLIGHT_CACHE_MS = 60_000
 
@@ -203,7 +219,10 @@ export function createApp({
   // route already has a checked origin and a named caller. `GET /media/:key`
   // lives outside /api/* and is deliberately public (see uploadRoutes.ts).
   registerTemplateRoutes(app, { templateStore, now })
-  registerUploadRoutes(app, { objectStore })
+  registerUploadRoutes(app, {
+    objectStore,
+    limiter: createRateLimiter(UPLOADS_PER_MINUTE, now),
+  })
 
   // The last line of defence: anything a handler THROWS (a D1 outage, a row that
   // does not parse, a duplicate primary key) would otherwise leave Hono's
@@ -285,6 +304,12 @@ export function createApp({
         provider: 'amazon-ses',
         reason: config.reason,
         user,
+        // How the caller was identified. The 401 body already carries this; it
+        // names a mechanism, not a secret. The browser uses it to decide whether
+        // a sign-out control makes sense - it does under Stytch, and does not
+        // under Access (the identity provider owns that) or the shared password
+        // (there is no person to sign out).
+        authMode: authenticator.mode,
         features,
       })
     }
@@ -292,6 +317,7 @@ export function createApp({
       enabled: true as const,
       provider: 'amazon-ses',
       user,
+      authMode: authenticator.mode,
       features,
       mode: sender?.mode ?? 'dry-run',
       from: config.from,

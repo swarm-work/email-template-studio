@@ -35,7 +35,9 @@ Each record: context, decision, alternatives, consequences. Versions are those i
 | 29  | App theme           | A three-way System / Light / Dark toggle that puts `.dark` on `<html>` and a `color-scheme` meta on the page; the EMAIL is pinned to light in both the canvas sheet and the preview document                                                                                                         | A two-state switch with no "follow the system"; theming the email with the app; a server-stored preference                                             |
 | 30  | Sample data         | Up to three presets DERIVED from the template's stored sample payload **and its props schema** (`Default`, `Long values`, `Missing optional fields`); a preset that would be invalid, or identical to another, is not offered; the choice is not persisted and picking one is an ordinary draft edit | The mock's `Randomize Values`; storing a `samplePayloads[]` per template (FEATURE_PLAN phase 1); ignoring the schema and offering presets that fail it |
 
-Decisions 31 onwards (Cloudflare Access, Rate Limiting binding, Worker Loaders) are proposed in `docs/PLAN.md` section 1 and get a numbered record here when the phase that uses them lands. The JSON Schema props contract is part of ADR-19.
+| 31 | Human sign-in | **Stytch B2B**, session JWT verified in the Worker against Stytch's public JWKS; the shared password stays as the rollback lever for a week | Cloudflare Access (recommended by two earlier reviews), Stytch Consumer, the `stytch` Node SDK in the Worker, a second sign-in allow-list |
+
+Decisions 32 onwards (Rate Limiting binding, Worker Loaders) are proposed in `docs/PLAN.md` section 1 and get a numbered record here when the phase that uses them lands. The JSON Schema props contract is part of ADR-19.
 
 ## ADR-1 Framework: Vite SPA
 
@@ -287,6 +289,72 @@ The editor package ships no merge-field extension and its slash menu cannot be e
 **Alternatives.** _`Randomize Values`_ — it teaches nothing and its output is different every time, so nothing it shows can be reproduced or reported. _Stored `samplePayloads` per template_ (FEATURE_PLAN #1) — a schema change, a migration, an editing UI, and three more strings per template to keep in step with the props; deriving costs none of that and cannot go stale. _Remembering the last preset per template_ — one more thing in the session payload, and the answer after any edit would be wrong.
 
 **Consequences.** Every template gets its sets for free, including one created a minute ago, and how many it gets depends on what its own schema leaves free to vary. The two derived sets are heuristics, not fixtures: `Long values` makes a long version of whatever is there rather than a realistic one, and `Missing optional fields` sets an optional number to `0`, which is empty-ish rather than absent — chosen so the preset shows a thin email rather than a type error. `src/infrastructure/templates/registry.test.ts` runs every preset of every shipped starter through that starter's own `jsonSchemaPropsValidator`, so "a preset is always a valid payload" is checked against the real schemas rather than claimed here. Adding a fourth preset is one entry in one pure function with a table test.
+
+## ADR-31 Human sign-in: Stytch B2B, verified in the Worker, with the password gate as the rollback
+
+**Context.** Everyone who opens the deployed studio types the same shared password. The cost is not
+weak security so much as **no attribution**: `server/app.ts:441` writes `by shared-password` into the
+send audit line, and since ADR-21 the same literal goes into the `created_by` and `updated_by`
+columns of every template and every immutable version (`migrations/0001_create_templates.sql`).
+Authorship is already fiction. There is also no way to remove one person without changing a password
+everybody shares.
+
+Two earlier reviews in this repository — `AUTH_REVIEW.md` and
+`docs/reviews/2026-09-16-stytch-review.md`, neither merged — recommended Cloudflare Access instead.
+Access is genuinely cheaper: it needs no code at all, it blocks the request before the Worker runs,
+and it adds no third-party failure domain because Cloudflare already serves the Worker. This ADR
+overrides them, and records why, so the argument is not re-opened in three weeks.
+
+**Decision.** Stytch **B2B**, with the session JWT verified inside the Worker.
+
+- **B2B, not Consumer**, and this cannot be changed later — Stytch's own migration guide says
+  switching means a new project from scratch. A Consumer session JWT carries no email claim, so the
+  audit line and the `NOT NULL` audit columns would have nothing to name a person with. B2B also
+  gives native domain restriction (`email_allowed_domains` plus `RESTRICTED` JIT provisioning);
+  Consumer cannot do that at all, and without it anyone who can receive a magic link could sign in
+  to a studio wired to live SES sending.
+- **Verified in the Worker against the public JWKS**, mirroring `createAccessAuthenticator`. No
+  Stytch secret in the Worker, no `stytch` Node SDK, no `@hono/stytch-auth`. Stytch's own Workers
+  template does exactly this.
+- **Why not Access:** Access cannot protect a `workers.dev` hostname, because `workers.dev` is on the
+  Public Suffix List. Adopting Access therefore blocks on DNS work that has not happened
+  (`docs/PRIORITIES.md` item 4.12), while Stytch can be pointed at an exact `workers.dev` URL today.
+  That is the whole of the reason, and it is a scheduling reason rather than a technical preference:
+  if the DNS work lands first, Access is the better answer.
+- **The shared password stays** until Stytch has run in production for a week. `loadAuthConfig`
+  orders the modes Access, then Stytch, then password, so the rollback is removing one variable and
+  redeploying — and it is rehearsed before it is needed.
+
+**Alternatives.** _Cloudflare Access_ — better on every axis except the one that decides it; revisit
+once a real hostname exists. _Stytch Consumer_ — cheaper concepts, but no email claim and no domain
+restriction, which defeats the purpose. _The `stytch` Node SDK in the Worker_ — needs the project
+secret at the edge to verify what a public key already proves. _A second `STUDIO_ALLOWED_EMAILS`
+allow-list in the Worker_ — its only unique value is closing the five-minute revocation window
+below, and the price is a second source of truth for "who may use this"; this repository already
+shows what that costs, with the production hostname written down three different ways
+(`docs/PRIORITIES.md:26`).
+
+**Consequences.** Three are worth stating plainly because they are worse than what they replace.
+
+1. **Revocation lags by up to five minutes.** The Worker verifies signatures locally against cached
+   keys and never calls Stytch, so a member removed from the organisation keeps a working token
+   until it expires. This is **accepted**, not overlooked. If it ever stops being acceptable, the
+   allow-list is about forty lines.
+2. **Stytch's cookie is not `HttpOnly` and is `SameSite=Lax`.** The password cookie is `HttpOnly`
+   and `SameSite=Strict` (`server/app.ts:586-600`), and `docs/DEPLOYMENT.md` sells it on exactly
+   that. This is a real reduction in defence in depth; recovering `HttpOnly` needs a Stytch custom
+   domain, which is the same DNS work Access is waiting on. What still protects the send route is
+   the `x-studio-send: 1` header and the JSON content type, neither of which a cross-site form can
+   set. Keep both.
+3. **A new failure domain.** If Stytch is down, existing sessions die within five minutes and nobody
+   can sign in. Access would have added no such domain.
+
+Two more that are merely different. The token lives about five minutes rather than twelve hours, so
+the Worker will legitimately see expired tokens from sleeping tabs and must refuse them and let the
+browser refresh — widening `CLOCK_SKEW_SECONDS` to hide that would be a mistake, since 60 seconds is
+a fifth of this token's life. And the issuer literal is accepted in both its scheme-less and `https`
+spellings, both derived from the project id, because a wrong literal there is a total lockout whose
+error message reads like a broken signature.
 
 ## ADR-4 Motion: beUI selectively
 

@@ -21,6 +21,37 @@ function renderHeader(props: Partial<Parameters<typeof GlobalHeader>[0]> = {}) {
   )
 }
 
+describe('GlobalHeader identity', () => {
+  it('names the workspace when nobody is signed in, as it always has', () => {
+    renderHeader()
+    expect(screen.getByRole('img', { name: 'Signed in to meridian-platform' })).toHaveTextContent('MP')
+    expect(screen.queryByRole('button', { name: 'Sign out' })).not.toBeInTheDocument()
+  })
+
+  it('names the PERSON once the API reports one', () => {
+    // The whole point of ADR-31: the avatar, the send log and D1's created_by
+    // column all stop saying `shared-password` and start naming a human.
+    renderHeader({ signedInAs: 'jericho.delrosario@swarm.work' })
+    const avatar = screen.getByRole('img', { name: 'Signed in as jericho.delrosario@swarm.work' })
+    expect(avatar).toHaveTextContent('JD')
+  })
+
+  it('offers sign out only when there is something to sign out of', async () => {
+    const onSignOut = vi.fn()
+    renderHeader({ signedInAs: 'echo@swarm.work', onSignOut })
+    await userEvent.click(screen.getByRole('button', { name: 'Sign out' }))
+    expect(onSignOut).toHaveBeenCalledTimes(1)
+  })
+
+  it('hides sign out when the mode has no session of its own to end', () => {
+    // Cloudflare Access and the shared password both land here: under Access the
+    // identity provider owns signing out, and under the password there is no
+    // person to sign out.
+    renderHeader({ signedInAs: 'echo@swarm.work' })
+    expect(screen.queryByRole('button', { name: 'Sign out' })).not.toBeInTheDocument()
+  })
+})
+
 describe('GlobalHeader', () => {
   it('marks exactly the active page with aria-current', () => {
     renderHeader({ activePage: 'templates' })
