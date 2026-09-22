@@ -12,20 +12,45 @@
  *   2. 200 -> we are already allowed in (a valid cookie, Cloudflare Access, or a
  *      local developer identity), so render the studio
  *   3. 401 with mode "password" -> show the password form
- *   4. 401 with any other mode -> Access is in front and the browser must be sent
+ *   4. 401 with mode "stytch" -> lazily load and show the Stytch sign-in screen
+ *   5. 401 with any other mode -> Access is in front and the browser must be sent
  *      to the identity provider, which a reload does
+ *
+ * The name is now narrower than the job: this gate covers the password mode AND
+ * the Stytch mode. Renaming it to `AuthGate` belongs with the change that
+ * deletes the password half, so the rename and its test file move once rather
+ * than twice (docs/STYTCH_PLAN.md, T10).
  */
-import { useCallback, useEffect, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+
+/**
+ * Lazily loaded on purpose, and the ONLY way this module reaches Stytch.
+ *
+ * A static import here would put the SDK in the first download of every build,
+ * including the Playwright one, whose five spec files all fail on an unexpected
+ * console error. `scripts/check-worker-bundle.mjs` enforces the seam.
+ */
+const StytchSignIn = lazy(() => import('./StytchSignIn'))
+
+/**
+ * The path Stytch redirects back to after a magic link or an OAuth round trip.
+ * The SPA has no router: `wrangler.jsonc` serves index.html for unknown paths
+ * (`not_found_handling: "single-page-application"`), so a pathname check is the
+ * whole of the routing. Do NOT add this to `run_worker_first` - sending it to
+ * the Worker would break the flow.
+ */
+const AUTHENTICATE_PATH = '/authenticate'
 
 /** What the gate is currently doing. */
 type GateState =
   | { readonly kind: 'checking' }
   | { readonly kind: 'open' }
   | { readonly kind: 'locked'; readonly message?: string }
+  | { readonly kind: 'stytch' }
   | { readonly kind: 'unreachable'; readonly message: string }
 
 interface PasswordGateProps {
@@ -51,6 +76,7 @@ export function PasswordGate({ children, fetchImpl = (...args) => fetch(...args)
     if (response.status === 401) {
       const body = (await response.json().catch(() => null)) as { mode?: string } | null
       if (body?.mode === 'password') return { kind: 'locked' }
+      if (body?.mode === 'stytch') return { kind: 'stytch' }
       // Cloudflare Access (or nothing at all) is in front. There is no password
       // for the visitor to type; reloading is what sends them to the login.
       return { kind: 'unreachable', message: 'This studio requires you to sign in. Reload to continue.' }
@@ -95,6 +121,22 @@ export function PasswordGate({ children, fetchImpl = (...args) => fetch(...args)
     } finally {
       setSubmitting(false)
     }
+  }
+
+  // Mid-flow: Stytch has sent the browser back with a token in the URL and the
+  // sign-in component completes the exchange. This is checked BEFORE `open`
+  // because the probe legitimately 401s here - the session does not exist yet -
+  // and before `checking` so the round trip does not flash "Checking access".
+  const onAuthenticatePath = typeof window !== 'undefined' && window.location.pathname === AUTHENTICATE_PATH
+
+  if (onAuthenticatePath || state.kind === 'stytch') {
+    return (
+      <main className="flex min-h-dvh items-center justify-center p-6">
+        <Suspense fallback={<p className="text-muted-foreground text-sm">Loading sign-in…</p>}>
+          <StytchSignIn />
+        </Suspense>
+      </main>
+    )
   }
 
   if (state.kind === 'open') return <>{children}</>
