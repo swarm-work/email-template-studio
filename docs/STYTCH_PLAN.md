@@ -128,6 +128,13 @@ first, adapter later":
 - `server/auth.ts:163` — `createAuthenticator`, cases at `:165-172`, no `default`
 - `server/node.ts:97` — `describeAuth`, cases at `:98-104`, no `default`
 
+**There are two separate mode unions, and both need `'stytch'`.** They are easy to mistake for one:
+
+- `Authenticator.mode` (`server/auth.ts:46`) is the runtime label — `'cloudflare-access' | 'developer' | 'password' | 'disabled'`. This is what `server/app.ts:194` puts in the 401 body and what the browser reads.
+- `AuthConfig` (`server/auth.ts:81-85`) is the configuration union, and its fourth member is **`'none'`**, not `'disabled'` — `{ mode: 'none'; reason: string }`. This is what `loadAuthConfig` returns and what `createAuthenticator` switches on.
+
+So a half-configured Stytch returns `{ mode: 'none', reason }` from `loadAuthConfig`, and the authenticator that `createDisabledAuthenticator` (`server/auth.ts:309`) builds from it reports `mode: 'disabled'`. Adding a Stytch mode means extending **both** unions, and the literal added to `Authenticator.mode` is the one that has to match what the browser branch switches on end to end.
+
 Two further places know the mode list but will not fail the build:
 
 - `src/presentation/auth/PasswordGate.tsx:53` only special-cases `'password'`. Ship the server without the
