@@ -230,11 +230,15 @@ test('a typography change in the inspector reaches the exported email', async ({
   await modeButton(page, 'Preview').click()
   const heading = previewBody(page).locator('h1').first()
   await expect(heading).toBeVisible({ timeout: EDITOR_LOAD_TIMEOUT })
-  await expect
-    .poll(async () => heading.evaluate((element) => getComputedStyle(element).fontSize), {
-      timeout: EDITOR_LOAD_TIMEOUT,
-    })
-    .toBe('48px')
+  // `toHaveCSS`, not `expect.poll(() => heading.evaluate(...))`.
+  //
+  // The heading lives in the preview iframe, and a `srcDoc` rewrite re-navigates
+  // that frame - which is exactly the event this assertion is waiting for. A
+  // handle held across that navigation throws "Execution context was destroyed",
+  // and `expect.poll` does NOT retry a callback that throws: it awaits the
+  // callback outside its own try, so one unlucky round trip fails the test.
+  // A web-first assertion re-resolves the locator on every retry instead.
+  await expect(heading).toHaveCSS('font-size', '48px', { timeout: EDITOR_LOAD_TIMEOUT })
 })
 
 test('undo and redo drive the canvas history from the sub-header', async ({ page }) => {
@@ -270,7 +274,14 @@ test('the inspector rail is off-canvas at 1024 and the toggle brings it back', a
 
   await toggle.click()
   await expect(toggle).toHaveAttribute('aria-pressed', 'true')
-  await expect.poll(async () => (await inspector(page).boundingBox())!.x).toBeLessThan(rightEdge - 100)
+  // `?? Infinity` rather than `!`: the rail is mid-transition here, so a box
+  // can legitimately come back null for a frame. A non-null assertion would
+  // THROW inside the poll, and `expect.poll` does not retry a throwing
+  // callback - it would fail the test outright instead of polling again.
+  // Infinity simply fails this comparison, so the poll tries once more.
+  await expect
+    .poll(async () => (await inspector(page).boundingBox())?.x ?? Number.POSITIVE_INFINITY)
+    .toBeLessThan(rightEdge - 100)
   // Opening moves focus into the rail, so the next Tab continues inside it.
   await expect(inspector(page)).toBeFocused()
 
