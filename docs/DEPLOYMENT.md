@@ -403,7 +403,7 @@ The `deploy` job runs on pushes to `main` only when the `CLOUDFLARE_API_TOKEN` r
 
 1. In the Cloudflare dashboard, create an API token from the "Edit Cloudflare Workers" template, scoped to the one account, and **add D1: Edit and Workers R2 Storage: Edit** (the template has neither).
 2. `gh secret set CLOUDFLARE_API_TOKEN --repo swarm-work/email-template-studio` (paste the token when prompted; that is the `origin` remote).
-3. **Fix the `CLOUDFLARE_ACCOUNT_ID` repository variable before you do**: it still names the retired personal account, while `wrangler.jsonc` pins `swarm-work-emailer`. Set it to `d0fa6b3d72170539438800a907ec5323`, or the first CI deploy goes to the wrong account.
+3. **Fix the `CLOUDFLARE_ACCOUNT_ID` repository variable before you do.** Checked on 2026-09-22 with `gh variable list`: it is `0f95923f7c5505d2e3261d3a788d68e0`, while `wrangler.jsonc` pins `d0fa6b3d72170539438800a907ec5323` (`swarm-work-emailer`). It is not merely stale — it is not any of the three accounts `npx wrangler whoami` can see, so nobody here has checked what is there. Nothing has caught it because no `CLOUDFLARE_API_TOKEN` secret exists and the deploy job has never run a step. Set the variable to `d0fa6b3d72170539438800a907ec5323` before arming that token, or the first CI deploy goes to an unverified account.
 4. If Stytch is in use, set the `VITE_STYTCH_PUBLIC_TOKEN` repository **variable** as well: it is inlined into the bundle by the CI build step, and a wrangler `var` cannot deliver it (ADR-31).
 
 The deploy job applies D1 migrations (`d1 migrations apply STUDIO_DB --remote`) before deploying, gated on the same secret.
