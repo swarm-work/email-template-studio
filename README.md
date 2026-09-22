@@ -79,9 +79,10 @@ work (`docs/SENDING.md`, and `docs/PRIORITIES.md` §3.5–3.6 for why this is th
 
 Deploy: `npm run deploy` (needs `npx wrangler login`). With no `--env` it deploys the top-level
 Worker, which is production: `email-template-studio` on the `swarm-work-emailer` account.
-`npm run db:migrate:prod` cannot run yet — no remote D1 database exists on that account
-(`npx wrangler d1 list` is empty and every `database_id` in `wrangler.jsonc` is a placeholder), so
-create it first. See `docs/DEPLOYMENT.md`.
+Run `npm run db:migrate:prod` before the first deploy: the production database exists (created
+2026-09-22) but is empty, and a deploy without migrations leaves every template route answering
+"no such table: templates". R2 is a separate matter — it is not enabled on the account, so image
+uploads cannot work until it is. See `docs/DEPLOYMENT.md`.
 
 ## Scripts
 

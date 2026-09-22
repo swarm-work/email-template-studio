@@ -36,8 +36,15 @@
     {
       "binding": "STUDIO_DB",
       "database_name": "email-template-studio",
-      // REPLACE ME with the id printed by `npx wrangler d1 create email-template-studio`.
-      "database_id": "00000000-0000-4000-8000-0000000000d1",
+      // The real production database, created 2026-09-22 on swarm-work-emailer.
+      // Not a secret: a database id names a resource, and reaching it still needs
+      // an authenticated API token or this Worker's binding.
+      //
+      // It is EMPTY until `npm run db:migrate:prod` has been run against it once.
+      // A deploy without that leaves every template route answering
+      // "no such table: templates" rather than the 503 an absent binding gives,
+      // which is the more confusing of the two failures.
+      "database_id": "f270cbc3-4b5e-457b-af43-ea3130904e2b",
       "migrations_dir": "migrations",
     },
   ],
