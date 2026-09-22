@@ -43,7 +43,7 @@ export type AuthResult =
 /** What the API calls on every `/api/*` request. */
 export interface Authenticator {
   /** A short label used in logs and in the status route, never a secret. */
-  readonly mode: 'cloudflare-access' | 'developer' | 'password' | 'disabled'
+  readonly mode: 'cloudflare-access' | 'stytch' | 'developer' | 'password' | 'disabled'
   authenticate(headers: Headers): Promise<AuthResult>
 }
 
@@ -55,6 +55,13 @@ export const SESSION_TTL_SECONDS = 12 * 60 * 60
 
 /** The header Cloudflare Access adds to every request it forwards. */
 export const ACCESS_JWT_HEADER = 'cf-access-jwt-assertion'
+
+/**
+ * The cookie the Stytch browser SDK keeps the session JWT in. Unlike the
+ * password gate's cookie this one is NOT HttpOnly - the SDK has to read it - so
+ * it is set by Stytch's JavaScript, not by this server. See docs/STYTCH_PLAN.md.
+ */
+export const STYTCH_SESSION_COOKIE = 'stytch_session_jwt'
 
 /** How long verified signing keys are reused before Cloudflare is asked again. */
 export const JWKS_CACHE_MS = 60 * 60 * 1000
@@ -73,6 +80,7 @@ const CLOCK_SKEW_SECONDS = 60
  * How this deployment identifies callers.
  *
  * - `cloudflare-access`: verify a real Access JWT. This is production.
+ * - `stytch`: verify a Stytch B2B session JWT against Stytch's public keys.
  * - `developer`: trust a fixed email from configuration. Local only: it exists
  *   so `npm run dev` and the Playwright suite do not need a tunnel or a login.
  * - `none`: nothing is configured, so nothing is trusted and every `/api/*`
@@ -80,9 +88,19 @@ const CLOCK_SKEW_SECONDS = 60
  */
 export type AuthConfig =
   | { readonly mode: 'cloudflare-access'; readonly teamDomain: string; readonly aud: string }
+  | { readonly mode: 'stytch'; readonly projectId: string }
   | { readonly mode: 'password'; readonly password: string }
   | { readonly mode: 'developer'; readonly email: string }
   | { readonly mode: 'none'; readonly reason: string }
+
+/**
+ * A Stytch project id names its own environment: ids start `project-test-` on
+ * the Test environment and `project-live-` on Live, and the two are entirely
+ * separate worlds with different API hosts and different users. Checking the
+ * prefix means a Test id can never be mistaken for a Live one, and it is what
+ * picks the JWKS host below.
+ */
+const STYTCH_PROJECT_ID_PATTERN = /^project-(test|live)-[0-9a-f-]{8,}$/i
 
 /**
  * Reads the auth settings out of environment variables (Worker `vars` and
@@ -95,6 +113,7 @@ export type AuthConfig =
 export function loadAuthConfig(env: Record<string, string | undefined>): AuthConfig {
   const teamDomain = clean(env.ACCESS_TEAM_DOMAIN)
   const aud = clean(env.ACCESS_AUD)
+  const stytchProjectId = clean(env.STYTCH_PROJECT_ID)
   const password = clean(env.STUDIO_PASSWORD)
   const devIdentity = clean(env.STUDIO_DEV_IDENTITY)
 
@@ -107,6 +126,23 @@ export function loadAuthConfig(env: Record<string, string | undefined>): AuthCon
       mode: 'none',
       reason: 'Cloudflare Access is half configured: ACCESS_TEAM_DOMAIN and ACCESS_AUD are both required.',
     }
+  }
+  // Stytch sits below Access and above the shared password: Access still wins
+  // where both are set, and Stytch still beats the password gate, so the
+  // rollback lever is "unset STYTCH_PROJECT_ID and redeploy".
+  if (stytchProjectId) {
+    // A malformed id must fail CLOSED and explain itself. Throwing here would
+    // become an HTTP 500 the browser gate cannot interpret, and the studio would
+    // show a dead screen with no way in.
+    if (!STYTCH_PROJECT_ID_PATTERN.test(stytchProjectId)) {
+      return {
+        mode: 'none',
+        reason:
+          `STYTCH_PROJECT_ID is not a Stytch project id. Expected something like ` +
+          `"project-test-00000000-0000-0000-0000-000000000000", got "${stytchProjectId}".`,
+      }
+    }
+    return { mode: 'stytch', projectId: stytchProjectId }
   }
   if (password) {
     // A short password is worse than none, because it invites the belief that
@@ -164,6 +200,8 @@ export function createAuthenticator(config: AuthConfig, options: AuthenticatorOp
   switch (config.mode) {
     case 'cloudflare-access':
       return createAccessAuthenticator(config.teamDomain, config.aud, options)
+    case 'stytch':
+      return createStytchAuthenticator(config.projectId, options)
     case 'password':
       return createPasswordAuthenticator(config.password, options)
     case 'developer':
@@ -333,61 +371,9 @@ export function createAccessAuthenticator(
   aud: string,
   options: AuthenticatorOptions = {},
 ): Authenticator {
-  const doFetch = options.fetch ?? ((url: string) => fetch(url))
   const now = options.now ?? (() => Date.now())
-  const certsUrl = `https://${teamDomain}/cdn-cgi/access/certs`
   const issuer = `https://${teamDomain}`
-
-  /** kid -> imported public key, plus when the set was last fetched. */
-  let keys = new Map<string, VerifyKey>()
-  let fetchedAt = 0
-  let inFlight: Promise<void> | null = null
-
-  async function refreshKeys(): Promise<void> {
-    // Collapse concurrent refreshes: a burst of requests must cause one fetch.
-    if (inFlight) return inFlight
-    inFlight = (async () => {
-      const response = await doFetch(certsUrl)
-      if (!response.ok) {
-        throw new Error(`Access key set returned HTTP ${response.status}`)
-      }
-      const payload = (await response.json()) as { keys?: JsonWebKeyLike[] }
-      const imported = new Map<string, VerifyKey>()
-      for (const jwk of payload.keys ?? []) {
-        if (!jwk.kid || jwk.kty !== 'RSA' || !jwk.n || !jwk.e) continue
-        try {
-          imported.set(jwk.kid, await importVerifyKey(jwk))
-        } catch {
-          // A key we cannot import is skipped rather than fatal: the set may
-          // contain a future algorithm while the one we need is still valid.
-        }
-      }
-      if (imported.size === 0) throw new Error('Access key set contained no usable RSA keys')
-      keys = imported
-      fetchedAt = now()
-    })()
-    try {
-      await inFlight
-    } finally {
-      inFlight = null
-    }
-  }
-
-  /** Returns the key for `kid`, refetching once if it is unknown or stale. */
-  async function keyFor(kid: string): Promise<VerifyKey | undefined> {
-    const stale = now() - fetchedAt > JWKS_CACHE_MS
-    if (keys.size === 0 || stale) await refreshKeys()
-    const known = keys.get(kid)
-    if (known) return known
-    // Unknown key id: Cloudflare rotates keys, so fetch again - but not more
-    // often than JWKS_MIN_REFETCH_MS, so a bogus kid cannot be used to hammer
-    // the certs endpoint through us.
-    if (now() - fetchedAt > JWKS_MIN_REFETCH_MS) {
-      await refreshKeys()
-      return keys.get(kid)
-    }
-    return undefined
-  }
+  const { keyFor } = createKeyring(`https://${teamDomain}/cdn-cgi/access/certs`, 'Access', options)
 
   return {
     mode: 'cloudflare-access',
@@ -481,6 +467,280 @@ function checkClaims(claims: AccessClaims, issuer: string, aud: string, nowSecon
     return 'Access token is not valid yet.'
   }
   return null
+}
+
+// ---------------------------------------------------------------------------
+// A cached set of public signing keys (JWKS)
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetches a JWKS document once, keeps the imported keys, and hands them out by
+ * key id. Shared by the Cloudflare Access and Stytch authenticators, which
+ * differ only in the URL and the word used in error messages.
+ *
+ * Three behaviours here are not obvious and all three matter:
+ *   - concurrent refreshes are collapsed, so a burst of requests on a cold
+ *     isolate causes ONE fetch rather than one per request;
+ *   - an unknown key id triggers a refetch, because providers rotate keys, but
+ *     no more often than `JWKS_MIN_REFETCH_MS`, so a made-up `kid` cannot be
+ *     used to hammer the provider through us;
+ *   - a key that fails to import is skipped rather than fatal, because the set
+ *     may contain a future algorithm while the one we need is still valid.
+ */
+function createKeyring(url: string, label: string, options: AuthenticatorOptions) {
+  const doFetch = options.fetch ?? ((target: string) => fetch(target))
+  const now = options.now ?? (() => Date.now())
+
+  /** kid -> imported public key, plus when the set was last fetched. */
+  let keys = new Map<string, VerifyKey>()
+  let fetchedAt = 0
+  let inFlight: Promise<void> | null = null
+
+  async function refreshKeys(): Promise<void> {
+    if (inFlight) return inFlight
+    inFlight = (async () => {
+      const response = await doFetch(url)
+      if (!response.ok) {
+        throw new Error(`${label} key set returned HTTP ${response.status}`)
+      }
+      const payload = (await response.json()) as { keys?: JsonWebKeyLike[] }
+      const imported = new Map<string, VerifyKey>()
+      for (const jwk of payload.keys ?? []) {
+        if (!jwk.kid || jwk.kty !== 'RSA' || !jwk.n || !jwk.e) continue
+        try {
+          imported.set(jwk.kid, await importVerifyKey(jwk))
+        } catch {
+          // Skipped on purpose; see the note above.
+        }
+      }
+      if (imported.size === 0) throw new Error(`${label} key set contained no usable RSA keys`)
+      keys = imported
+      fetchedAt = now()
+    })()
+    try {
+      await inFlight
+    } finally {
+      inFlight = null
+    }
+  }
+
+  return {
+    /** Returns the key for `kid`, refetching once if it is unknown or stale. */
+    async keyFor(kid: string): Promise<VerifyKey | undefined> {
+      const stale = now() - fetchedAt > JWKS_CACHE_MS
+      if (keys.size === 0 || stale) await refreshKeys()
+      const known = keys.get(kid)
+      if (known) return known
+      if (now() - fetchedAt > JWKS_MIN_REFETCH_MS) {
+        await refreshKeys()
+        return keys.get(kid)
+      }
+      return undefined
+    },
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Stytch B2B session tokens
+// ---------------------------------------------------------------------------
+
+/**
+ * Verifies the session JWT that the Stytch browser SDK keeps in a cookie.
+ *
+ * The shape is deliberately the same as `createAccessAuthenticator`: download
+ * the provider's PUBLIC keys, check the signature here, and never hold a Stytch
+ * secret in the Worker. The differences worth knowing:
+ *
+ *   1. The token arrives in a COOKIE, not a header, because the browser SDK put
+ *      it there. It is not HttpOnly - the SDK has to read it too.
+ *   2. It lives about FIVE MINUTES. The SDK silently refreshes it in the
+ *      background, so this Worker will legitimately see expired tokens from
+ *      tabs that were asleep, and must refuse them and let the browser retry.
+ *      Do not widen CLOCK_SKEW_SECONDS to hide that: 60 seconds was nothing
+ *      against a long Access token but is a fifth of this one.
+ *   3. There are TWO expiries and mixing them up is a real bug. The outer `exp`
+ *      is the five-minute one and is the one to check. The `expires_at` nested
+ *      inside the session claim is the SESSION's end, hours away; trusting it
+ *      would accept hours-old tokens.
+ *
+ * Both the issuer and the JWKS host are derived from the project id rather than
+ * configured separately, so there is exactly one source of truth and no second
+ * literal to get wrong.
+ */
+export function createStytchAuthenticator(
+  projectId: string,
+  options: AuthenticatorOptions = {},
+): Authenticator {
+  const now = options.now ?? (() => Date.now())
+  // `project-test-...` ids live on test.stytch.com, `project-live-...` on
+  // api.stytch.com. They are separate worlds: a Test token must never verify
+  // against Live keys, and deriving the host from the id makes that impossible.
+  const apiHost = /^project-test-/i.test(projectId) ? 'test.stytch.com' : 'api.stytch.com'
+  const { keyFor } = createKeyring(`https://${apiHost}/v1/b2b/sessions/jwks/${projectId}`, 'Stytch', options)
+
+  return {
+    mode: 'stytch',
+    async authenticate(headers) {
+      const token = readCookie(headers.get('cookie'), STYTCH_SESSION_COOKIE)
+      if (!token) {
+        return { ok: false, reason: 'No Stytch session cookie on the request.' }
+      }
+
+      const parts = token.split('.')
+      if (parts.length !== 3) {
+        return { ok: false, reason: 'Stytch session token is not a well formed JWT.' }
+      }
+      const [headerPart, payloadPart, signaturePart] = parts
+
+      let header: { alg?: string; kid?: string }
+      let claims: StytchClaims
+      try {
+        header = JSON.parse(decodeBase64Url(headerPart)) as { alg?: string; kid?: string }
+        claims = JSON.parse(decodeBase64Url(payloadPart)) as StytchClaims
+      } catch {
+        return { ok: false, reason: 'Stytch session token header or payload is not valid JSON.' }
+      }
+
+      // Same reason as Access: pinning the algorithm is what stops "alg: none"
+      // and "HS256 signed with the public key" forgeries.
+      if (header.alg !== 'RS256') {
+        return { ok: false, reason: `Unsupported Stytch token algorithm: ${header.alg ?? 'none'}.` }
+      }
+      if (!header.kid) {
+        return { ok: false, reason: 'Stytch session token does not name a signing key.' }
+      }
+
+      let key: VerifyKey | undefined
+      try {
+        key = await keyFor(header.kid)
+      } catch (error) {
+        return { ok: false, reason: `Could not load the Stytch signing keys: ${messageOf(error)}` }
+      }
+      if (!key) {
+        return { ok: false, reason: 'Stytch session token was signed by an unknown key.' }
+      }
+
+      const signed = new TextEncoder().encode(`${headerPart}.${payloadPart}`)
+      let signature: Uint8Array
+      try {
+        signature = decodeBase64UrlBytes(signaturePart)
+      } catch {
+        return { ok: false, reason: 'Stytch session token signature is not valid base64url.' }
+      }
+      const verified = await crypto.subtle.verify('RSASSA-PKCS1-v1_5', key, signature, signed)
+      if (!verified) {
+        return { ok: false, reason: 'Stytch session token signature did not verify.' }
+      }
+
+      const problem = checkStytchClaims(claims, projectId, Math.floor(now() / 1000))
+      if (problem) return { ok: false, reason: problem }
+
+      const email = emailFromStytchClaims(claims)
+      if (!email) {
+        // Naming the claims we DID find turns "nobody can sign in and the error
+        // says the signature is fine" into a one-line fix. The keys of a token
+        // that has already verified are not a secret.
+        return {
+          ok: false,
+          reason:
+            'Stytch session token carries no email address. Claims present: ' +
+            `${Object.keys(claims).join(', ') || '(none)'}. ` +
+            'Add an email claim to the project’s claim template, or extend STYTCH_EMAIL_CLAIM_PATHS.',
+        }
+      }
+      return { ok: true, identity: { email } }
+    },
+  }
+}
+
+interface StytchClaims {
+  readonly iss?: string
+  readonly aud?: string | string[]
+  readonly exp?: number
+  readonly nbf?: number
+  readonly sub?: string
+  readonly [claim: string]: unknown
+}
+
+/**
+ * Stytch writes the issuer as `stytch.com/{project_id}`. Whether it carries a
+ * scheme has changed between product families and documentation versions, and
+ * getting it wrong is a TOTAL lockout whose error message reads like a broken
+ * signature - so both spellings of OUR OWN project's issuer are accepted.
+ *
+ * This is not a weakening. Both candidates are derived from the project id,
+ * which is the actual trust anchor, and a token issued for any other project
+ * still fails. What it removes is a whole class of silent, expensive mistake.
+ */
+function stytchIssuers(projectId: string): readonly string[] {
+  return [`stytch.com/${projectId}`, `https://stytch.com/${projectId}`]
+}
+
+/** Returns a reason to refuse, or null when every claim is acceptable. */
+function checkStytchClaims(claims: StytchClaims, projectId: string, nowSeconds: number): string | null {
+  const accepted = stytchIssuers(projectId)
+  if (!claims.iss || !accepted.includes(claims.iss)) {
+    // Quoting what arrived next to what was expected is the difference between
+    // a thirty-second fix and a lost day.
+    return `Stytch token was issued by ${claims.iss ?? 'nobody'}, not ${accepted.join(' or ')}.`
+  }
+  const audiences = typeof claims.aud === 'string' ? [claims.aud] : (claims.aud ?? [])
+  if (!audiences.includes(projectId)) {
+    return 'Stytch token was issued for a different project.'
+  }
+  // The OUTER exp, deliberately - see the note on the authenticator.
+  if (typeof claims.exp !== 'number' || claims.exp + CLOCK_SKEW_SECONDS < nowSeconds) {
+    return 'Stytch session token has expired.'
+  }
+  if (typeof claims.nbf === 'number' && claims.nbf - CLOCK_SKEW_SECONDS > nowSeconds) {
+    return 'Stytch session token is not valid yet.'
+  }
+  // Stytch's own SDK reads `sub: payload.sub || ""`. An empty subject would
+  // sail through every check above and then write a blank author into the send
+  // log and into D1's NOT NULL created_by column.
+  if (typeof claims.sub !== 'string' || claims.sub.trim() === '') {
+    return 'Stytch session token has no subject.'
+  }
+  return null
+}
+
+/**
+ * Where the member's email address may live in a B2B session token.
+ *
+ * Exported so the value is greppable and changeable in one place: which of
+ * these is populated depends on the project's claim template, and a project
+ * that puts it somewhere else only needs a line added here.
+ *
+ * Each entry is a path: `['a', 'b']` means `claims.a.b`. Custom claims are
+ * TOP-LEVEL siblings of `iss` and `sub`, not nested inside the session claim,
+ * which is the mistake this list exists to prevent.
+ */
+export const STYTCH_EMAIL_CLAIM_PATHS: readonly (readonly string[])[] = [
+  ['email'],
+  ['email_address'],
+  ['https://stytch.com/member', 'email_address'],
+  ['https://stytch.com/session', 'member', 'email_address'],
+]
+
+/** First path that yields something that looks like an email address, or undefined. */
+function emailFromStytchClaims(claims: StytchClaims): string | undefined {
+  for (const path of STYTCH_EMAIL_CLAIM_PATHS) {
+    let value: unknown = claims
+    for (const step of path) {
+      if (typeof value !== 'object' || value === null) {
+        value = undefined
+        break
+      }
+      value = (value as Record<string, unknown>)[step]
+    }
+    if (typeof value !== 'string') continue
+    const trimmed = value.trim()
+    // Deliberately the weakest possible check. This is not validation - the
+    // address came from a token we have already verified - it only stops a
+    // placeholder like "" or "unknown" being written into the audit log.
+    if (trimmed.includes('@')) return trimmed
+  }
+  return undefined
 }
 
 // ---------------------------------------------------------------------------
