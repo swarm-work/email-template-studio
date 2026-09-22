@@ -1,6 +1,6 @@
 # Handover: moving the studio to the company accounts
 
-Today the studio lives in two personal places: a personal GitHub repository and a personal Cloudflare account. This document is the runbook for moving both to the company, in order, with a check after every step.
+Today the studio lives on the `swarm-work` GitHub organisation and on the Cloudflare account **swarm-work-emailer** (`d0fa6b3d72170539438800a907ec5323`), which `wrangler.jsonc` pins. Part A below is done. What is left of this runbook is a custom domain, a login in front of the live sender, ending the production naming inversion, and retiring the one stale Worker still served from a personal account.
 
 Companion documents: `docs/DEPLOYMENT.md` (how deploys work and how to switch live sending on), `docs/PLAN.md` (what gets built next), `docs/DECISIONS.md` (why things are the way they are).
 
@@ -56,7 +56,7 @@ GitHub first, because the deploy credentials live on the repository and you only
 
 # Part A. GitHub
 
-The repository is `Jericho0912/email-template-studio` on a personal account.
+**Part A is done.** The repository is `swarm-work/email-template-studio` (`git remote -v`). Only the visibility half is outstanding: it is still public (`docs/PRIORITIES.md` section 2, question 2). The steps below stay as the record of how it was done.
 
 ## A1. Transfer, do not re-push
 
@@ -115,7 +115,7 @@ The deploy job runs on every push to `main`, so `main` is production. Add a rule
 
 # Part B. Cloudflare
 
-Today: Worker `email-template-studio` on the personal account `d0fa6b3d72170539438800a907ec5323` (the id `wrangler.jsonc` pins), at `https://email-template-studio.jerichodelrosario35.workers.dev`.
+Today: Worker `email-template-studio` on the account **swarm-work-emailer** `d0fa6b3d72170539438800a907ec5323` (the id `wrangler.jsonc` pins), at `https://email-template-studio.swarm-work-emailer.workers.dev`. That is the real production: live SES sending, and `401 {"mode":"password"}` to an anonymous API caller. Three more Workers on the same account — `email-template-studio-dev`, `-staging` and `-production` — hold no secrets and answer `401 {"mode":"disabled"}`, so the naming is inverted (`docs/PRIORITIES.md` item 3.3). Separately, a stale, fully unauthenticated pre-auth build is still served from a **different, personal** account at `https://email-template-studio.jerichodelrosario35.workers.dev` (HTTP 200 with no credential); retiring it is PRIORITIES item 4.3 and B7 below.
 
 **There is data now.** Templates live in a Cloudflare D1 database and uploaded images in an R2 bucket, both on that same account (ADR-21). Moving accounts therefore means moving data: export the database, create it on the new account, apply migrations, import, and copy the R2 objects. The exact commands are in "Moving to the production account" in `docs/DEPLOYMENT.md`. Do the move during a short freeze of edits.
 
