@@ -33,6 +33,13 @@ const FORBIDDEN = [
     why: 'Something the Worker imports is reading files - probably server/starterSeed.ts, which is Node-only.',
     find: 'grep -rn "node:" server shared worker',
   },
+  {
+    needle: '@stytch',
+    why:
+      'Something under server/, shared/ or worker/ is importing the Stytch BROWSER SDK. ' +
+      'The Worker verifies session tokens with WebCrypto against a public JWKS (ADR-31) and needs no SDK at all.',
+    find: 'grep -rn "@stytch" server shared worker',
+  },
 ]
 
 let bundle
@@ -91,6 +98,36 @@ const EDITOR_ALLOWED = new Map([
 /** The one module allowed to import the package, and its own folder's re-exports. */
 const EDITOR_PACKAGE = '@react-email/editor'
 
+/**
+ * The Stytch browser SDK is the second package behind a lazy seam, for a
+ * different reason from the editor's size (ADR-31).
+ *
+ * The editor must stay lazy so a code template does not download 2.5 MB it will
+ * never use. Stytch must stay lazy so it never LOADS AT ALL in a build that is
+ * not using it - the Playwright suite runs on `STUDIO_DEV_IDENTITY` with no
+ * Stytch configured, and all five of its spec files fail on any unexpected
+ * browser console error. A top-level import in a conditionally rendered
+ * component still ships and still runs its side effects, so "it is only
+ * rendered when mode is stytch" is not enough.
+ */
+const STYTCH_PACKAGE = '@stytch/react'
+
+/** The Worker verifies tokens itself; nothing outside the page may name the SDK. */
+const STYTCH_FREE_PATHS = [
+  'server',
+  'shared',
+  'worker',
+  'src/infrastructure/render/render.worker.ts',
+  'src/infrastructure/render/renderTemplate.ts',
+]
+
+const STYTCH_ALLOWED = new Map([
+  [
+    'src/presentation/auth/StytchSignIn.tsx',
+    'the one module that mounts the Stytch SDK, reached only through React.lazy',
+  ],
+])
+
 function* sourceFiles(path) {
   const full = join(ROOT, path)
   const stats = statSync(full)
@@ -103,46 +140,77 @@ function* sourceFiles(path) {
   }
 }
 
-/**
- * An import of the package, static or dynamic. A prose mention in a comment is
- * not one, which is why this looks for the specifier after `from` or `import(`
- * rather than for the name anywhere in the file.
- */
-const EDITOR_IMPORT = new RegExp(`(?:from|import\\()\\s*['"]${EDITOR_PACKAGE}`)
-
 function isSourceFile(file) {
   return /\.(ts|tsx|mts|js|mjs)$/.test(file)
 }
 
-const offenders = []
-// Outside the browser page nothing may so much as name it.
-for (const root of EDITOR_FREE_PATHS) {
-  for (const file of sourceFiles(root)) {
-    if (isSourceFile(file) && readFileSync(join(ROOT, file), 'utf8').includes(EDITOR_PACKAGE)) {
-      offenders.push(file)
+/**
+ * One lazily loaded package and the rules that keep it lazy.
+ *
+ * `freePaths` may not so much as NAME the package; `scannedPaths` may name it in
+ * prose but only `allowed` may import it. A missing entry in `allowed` is the
+ * point: adding one is a deliberate act that says "this module is inside the
+ * lazy seam", and getting it wrong is what puts the chunk in everyone's first
+ * download.
+ */
+const LAZY_PACKAGES = [
+  {
+    name: EDITOR_PACKAGE,
+    label: 'Editor',
+    adr: 'ADR-18',
+    freePaths: EDITOR_FREE_PATHS,
+    scannedPaths: EDITOR_SCANNED_PATHS,
+    allowed: EDITOR_ALLOWED,
+  },
+  {
+    name: STYTCH_PACKAGE,
+    label: 'Stytch',
+    adr: 'ADR-31',
+    freePaths: STYTCH_FREE_PATHS,
+    scannedPaths: ['src'],
+    allowed: STYTCH_ALLOWED,
+  },
+]
+
+/**
+ * Returns the files breaking the rule for one package.
+ *
+ * An import is the specifier after `from` or `import(`, so a prose mention in a
+ * comment is not one. Tests are skipped inside `scannedPaths`: a
+ * `vi.mock('@stytch/react')` never ships.
+ */
+function offendersFor({ name, freePaths, scannedPaths, allowed }) {
+  const importPattern = new RegExp(`(?:from|import\\()\\s*['"]${name}`)
+  const found = []
+  for (const root of freePaths) {
+    for (const file of sourceFiles(root)) {
+      if (isSourceFile(file) && readFileSync(join(ROOT, file), 'utf8').includes(name)) {
+        found.push(file)
+      }
     }
   }
-}
-// Inside it, only the allowed modules may IMPORT it. Tests are skipped: a
-// `vi.mock('@react-email/editor/core')` never ships.
-for (const root of EDITOR_SCANNED_PATHS) {
-  for (const file of sourceFiles(root)) {
-    if (!isSourceFile(file) || /\.test\.(ts|tsx)$/.test(file) || EDITOR_ALLOWED.has(file)) continue
-    if (EDITOR_IMPORT.test(readFileSync(join(ROOT, file), 'utf8'))) offenders.push(file)
+  for (const root of scannedPaths) {
+    for (const file of sourceFiles(root)) {
+      if (!isSourceFile(file) || /\.test\.(ts|tsx)$/.test(file) || allowed.has(file)) continue
+      if (importPattern.test(readFileSync(join(ROOT, file), 'utf8'))) found.push(file)
+    }
   }
+  return found
 }
 
-if (offenders.length > 0) {
-  const allowed = [...EDITOR_ALLOWED].map(([file, why]) => `  ${file} - ${why}`).join('\n')
-  console.error(
-    `\nThese files name "${EDITOR_PACKAGE}", which must stay in the lazy editor chunk:\n` +
-      offenders.map((file) => `  ${file}`).join('\n') +
-      `\n\nOnly these may (ADR-18):\n${allowed}\n`,
+for (const lazy of LAZY_PACKAGES) {
+  const found = offendersFor(lazy)
+  if (found.length > 0) {
+    const permitted = [...lazy.allowed].map(([file, why]) => `  ${file} - ${why}`).join('\n')
+    console.error(
+      `\nThese files name "${lazy.name}", which must stay in its own lazily loaded chunk:\n` +
+        found.map((file) => `  ${file}`).join('\n') +
+        `\n\nOnly these may (${lazy.adr}):\n${permitted || '  (none yet)'}\n`,
+    )
+    process.exit(1)
+  }
+  console.log(
+    `${lazy.label} split check: "${lazy.name}" named only by its ${lazy.allowed.size} allowed module(s)` +
+      ` (scanned ${[...lazy.freePaths, ...lazy.scannedPaths].join(', ')}).`,
   )
-  process.exit(1)
 }
-
-console.log(
-  `Editor split check: "${EDITOR_PACKAGE}" named only by its ${EDITOR_ALLOWED.size} allowed modules` +
-    ` (scanned ${[...EDITOR_FREE_PATHS, ...EDITOR_SCANNED_PATHS].join(', ')}).`,
-)
