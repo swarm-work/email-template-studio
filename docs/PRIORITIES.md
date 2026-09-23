@@ -95,7 +95,7 @@ plus two items the persistence work created.
 
 ### 3.2 Settle the account, then create the database
 
-**Why first among the environment items.** The studio has a D1 binding and an R2 binding, and neither has ever pointed at a real remote resource: `database_id` in `wrangler.jsonc` is the literal placeholder `00000000-0000-4000-8000-0000000000d1`. So today the migration is free — there are no rows to export. Every week that a remote database exists on the wrong account, it is not. Section 2 item 3 is the blocker: three documents disagree about whose account `d0fa6b3d…` is.
+**Why first among the environment items.** **Half done, 2026-09-22**: the account is settled and the production D1 database is created (`f270cbc3-4b5e-457b-af43-ea3130904e2b`) and wired into `wrangler.jsonc`. It is empty — no migrations applied — so the migration is still free. R2 is not enabled on the account, so that half has not started. Every week that a remote database exists on the wrong account, it is not. Section 2 item 3 is the blocker: three documents disagree about whose account `d0fa6b3d…` is.
 
 **How.** `npx wrangler whoami`, and read the account name against `docs/DEPLOYMENT.md` and `docs/HANDOVER.md`; correct whichever is wrong in the same change. Then `npx wrangler d1 create email-template-studio` and `npx wrangler r2 bucket create email-template-studio-assets`, paste the id over the placeholder, `npm run cf:types`, and run `npm run db:migrate:prod` once. If the answer is "this is the wrong account", stop and do B1 to B3 of `docs/HANDOVER.md` first; that is the whole point of doing this before there is data.
 
