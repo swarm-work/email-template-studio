@@ -90,7 +90,21 @@ export default defineConfig(({ mode }) => {
   const proxy = runtime === 'node' ? nodeProxy(env) : undefined
 
   return {
-    server: { proxy },
+    server: {
+      // Pinned so the dev origin can never drift. Stytch validates the exact
+      // origin (SDK authorized domains) and the exact callback URL (redirect
+      // URLs), so a silent hop to 5174 after a stale server is left running
+      // breaks sign-in with bad_domain_for_stytch_sdk. strictPort fails loudly
+      // instead of incrementing.
+      port: 5173,
+      strictPort: true,
+      // This studio is opened from another device over Tailscale, so the dev
+      // server is reached by tailnet hostname, not localhost. Vite's host check
+      // rejects non-IP hostnames by default; allow this tailnet through.
+      // Drop this line if you only ever browse from the machine running vite.
+      allowedHosts: ['.tailf983c1.ts.net'],
+      proxy,
+    },
     preview: { proxy },
     plugins,
     define: {
