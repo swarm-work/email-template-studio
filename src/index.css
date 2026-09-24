@@ -4,7 +4,13 @@
 @import '@fontsource-variable/geist';
 @import '@fontsource-variable/geist-mono';
 
-@custom-variant dark (&:is(.dark *));
+/* `dark:` utilities apply under `.dark` EXCEPT inside a `.theme-light` subtree,
+ * which is a part of the page that stays light whatever the app theme (today:
+ * the sign-in screen, whose design is defined in light). The tokens for that
+ * subtree are pinned further down, at the `:root, .theme-light` block; this
+ * line is the other half, so a `dark:bg-input/30` on a shared control does not
+ * paint a dark-mode tint over light tokens. */
+@custom-variant dark (&:is(.dark *):not(.theme-light, .theme-light *));
 
 /* Several of @react-email/editor's Inspector sections carry bare Tailwind
  * utility classes in their own JSX (`flex flex-col gap-2` and friends). Tailwind
@@ -46,6 +52,11 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
 
+  /* The sign-in screen only (src/presentation/auth/AuthScreen.tsx). */
+  --color-auth-ground: var(--auth-ground);
+  --color-auth-tint: var(--auth-tint);
+  --color-auth-glow: var(--auth-glow);
+
   /* Status hues: use for badges, dots and inline messages only. */
   --color-success: var(--success);
   --color-success-foreground: var(--success-foreground);
@@ -76,7 +87,11 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-:root {
+/* `.theme-light` re-declares every light value on a subtree. A custom property
+ * set on an element beats the one it would inherit from `<html class="dark">`,
+ * whatever the order of the rules, so nothing here needs `!important`. */
+:root,
+.theme-light {
   --radius: 0.5rem;
 
   --background: oklch(0.982 0.002 95);
@@ -116,6 +131,17 @@
   --editor-border: #353b45;
   --editor-foreground: #abb2bf;
   --editor-muted: #7d8590;
+
+  /* The sign-in screen. The app ground is WARM off-white; the sign-in ground
+     is the same lightness turned a few degrees towards lavender, so the empty
+     page reads as a deliberate place rather than an unstyled one. `tint` is
+     the logo square, `glow` the one decorative radial behind the card (the
+     owner's indigo, kept as the hex it was given in). These three are used
+     nowhere else in the studio, and they have no dark values on purpose: the
+     sign-in screen is always drawn light (`.theme-light`). */
+  --auth-ground: oklch(0.977 0.008 290);
+  --auth-tint: oklch(0.962 0.016 290);
+  --auth-glow: #5046ef;
 }
 
 .dark {
