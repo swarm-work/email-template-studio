@@ -344,6 +344,60 @@ describe('createStytchAuthenticator', () => {
       expect(result.ok === false && result.reason).toContain('sub')
     })
 
+    // The shape of a REAL default B2B session token, decoded 2026-09-24 from the
+    // swarm-internal Test project: no top-level email, the address lives on the
+    // email authentication factor inside the session claim.
+    const emailFactorSession = {
+      id: 'member-session-test-3af142be-b548-4dbe-947e-b4289c6a2952',
+      started_at: '2026-09-24T04:46:31Z',
+      authentication_factors: [
+        {
+          type: 'magic_link',
+          delivery_method: 'email',
+          email_factor: { email_id: 'member-email-test-3353e0e2', email_address: EMAIL },
+        },
+      ],
+      roles: ['stytch_member'],
+    }
+
+    it('falls back to the email authentication factor inside the session claim', async () => {
+      const token = await makeToken({ email: undefined, 'https://stytch.com/session': emailFactorSession })
+      const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
+      expect(result).toEqual({ ok: true, identity: { email: EMAIL } })
+    })
+
+    it('prefers a top-level email claim over the authentication factor', async () => {
+      const token = await makeToken({
+        email: 'template@swarm.work',
+        'https://stytch.com/session': emailFactorSession,
+      })
+      const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
+      expect(result).toEqual({ ok: true, identity: { email: 'template@swarm.work' } })
+    })
+
+    it('still refuses a Google-only sign-in, whose factor carries no address', async () => {
+      const token = await makeToken({
+        email: undefined,
+        'https://stytch.com/session': {
+          ...emailFactorSession,
+          authentication_factors: [
+            {
+              type: 'oauth',
+              delivery_method: 'oauth_google',
+              google_oauth_factor: {
+                id: 'oauth-user-test-1',
+                email_id: 'member-email-test-1',
+                provider_subject: '1',
+              },
+            },
+          ],
+        },
+      })
+      const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
+      expect(result).toMatchObject({ ok: false })
+      expect(result.ok === false && result.reason).toContain('claim template')
+    })
+
     it('keeps the search list ordered from most to least specific', () => {
       expect(STYTCH_EMAIL_CLAIM_PATHS[0]).toEqual(['email'])
       expect(STYTCH_EMAIL_CLAIM_PATHS.every((path) => path.length >= 1)).toBe(true)

@@ -645,7 +645,7 @@ export function createStytchAuthenticator(
           reason:
             'Stytch session token carries no email address. Claims present: ' +
             `${Object.keys(claims).join(', ') || '(none)'}. ` +
-            'Add an email claim to the project’s claim template, or extend STYTCH_EMAIL_CLAIM_PATHS.',
+            'No email-based authentication factor either (a Google-only sign-in). Add a top-level email claim via the project’s custom claim template, or extend STYTCH_EMAIL_CLAIM_PATHS.',
         }
       }
       return { ok: true, identity: { email } }
@@ -722,7 +722,47 @@ export const STYTCH_EMAIL_CLAIM_PATHS: readonly (readonly string[])[] = [
   ['https://stytch.com/session', 'member', 'email_address'],
 ]
 
-/** First path that yields something that looks like an email address, or undefined. */
+/**
+ * Where a B2B session token records HOW the member signed in. Each entry is one
+ * factor; an email magic link or email OTP carries the address it was sent to.
+ *
+ * Verified on 2026-09-24 against a real token from the `swarm-internal` Test
+ * project (STYTCH_PLAN T1): a default B2B session JWT has NO email at the top
+ * level and no `https://stytch.com/member` claim at all. Its top-level claims
+ * are exactly aud, exp, iat, iss, nbf, sub, `https://stytch.com/organization`
+ * and `https://stytch.com/session`. The one place an address appears is inside
+ * the session claim, at `authentication_factors[].email_factor.email_address`,
+ * and only for email-based factors: `google_oauth_factor` has an `email_id`
+ * but not the address. So this fallback covers magic links and OTPs, while a
+ * Google sign-in still needs the project's custom claim template to add a
+ * top-level `email` (STYTCH_EMAIL_CLAIM_PATHS[0]).
+ *
+ * Trusting it is sound: the whole token is signature-verified before this
+ * runs, and the address is one Stytch itself delivered a link to.
+ */
+const STYTCH_SESSION_CLAIM = 'https://stytch.com/session'
+
+function emailFromAuthenticationFactors(claims: StytchClaims): string | undefined {
+  const session = claims[STYTCH_SESSION_CLAIM]
+  if (typeof session !== 'object' || session === null) return undefined
+  const factors = (session as Record<string, unknown>).authentication_factors
+  if (!Array.isArray(factors)) return undefined
+  for (const factor of factors) {
+    if (typeof factor !== 'object' || factor === null) continue
+    const emailFactor = (factor as Record<string, unknown>).email_factor
+    if (typeof emailFactor !== 'object' || emailFactor === null) continue
+    const address = (emailFactor as Record<string, unknown>).email_address
+    if (typeof address === 'string' && address.includes('@')) return address.trim()
+  }
+  return undefined
+}
+
+/**
+ * First path that yields something that looks like an email address, or
+ * undefined. The explicit claim paths win; the authentication-factor fallback
+ * is consulted last, so a project that DOES add a top-level `email` via a
+ * claim template is never overridden by the factor.
+ */
 function emailFromStytchClaims(claims: StytchClaims): string | undefined {
   for (const path of STYTCH_EMAIL_CLAIM_PATHS) {
     let value: unknown = claims
@@ -740,7 +780,7 @@ function emailFromStytchClaims(claims: StytchClaims): string | undefined {
     // placeholder like "" or "unknown" being written into the audit log.
     if (trimmed.includes('@')) return trimmed
   }
-  return undefined
+  return emailFromAuthenticationFactors(claims)
 }
 
 // ---------------------------------------------------------------------------
