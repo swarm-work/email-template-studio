@@ -10,7 +10,7 @@
  *
  * The shape comes from the owner's mockup: a very light lavender ground, the
  * studio's faint dot grid, one soft green glow to the right of the card, and a
- * white card with a square logo placeholder over the title. It is drawn with
+ * white card with a square logo tile over the title. It is drawn with
  * the app's tokens (`--auth-*` in src/index.css).
  *
  * It is ALWAYS light. The app has a light/dark toggle (ADR-29) and the studio
@@ -21,6 +21,7 @@
  * card, the shared controls and the Stytch form (which reads the same tokens)
  * all come out light under `<html class="dark">` with no second palette.
  */
+import { SwarmLogo } from '@/presentation/shared/SwarmLogo'
 
 interface AuthGroundProps {
   readonly children: React.ReactNode
@@ -68,7 +69,7 @@ interface AuthCardProps {
 }
 
 /**
- * The white card: logo placeholder, title, then whatever the screen puts inside.
+ * The white card: Swarm badge, title, then whatever the screen puts inside.
  *
  * The card sets NO horizontal padding of its own below the title. The Stytch
  * form arrives with its container's own padding (40px top and bottom, 36px at
@@ -88,11 +89,13 @@ export function AuthCard({ title = 'Email Template Studio', children }: AuthCard
     <div className="bg-card text-card-foreground ring-foreground/10 w-full max-w-md overflow-hidden rounded-2xl shadow-[0_12px_40px_-16px_oklch(0_0_0/0.22)] ring-1">
       <div className="flex flex-col items-center px-9 pt-10 text-center">
         {/*
-         * A placeholder, on purpose: the studio has no logo yet and the mockup
-         * shows the square it will go in. Decorative until it is an image with
-         * a name, so it is hidden from assistive technology.
+         * The square from the mockup, now holding Swarm's compact mark from
+         * the brand kit (public/logos). The ground is pinned light, so the
+         * violet badge is the one that shows here whatever the app theme.
          */}
-        <div aria-hidden="true" className="bg-auth-tint size-16 rounded-xl" />
+        <div className="bg-auth-tint flex size-16 items-center justify-center rounded-xl">
+          <SwarmLogo variant="badge" className="h-9" />
+        </div>
         <h1 className="mt-5 text-xl font-semibold tracking-tight">{title}</h1>
       </div>
       {children}
