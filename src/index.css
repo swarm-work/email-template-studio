@@ -4,7 +4,13 @@
 @import '@fontsource-variable/geist';
 @import '@fontsource-variable/geist-mono';
 
-@custom-variant dark (&:is(.dark *));
+/* `dark:` utilities apply under `.dark` EXCEPT inside a `.theme-light` subtree,
+ * which is a part of the page that stays light whatever the app theme (today:
+ * the sign-in screen, whose design is defined in light). The tokens for that
+ * subtree are pinned further down, at the `:root, .theme-light` block; this
+ * line is the other half, so a `dark:bg-input/30` on a shared control does not
+ * paint a dark-mode tint over light tokens. */
+@custom-variant dark (&:is(.dark *):not(.theme-light, .theme-light *));
 
 /* Several of @react-email/editor's Inspector sections carry bare Tailwind
  * utility classes in their own JSX (`flex flex-col gap-2` and friends). Tailwind
@@ -81,7 +87,11 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-:root {
+/* `.theme-light` re-declares every light value on a subtree. A custom property
+ * set on an element beats the one it would inherit from `<html class="dark">`,
+ * whatever the order of the rules, so nothing here needs `!important`. */
+:root,
+.theme-light {
   --radius: 0.5rem;
 
   --background: oklch(0.982 0.002 95);
@@ -125,11 +135,13 @@
   /* The sign-in screen. The app ground is WARM off-white; the sign-in ground
      is the same lightness turned a few degrees towards lavender, so the empty
      page reads as a deliberate place rather than an unstyled one. `tint` is
-     the logo square, `glow` the one decorative radial behind the card. These
-     three are used nowhere else in the studio. */
+     the logo square, `glow` the one decorative radial behind the card (the
+     owner's indigo, kept as the hex it was given in). These three are used
+     nowhere else in the studio, and they have no dark values on purpose: the
+     sign-in screen is always drawn light (`.theme-light`). */
   --auth-ground: oklch(0.977 0.008 290);
   --auth-tint: oklch(0.962 0.016 290);
-  --auth-glow: oklch(0.87 0.09 165);
+  --auth-glow: #5046ef;
 }
 
 .dark {
@@ -164,12 +176,6 @@
   --info: oklch(0.72 0.14 250);
   --info-foreground: oklch(0.85 0.1 250);
   --info-muted: oklch(0.3 0.05 250);
-
-  /* The glow dims rather than disappears: it is the only thing that tells the
-     sign-in page apart from a blank one, in either theme. */
-  --auth-ground: oklch(0.15 0.01 285);
-  --auth-tint: oklch(0.27 0.024 290);
-  --auth-glow: oklch(0.48 0.08 165);
 }
 
 /* ---------------------------------------------------------------------------
@@ -301,23 +307,6 @@
 .studio-sheet [data-merge-field].ProseMirror-selectednode {
   outline: 2px solid color-mix(in oklch, var(--ring) 70%, transparent);
   outline-offset: 1px;
-}
-
-/* ---------------------------------------------------------------------------
- * The Stytch sign-in form's dark-mode wordmark.
- *
- * Everything else about the prebuilt form is themed through its `presentation`
- * prop (src/presentation/auth/StytchSignIn.tsx), whose `shadcn` colour scheme
- * reads the app's own tokens and therefore follows `.dark` by itself. The one
- * thing that scheme leaves behind is the "Powered by Stytch" wordmark: its
- * fill is computed from `--st-dark-mode`, which the SDK sets only for its own
- * light/dark schemes (Watermark.module.css, MainContainer `themeToCssVariables`).
- * Setting the variable on OUR wrapper lets it inherit down. If a future SDK
- * renames the variable this rule does nothing, and the wordmark goes back to
- * near-black on the dark card - a blemish, not a breakage.
- * ------------------------------------------------------------------------- */
-.dark [data-auth-stytch] {
-  --st-dark-mode: 1;
 }
 
 /* ---------------------------------------------------------------------------

@@ -11,8 +11,15 @@
  * The shape comes from the owner's mockup: a very light lavender ground, the
  * studio's faint dot grid, one soft green glow to the right of the card, and a
  * white card with a square logo placeholder over the title. It is drawn with
- * the app's tokens (`--auth-*` in src/index.css) so the dark theme (ADR-29)
- * needs no second copy of anything.
+ * the app's tokens (`--auth-*` in src/index.css).
+ *
+ * It is ALWAYS light. The app has a light/dark toggle (ADR-29) and the studio
+ * behind this screen follows it; the sign-in screen does not, because its
+ * design is defined in light and the owner wants it that way. The pin is the
+ * `theme-light` class on the ground: `src/index.css` re-declares every light
+ * token on that class and excludes the subtree from `dark:` utilities, so the
+ * card, the shared controls and the Stytch form (which reads the same tokens)
+ * all come out light under `<html class="dark">` with no second palette.
  */
 
 interface AuthGroundProps {
@@ -21,6 +28,10 @@ interface AuthGroundProps {
 
 /**
  * The full-height page behind a sign-in card.
+ *
+ * `[color-scheme:light]` goes with `theme-light`: the tokens make our own
+ * drawing light, and the colour scheme makes the browser's - the caret, the
+ * autofill fill, the scrollbar if one appears - light as well.
  *
  * `min-h-dvh` rather than `min-h-screen`: on a phone the dynamic viewport
  * height shrinks when the browser chrome is showing, and `100vh` would leave
@@ -33,7 +44,7 @@ interface AuthGroundProps {
  */
 export function AuthGround({ children }: AuthGroundProps) {
   return (
-    <main className="dot-grid bg-auth-ground text-foreground relative isolate flex min-h-dvh items-center justify-center overflow-hidden bg-[size:24px_24px] p-6">
+    <main className="theme-light dot-grid bg-auth-ground text-foreground relative isolate flex min-h-dvh items-center justify-center overflow-hidden bg-[size:24px_24px] p-6 [color-scheme:light]">
       {/*
        * The glow. Decorative, so it is hidden from assistive technology and
        * cannot catch a click. It is a plain radial gradient on a blurred box:
@@ -43,7 +54,7 @@ export function AuthGround({ children }: AuthGroundProps) {
        */}
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute top-1/2 left-1/2 -z-10 size-[42rem] translate-x-[8%] -translate-y-1/2 rounded-full bg-[radial-gradient(closest-side,var(--auth-glow),transparent)] opacity-60 blur-3xl"
+        className="pointer-events-none absolute top-1/2 left-1/2 -z-10 size-[42rem] translate-x-[8%] -translate-y-1/2 rounded-full bg-[radial-gradient(closest-side,var(--auth-glow),transparent)] opacity-35 blur-3xl"
       />
       {children}
     </main>
@@ -70,12 +81,11 @@ interface AuthCardProps {
  * On a shadow: the design system says hairlines, not shadows (docs/DESIGN.md
  * principle 2), and the exception it lists is a surface floating over an
  * empty page - which is exactly what this card is. It keeps the hairline too,
- * so in dark mode, where a shadow over a dark ground disappears, the card
- * still has an edge.
+ * so the edge is there even where the shadow is too soft to see.
  */
 export function AuthCard({ title = 'Email Template Studio', children }: AuthCardProps) {
   return (
-    <div className="bg-card text-card-foreground ring-foreground/10 w-full max-w-md overflow-hidden rounded-2xl shadow-[0_12px_40px_-16px_oklch(0_0_0/0.22)] ring-1 dark:shadow-[0_12px_40px_-16px_oklch(0_0_0/0.7)]">
+    <div className="bg-card text-card-foreground ring-foreground/10 w-full max-w-md overflow-hidden rounded-2xl shadow-[0_12px_40px_-16px_oklch(0_0_0/0.22)] ring-1">
       <div className="flex flex-col items-center px-9 pt-10 text-center">
         {/*
          * A placeholder, on purpose: the studio has no logo yet and the mockup

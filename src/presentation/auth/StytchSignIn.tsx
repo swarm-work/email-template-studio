@@ -56,10 +56,10 @@ function redirectUrl(): string {
  * `enableShadowDOM`, which is left off) and styles itself entirely through
  * `--st-*` CSS variables that this object becomes. The `shadcn` preset points
  * every one of those at the app's own tokens - `var(--primary)`,
- * `var(--border)`, `var(--font-sans)` and so on - which is what makes the
- * form follow the light/dark toggle (ADR-29) with no theme switching here:
- * when `<html>` gains `.dark`, the tokens change and the form changes with
- * them.
+ * `var(--border)`, `var(--font-sans)` and so on. The card around this form
+ * pins those tokens to their light values (`theme-light` in `AuthScreen.tsx`),
+ * so the form is light too, whatever the app theme, with no theme switching
+ * here and no second palette.
  *
  * The overrides on top of the preset:
  * - The form must FILL the card, not be a second card inside it. So its
@@ -137,35 +137,31 @@ export default function StytchSignIn() {
 
   return (
     <StytchB2BProvider stytch={client}>
-      {/* `data-auth-stytch` is the hook for the one CSS bridge in src/index.css
-          (the dark-mode wordmark). It carries no styling of its own. */}
-      <div data-auth-stytch>
-        <StytchB2B
-          config={{
-            // Discovery: the member types their address and Stytch works out
-            // which organisation they belong to. The organisation's
-            // `email_allowed_domains` plus RESTRICTED JIT provisioning is what
-            // keeps this to swarm.work addresses (ADR-31) - there is no
-            // allow-list in the Worker doing that job.
-            authFlowType: 'Discovery',
-            products: [B2BProducts.emailMagicLinks, B2BProducts.oauth],
-            sessionOptions: { sessionDurationMinutes: SESSION_DURATION_MINUTES },
-            emailMagicLinksOptions: {
-              discoveryRedirectURL: redirectUrl(),
-              loginRedirectURL: redirectUrl(),
-              signupRedirectURL: redirectUrl(),
-            },
-            oauthOptions: {
-              discoveryRedirectURL: redirectUrl(),
-              loginRedirectURL: redirectUrl(),
-              signupRedirectURL: redirectUrl(),
-              providers: [{ type: 'google' }],
-            },
-          }}
-          presentation={presentation}
-          strings={strings}
-        />
-      </div>
+      <StytchB2B
+        config={{
+          // Discovery: the member types their address and Stytch works out
+          // which organisation they belong to. The organisation's
+          // `email_allowed_domains` plus RESTRICTED JIT provisioning is what
+          // keeps this to swarm.work addresses (ADR-31) - there is no
+          // allow-list in the Worker doing that job.
+          authFlowType: 'Discovery',
+          products: [B2BProducts.emailMagicLinks, B2BProducts.oauth],
+          sessionOptions: { sessionDurationMinutes: SESSION_DURATION_MINUTES },
+          emailMagicLinksOptions: {
+            discoveryRedirectURL: redirectUrl(),
+            loginRedirectURL: redirectUrl(),
+            signupRedirectURL: redirectUrl(),
+          },
+          oauthOptions: {
+            discoveryRedirectURL: redirectUrl(),
+            loginRedirectURL: redirectUrl(),
+            signupRedirectURL: redirectUrl(),
+            providers: [{ type: 'google' }],
+          },
+        }}
+        presentation={presentation}
+        strings={strings}
+      />
     </StytchB2BProvider>
   )
 }
