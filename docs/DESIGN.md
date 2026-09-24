@@ -32,6 +32,8 @@ Original visual system informed by the reference screenshots. The references tau
 
 Dark values exist under `.dark` for a later toggle.
 
+Three more tokens exist only for the sign-in screen (`src/presentation/auth/AuthScreen.tsx`): `--auth-ground` (the app ground turned a few degrees towards lavender), `--auth-tint` (the logo square) and `--auth-glow` (the one decorative radial behind the card). The Stytch form inside that card is themed through the SDK's `presentation.theme` in its `shadcn` colour scheme, which reads the tokens above directly, so it follows the theme toggle without a second palette (`src/presentation/auth/StytchSignIn.tsx`).
+
 ## Typography
 
 - UI: Geist (variable), 14 px base, 13 px in dense panels, 11 px uppercase tracked labels (`.meta-label`).

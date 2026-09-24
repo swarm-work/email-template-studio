@@ -26,6 +26,7 @@ import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { AuthCard, AuthCardBody, AuthGround } from './AuthScreen'
 
 /**
  * Lazily loaded on purpose, and the ONLY way this module reaches Stytch.
@@ -147,65 +148,80 @@ export function PasswordGate({ children, fetchImpl = defaultFetch }: PasswordGat
 
   if (onAuthenticatePath || state.kind === 'stytch') {
     return (
-      <main className="flex min-h-dvh items-center justify-center p-6">
-        <Suspense fallback={<p className="text-muted-foreground text-sm">Loading sign-in…</p>}>
-          <StytchSignIn />
-        </Suspense>
-      </main>
+      <AuthGround>
+        <AuthCard>
+          {/* The fallback shows while the lazy chunk downloads. It takes the
+              same inset as the form it is standing in for, so the card does
+              not jump in height when the form arrives. */}
+          <Suspense
+            fallback={
+              <AuthCardBody>
+                <p className="text-muted-foreground text-center text-sm">Loading sign-in…</p>
+              </AuthCardBody>
+            }
+          >
+            <StytchSignIn />
+          </Suspense>
+        </AuthCard>
+      </AuthGround>
     )
   }
 
   if (state.kind === 'open') return <>{children}</>
 
+  // The same ground as the screens that follow it, so the page does not change
+  // colour when the answer arrives. No card yet: there is nothing to put in it,
+  // and an empty card that then fills would flash.
   if (state.kind === 'checking') {
     return (
-      <main className="flex min-h-dvh items-center justify-center p-6">
+      <AuthGround>
         <p className="text-muted-foreground text-sm">Checking access…</p>
-      </main>
+      </AuthGround>
     )
   }
 
   return (
-    <main className="flex min-h-dvh items-center justify-center p-6">
-      <div className="w-full max-w-sm space-y-6">
-        <div className="space-y-2">
-          <h1 className="text-xl font-semibold tracking-tight">Email Template Studio</h1>
-          <p className="text-muted-foreground text-sm">
-            {state.kind === 'locked'
-              ? 'This studio is password protected.'
-              : 'This studio is not available right now.'}
-          </p>
-        </div>
+    <AuthGround>
+      <AuthCard>
+        <AuthCardBody>
+          <div className="space-y-6">
+            <p className="text-muted-foreground text-center text-sm">
+              {state.kind === 'locked'
+                ? 'This studio is password protected.'
+                : 'This studio is not available right now.'}
+            </p>
 
-        {state.kind === 'locked' ? (
-          <form onSubmit={submit} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="studio-password">Password</Label>
-              <Input
-                id="studio-password"
-                type="password"
-                autoComplete="current-password"
-                autoFocus
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                className="h-9 px-3"
-              />
-            </div>
-            {state.message ? (
+            {state.kind === 'locked' ? (
+              <form onSubmit={submit} className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="studio-password">Password</Label>
+                  <Input
+                    id="studio-password"
+                    type="password"
+                    autoComplete="current-password"
+                    autoFocus
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    className="h-9 px-3"
+                  />
+                </div>
+                {state.message ? (
+                  <Alert variant="destructive">
+                    <AlertDescription>{state.message}</AlertDescription>
+                  </Alert>
+                ) : null}
+                <Button type="submit" className="w-full" disabled={submitting || password === ''}>
+                  {submitting ? 'Signing in…' : 'Sign in'}
+                </Button>
+              </form>
+            ) : (
               <Alert variant="destructive">
                 <AlertDescription>{state.message}</AlertDescription>
               </Alert>
-            ) : null}
-            <Button type="submit" className="w-full" disabled={submitting || password === ''}>
-              {submitting ? 'Signing in…' : 'Sign in'}
-            </Button>
-          </form>
-        ) : (
-          <Alert variant="destructive">
-            <AlertDescription>{state.message}</AlertDescription>
-          </Alert>
-        )}
-      </div>
-    </main>
+            )}
+          </div>
+        </AuthCardBody>
+      </AuthCard>
+    </AuthGround>
   )
 }

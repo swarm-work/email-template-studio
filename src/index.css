@@ -46,6 +46,11 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
 
+  /* The sign-in screen only (src/presentation/auth/AuthScreen.tsx). */
+  --color-auth-ground: var(--auth-ground);
+  --color-auth-tint: var(--auth-tint);
+  --color-auth-glow: var(--auth-glow);
+
   /* Status hues: use for badges, dots and inline messages only. */
   --color-success: var(--success);
   --color-success-foreground: var(--success-foreground);
@@ -116,6 +121,15 @@
   --editor-border: #353b45;
   --editor-foreground: #abb2bf;
   --editor-muted: #7d8590;
+
+  /* The sign-in screen. The app ground is WARM off-white; the sign-in ground
+     is the same lightness turned a few degrees towards lavender, so the empty
+     page reads as a deliberate place rather than an unstyled one. `tint` is
+     the logo square, `glow` the one decorative radial behind the card. These
+     three are used nowhere else in the studio. */
+  --auth-ground: oklch(0.977 0.008 290);
+  --auth-tint: oklch(0.962 0.016 290);
+  --auth-glow: oklch(0.87 0.09 165);
 }
 
 .dark {
@@ -150,6 +164,12 @@
   --info: oklch(0.72 0.14 250);
   --info-foreground: oklch(0.85 0.1 250);
   --info-muted: oklch(0.3 0.05 250);
+
+  /* The glow dims rather than disappears: it is the only thing that tells the
+     sign-in page apart from a blank one, in either theme. */
+  --auth-ground: oklch(0.15 0.01 285);
+  --auth-tint: oklch(0.27 0.024 290);
+  --auth-glow: oklch(0.48 0.08 165);
 }
 
 /* ---------------------------------------------------------------------------
@@ -281,6 +301,23 @@
 .studio-sheet [data-merge-field].ProseMirror-selectednode {
   outline: 2px solid color-mix(in oklch, var(--ring) 70%, transparent);
   outline-offset: 1px;
+}
+
+/* ---------------------------------------------------------------------------
+ * The Stytch sign-in form's dark-mode wordmark.
+ *
+ * Everything else about the prebuilt form is themed through its `presentation`
+ * prop (src/presentation/auth/StytchSignIn.tsx), whose `shadcn` colour scheme
+ * reads the app's own tokens and therefore follows `.dark` by itself. The one
+ * thing that scheme leaves behind is the "Powered by Stytch" wordmark: its
+ * fill is computed from `--st-dark-mode`, which the SDK sets only for its own
+ * light/dark schemes (Watermark.module.css, MainContainer `themeToCssVariables`).
+ * Setting the variable on OUR wrapper lets it inherit down. If a future SDK
+ * renames the variable this rule does nothing, and the wordmark goes back to
+ * near-black on the dark card - a blemish, not a breakage.
+ * ------------------------------------------------------------------------- */
+.dark [data-auth-stytch] {
+  --st-dark-mode: 1;
 }
 
 /* ---------------------------------------------------------------------------
