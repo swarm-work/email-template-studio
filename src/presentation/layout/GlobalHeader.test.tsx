@@ -21,6 +21,17 @@ function renderHeader(props: Partial<Parameters<typeof GlobalHeader>[0]> = {}) {
   )
 }
 
+describe('GlobalHeader brand', () => {
+  it('links home through the Swarm lockup and the product name', () => {
+    renderHeader()
+    // The name algorithm joins inline siblings without a space, so match the
+    // two parts rather than one exact string.
+    const home = screen.getByRole('link', { name: /^Swarm\s*Email Template Studio$/ })
+    expect(home).toHaveAttribute('href', '/')
+    expect(screen.getByRole('img', { name: 'Swarm' })).toBeInTheDocument()
+  })
+})
+
 describe('GlobalHeader identity', () => {
   it('names the workspace when nobody is signed in, as it always has', () => {
     renderHeader()

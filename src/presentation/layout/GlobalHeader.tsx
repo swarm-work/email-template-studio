@@ -5,11 +5,12 @@
  * shows is either a prop or a planned item that says so — nothing here invents
  * a number (see the honesty rules in docs/DESIGN.md).
  */
-import { ExternalLink, Mail } from 'lucide-react'
+import { ExternalLink } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { StatusBadge } from '@/presentation/shared/StatusBadge'
+import { SwarmLogo } from '@/presentation/shared/SwarmLogo'
 import { cn } from '@/lib/utils'
 import { ThemeToggle } from './ThemeToggle'
 
@@ -98,14 +99,15 @@ export function GlobalHeader({
   return (
     <header className="bg-card shrink-0 border-b">
       <div className="mx-auto flex h-12 max-w-[1440px] min-w-0 items-center gap-3 px-6">
+        {/* Swarm's own lockup (badge + wordmark) from the brand kit, then the
+            product name. The link reads "Swarm Email Template Studio" to a
+            screen reader; below sm only the logo fits. */}
         <a
           href="/"
-          className="focus-visible:ring-ring/50 flex shrink-0 items-center gap-2 rounded-md outline-none focus-visible:ring-3"
+          className="focus-visible:ring-ring/50 flex shrink-0 items-center gap-2.5 rounded-md outline-none focus-visible:ring-3"
         >
-          <span className="bg-primary text-primary-foreground flex size-6 items-center justify-center rounded-md">
-            <Mail className="size-3.5" aria-hidden="true" />
-          </span>
-          <span className="text-sm font-semibold tracking-tight">Email Template Studio</span>
+          <SwarmLogo className="h-5" />
+          <span className="hidden text-sm font-semibold tracking-tight sm:inline">Email Template Studio</span>
         </a>
 
         <span className="text-border hidden text-lg select-none xl:inline" aria-hidden="true">
