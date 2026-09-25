@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { GlobalHeader } from './GlobalHeader'
@@ -10,7 +10,6 @@ function renderHeader(props: Partial<Parameters<typeof GlobalHeader>[0]> = {}) {
     <TooltipProvider>
       <GlobalHeader
         workspace="meridian-platform"
-        environment="Local"
         lastRenderMs={null}
         live={false}
         activePage="templates"
@@ -82,19 +81,29 @@ describe('GlobalHeader', () => {
     expect(onNavigate).toHaveBeenCalledWith('api')
 
     onNavigate.mockClear()
-    await userEvent.click(screen.getByRole('button', { name: 'Domains' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Overview & Logs' }))
     expect(onNavigate).not.toHaveBeenCalled()
   })
 
   it('gives every planned control a reason, not just a disabled state', () => {
     renderHeader()
 
-    const planned = screen.getByRole('button', { name: 'Domains' })
+    const planned = screen.getByRole('button', { name: 'Overview & Logs' })
     expect(planned).toHaveAttribute('aria-disabled', 'true')
     expect(planned).toHaveAccessibleDescription('Planned for a later milestone.')
-    expect(screen.getByRole('button', { name: 'Feedback' })).toHaveAccessibleDescription(
-      'Planned for a later milestone.',
-    )
+  })
+
+  it('lists exactly the three product areas, with no Docs, Feedback or Domains', () => {
+    renderHeader()
+    const nav = screen.getByRole('navigation', { name: 'Product' })
+    expect(
+      within(nav)
+        .getAllByRole('button')
+        .map((button) => button.textContent),
+    ).toEqual(['Overview & Logs', 'API Keys & Webhooks', 'Template Studio'])
+    expect(screen.queryByRole('link', { name: /Docs/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Feedback' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Domains' })).not.toBeInTheDocument()
   })
 
   it('only says LIVE when the send server reports itself connected', () => {
@@ -105,7 +114,6 @@ describe('GlobalHeader', () => {
       <TooltipProvider>
         <GlobalHeader
           workspace="meridian-platform"
-          environment="Local"
           lastRenderMs={24}
           live
           activePage="templates"
@@ -114,6 +122,12 @@ describe('GlobalHeader', () => {
       </TooltipProvider>,
     )
     expect(screen.getByText(/render worker/)).toHaveTextContent('LIVE · render worker 24 ms')
+  })
+
+  it('carries no environment badge: it said "Local" everywhere, production included', () => {
+    renderHeader()
+    // The render pill still starts with "Local ·"; a badge would be the bare word.
+    expect(screen.queryByText('Local', { exact: true })).not.toBeInTheDocument()
   })
 
   it('names the avatar with a role that can carry a name', () => {

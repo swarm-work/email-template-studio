@@ -98,7 +98,7 @@ async function waitForRender(page: Page) {
 
 /** The "Templates /" crumb in the studio sub-header. */
 async function backToLibrary(page: Page) {
-  await page.getByRole('button', { name: 'Templates', exact: true }).click()
+  await page.getByRole('button', { name: 'Back to templates', exact: true }).click()
   await expect(libraryHeading(page)).toBeVisible()
 }
 
@@ -352,14 +352,17 @@ test('device toggle changes the preview viewport', async ({ page }) => {
   await expect(page.getByRole('radio', { name: 'Mobile preview' })).toHaveAttribute('aria-checked', 'true')
 })
 
-test('neither the library nor the editor scrolls sideways at any supported width', async ({ page }) => {
+test('no screen scrolls sideways at any supported width, a phone included', async ({ page }) => {
   const overflow = () =>
     page.evaluate(() => ({
       scrollWidth: document.documentElement.scrollWidth,
       clientWidth: document.documentElement.clientWidth,
     }))
 
-  for (const width of [1440, 1280, 1024, 768]) {
+  // 390 is a phone. It was left out of this sweep until the owner opened the
+  // studio on one: the API keys page scrolled sideways, and the mode switch and
+  // the nav were not there at all, so preview and API keys were unreachable.
+  for (const width of [1440, 1280, 1024, 768, 390]) {
     await page.setViewportSize({ width, height: 900 })
     await expect(libraryHeading(page)).toBeVisible()
     const library = await overflow()
@@ -392,7 +395,57 @@ test('neither the library nor the editor scrolls sideways at any supported width
     }
 
     await backToLibrary(page)
+
+    // Every nav item is whole on screen: a scroll strip once left "Overview
+    // & Logs" cut in half at a phone's left edge, with no visible way to it.
+    for (const item of await page.getByRole('navigation', { name: 'Product' }).getByRole('button').all()) {
+      const box = await item.boundingBox()
+      expect(box, `nav item at ${width}px`).not.toBeNull()
+      expect(box!.x, `nav item left edge at ${width}px`).toBeGreaterThanOrEqual(0)
+      expect(box!.x + box!.width, `nav item right edge at ${width}px`).toBeLessThanOrEqual(width + 1)
+    }
+
+    // The API keys page, reached the way a person would: through the nav,
+    // which has to exist at this width for the click to work at all.
+    await page.getByRole('button', { name: 'API Keys & Webhooks' }).click()
+    await expect(page.getByRole('heading', { level: 1, name: 'API Keys & Integration' })).toBeVisible()
+    const apiKeys = await overflow()
+    expect(apiKeys.scrollWidth, `API keys at ${width}px`).toBeLessThanOrEqual(apiKeys.clientWidth)
+    await page.getByRole('button', { name: 'Template Studio' }).click()
   }
+})
+
+test('the envelope minimises while the editor is scrolled down, and comes back', async ({ page }) => {
+  await openTemplate(page, WELCOME)
+  await expect(sourcePanel(page)).toBeVisible()
+  const subject = envelopePanel(page).getByLabel('Subject line')
+  await expect(subject).toBeVisible()
+
+  // The editor's one scroller is the element the envelope panel sits above.
+  const scroller = page.locator('main .overflow-y-auto').first()
+  await scroller.evaluate((element) => {
+    element.scrollTop = 300
+  })
+  const summary = envelopePanel(page).getByRole('button', { name: /^Show envelope/ })
+  await expect(summary).toBeVisible()
+  await expect(subject).toBeHidden()
+
+  // Back at the top, it opens by itself. The pause is the hook's settle window
+  // (SETTLE_MS, 250 ms): scroll events straight after a change are treated as
+  // the browser re-laying out, not a person, so a script this fast has to wait.
+  await page.waitForTimeout(300)
+  await scroller.evaluate((element) => {
+    element.scrollTop = 0
+  })
+  await expect(subject).toBeVisible()
+
+  // And from further down, a click on the summary opens it too.
+  await page.waitForTimeout(300)
+  await scroller.evaluate((element) => {
+    element.scrollTop = 300
+  })
+  await summary.click()
+  await expect(subject).toBeVisible()
 })
 
 test('the editors keep their undo history and their gutters across a tab switch', async ({ page }) => {
@@ -554,8 +607,9 @@ test('the open editor is exactly one viewport tall and scrolls inside itself', a
   }))
   expect(page_.scrollHeight).toBeLessThanOrEqual(page_.clientHeight + 1)
 
-  // The status bar is pinned at the bottom of the editor, above the footer,
-  // without anyone having to scroll to it.
+  // The status bar is pinned at the bottom of the editor without anyone
+  // having to scroll to it. It is the last thing on screen now that the app
+  // footer is gone.
   const bar = await statusBar(page).boundingBox()
   expect(bar).not.toBeNull()
   expect(bar!.y + bar!.height).toBeLessThanOrEqual(900)

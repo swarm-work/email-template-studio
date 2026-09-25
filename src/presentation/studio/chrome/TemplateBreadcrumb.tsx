@@ -1,16 +1,18 @@
 /**
- * "Templates / <name>" at the left of the studio sub-header, and the pencil
+ * "← Templates  <name>" at the left of the studio sub-header, and the pencil
  * that renames the template.
  *
  * Presentation layer: no rules. It is both the page's heading and its way back
- * to the library, which is why the crumb is a real button rather than a link:
- * the app has no router yet, so navigation is a callback (see TemplatesRoute).
+ * to the library, which is why the back control is a real button rather than a
+ * link: the app has no router yet, so navigation is a callback (see
+ * TemplatesRoute). Leaving with unsaved edits needs no confirmation here - the
+ * route keeps the draft and says so in a toast - so this only calls back.
  *
  * Renaming happens IN PLACE rather than in a dialog: it is one short field, and
  * a modal for one field is a lot of ceremony for a typo.
  */
 import { useRef, useState } from 'react'
-import { Pencil } from 'lucide-react'
+import { ArrowLeft, Pencil } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { MAX_NAME_LENGTH } from '@shared/templateContracts'
@@ -46,17 +48,24 @@ export function TemplateBreadcrumb({ name, onBackToLibrary, onRename }: Template
   }
 
   return (
-    <div className="flex min-w-0 items-center gap-1">
-      <button
-        type="button"
+    <div className="flex min-w-0 items-center gap-2">
+      {/* The way back to the library. It used to be a quiet grey word in a
+          breadcrumb, which nobody recognised as a control, so it is now a real
+          button with an arrow and an outline. Its accessible name says what it
+          does ("Back to templates") while the visible word stays short; the
+          visible "Templates" is part of that name, so voice control users can
+          still say "click Templates". Below `sm` only the arrow shows, because
+          the template's name needs the room more than the word does. */}
+      <Button
+        variant="outline"
+        size="sm"
+        aria-label="Back to templates"
+        className="shrink-0 max-sm:px-2"
         onClick={onBackToLibrary}
-        className="text-muted-foreground hover:text-foreground focus-visible:ring-ring/50 shrink-0 rounded-md px-1 text-sm transition-colors focus-visible:ring-3 focus-visible:outline-none"
       >
-        Templates
-      </button>
-      <span className="text-muted-foreground/60 shrink-0 text-sm" aria-hidden="true">
-        /
-      </span>
+        <ArrowLeft aria-hidden="true" />
+        <span className="hidden sm:inline">Templates</span>
+      </Button>
 
       {editing ? (
         <Input

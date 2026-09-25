@@ -8,11 +8,14 @@ import { createSessionStore, getBrowserSessionStorage } from '@/infrastructure/s
 import { createTemplateRepository } from '@/infrastructure/templates/createTemplateRepository'
 import { PasswordGate } from '@/presentation/auth/PasswordGate'
 import { AppShell } from '@/presentation/layout/AppShell'
-import { AppFooter } from '@/presentation/layout/AppFooter'
 import { GlobalHeader, type ScreenPage } from '@/presentation/layout/GlobalHeader'
 import { TemplatesRoute } from '@/presentation/templates/TemplatesRoute'
 
 const WORKSPACE = 'meridian-platform'
+// Only the API keys page reads this now: it goes into the prefix of the mock
+// keys it generates (`st_local_…`). The header badge and the footer that used
+// to show it were removed - "Local" was on screen in every environment,
+// production included, so it told nobody anything true.
 const ENVIRONMENT = 'Local'
 
 /** Composition root: builds the infrastructure once and hands it to the screens. */
@@ -120,20 +123,12 @@ export default function App() {
           header={
             <GlobalHeader
               workspace={WORKSPACE}
-              environment={ENVIRONMENT}
               lastRenderMs={lastRenderMs}
               live={live}
               activePage={activePage}
               onNavigate={setActivePage}
               signedInAs={signedInAs}
               onSignOut={authMode === 'stytch' ? onSignOut : undefined}
-            />
-          }
-          footer={
-            <AppFooter
-              environment={ENVIRONMENT}
-              version={__APP_VERSION__}
-              providerLabel={emailProvider.label}
             />
           }
         >
