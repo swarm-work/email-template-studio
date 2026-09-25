@@ -5,6 +5,7 @@
  * shows is either a prop or a planned item that says so — nothing here invents
  * a number (see the honesty rules in docs/DESIGN.md).
  */
+import { useEffect, useRef } from 'react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -95,6 +96,16 @@ export function GlobalHeader({
   signedInAs,
   onSignOut,
 }: GlobalHeaderProps) {
+  // On a phone the nav is a strip wider than the screen, and the page you are
+  // on can be the item cut off at the edge. Scrolling it into view says where
+  // you are without a sideways swipe. `nearest` moves the strip only as far as
+  // needed and leaves the page's own vertical scroll alone. The `?.()` is for
+  // environments without the method (jsdom in the unit tests).
+  const activeItemRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    activeItemRef.current?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
+  }, [activePage])
+
   return (
     <header className="bg-card shrink-0 border-b">
       {/* `flex-wrap` so that below `md` the nav can drop onto a row of its own
@@ -134,6 +145,7 @@ export function GlobalHeader({
             return (
               <button
                 key={item.id}
+                ref={active ? activeItemRef : undefined}
                 type="button"
                 aria-current={active ? 'page' : undefined}
                 aria-disabled={item.enabled ? undefined : true}

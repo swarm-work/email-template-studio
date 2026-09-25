@@ -85,6 +85,10 @@ export function useCollapseOnScroll({ scroller, hold }: UseCollapseOnScrollOptio
     holdRef.current = hold
   }, [hold])
 
+  // Subscribes once, to whatever element the ref holds at mount. That holds
+  // because the studio's scroller is rendered unconditionally and opening a
+  // different template remounts the whole StudioPage (via the library). If a
+  // template ever switches in place, this needs a callback ref instead.
   useEffect(() => {
     const element = scroller.current
     if (!element) return

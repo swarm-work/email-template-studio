@@ -332,7 +332,10 @@ function IntegrationQuickstartCard({ onCopy }: { onCopy: (text: string, label: s
                   Copy snippet
                 </Button>
               </div>
-              <pre className="bg-editor text-editor-foreground max-h-[360px] overflow-auto rounded-lg p-4 font-mono text-xs whitespace-pre-wrap">
+              {/* `wrap-anywhere`: the endpoint URL has no spaces to wrap at, so on
+                  a phone it ran out of the box. Breaking it visually changes
+                  nothing that is copied - Copy snippet takes the string. */}
+              <pre className="bg-editor text-editor-foreground max-h-[360px] overflow-auto rounded-lg p-4 font-mono text-xs wrap-anywhere whitespace-pre-wrap">
                 {snippetByLanguage[item]}
               </pre>
             </TabsContent>
