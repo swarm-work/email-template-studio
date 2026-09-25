@@ -352,14 +352,17 @@ test('device toggle changes the preview viewport', async ({ page }) => {
   await expect(page.getByRole('radio', { name: 'Mobile preview' })).toHaveAttribute('aria-checked', 'true')
 })
 
-test('neither the library nor the editor scrolls sideways at any supported width', async ({ page }) => {
+test('no screen scrolls sideways at any supported width, a phone included', async ({ page }) => {
   const overflow = () =>
     page.evaluate(() => ({
       scrollWidth: document.documentElement.scrollWidth,
       clientWidth: document.documentElement.clientWidth,
     }))
 
-  for (const width of [1440, 1280, 1024, 768]) {
+  // 390 is a phone. It was left out of this sweep until the owner opened the
+  // studio on one: the API keys page scrolled sideways, and the mode switch and
+  // the nav were not there at all, so preview and API keys were unreachable.
+  for (const width of [1440, 1280, 1024, 768, 390]) {
     await page.setViewportSize({ width, height: 900 })
     await expect(libraryHeading(page)).toBeVisible()
     const library = await overflow()
@@ -392,6 +395,14 @@ test('neither the library nor the editor scrolls sideways at any supported width
     }
 
     await backToLibrary(page)
+
+    // The API keys page, reached the way a person would: through the nav,
+    // which has to exist at this width for the click to work at all.
+    await page.getByRole('button', { name: 'API Keys & Webhooks' }).click()
+    await expect(page.getByRole('heading', { level: 1, name: 'API Keys & Integration' })).toBeVisible()
+    const apiKeys = await overflow()
+    expect(apiKeys.scrollWidth, `API keys at ${width}px`).toBeLessThanOrEqual(apiKeys.clientWidth)
+    await page.getByRole('button', { name: 'Template Studio' }).click()
   }
 })
 

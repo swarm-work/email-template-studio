@@ -126,8 +126,10 @@ export function StudioSubHeader({
         aria-label="Template actions"
         className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-2"
       >
+        {/* The mode switch stays at every width: it is the only way into Code
+            or Preview without a keyboard, and a phone has no ⌘P. */}
+        <ModeToggle modes={modes} value={mode} onChange={onModeChange} reasonFor={modeReason} />
         <div className="hidden flex-wrap items-center justify-end gap-2 md:flex">
-          <ModeToggle modes={modes} value={mode} onChange={onModeChange} reasonFor={modeReason} />
           <UndoRedoGroup kind={template.kind} canvasEnabled={canvasEnabled} controls={visualControls} />
           <DeviceToggle value={device} onChange={onDeviceChange} />
           <Button variant="outline" size="sm" onClick={onSendTest}>

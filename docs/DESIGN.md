@@ -99,11 +99,26 @@ Every `aria-disabled` control in the header points at one `sr-only` sentence, "P
 milestone.", so a screen reader is told what is unavailable **and** why — the same disabled-with-reason
 rule the studio's **Save template** and **Convert to code** buttons follow.
 
-Below `xl` the workspace label, the pill and Feedback step aside so the nav fits. The nav itself stays
-down to `md` and becomes a horizontal scroll strip rather than disappearing: it is the only route
-between the two screens, so hiding it would leave the app single-screen on a small laptop. Nothing in
-the header is allowed to push the page into a horizontal scroll, and an e2e sweep at
-1440/1280/1024/768 asserts it.
+Below `xl` the workspace label, the pill and Feedback step aside so the nav fits. The nav never
+disappears: it is the only route between the screens. From `md` it sits in the header row as a
+horizontal scroll strip; below `md` it drops to a full-width row of its own under the brand
+(`order-last w-full`), still a scroll strip, so a phone reaches every screen too. Nothing in the
+header is allowed to push the page into a horizontal scroll, and an e2e sweep at
+1440/1280/1024/768/390 asserts it.
+
+## Small screens
+
+Every screen is checked at 390×844 (phone), 768×1024 (tablet) and 1440×900. Two rules did most of the
+work there:
+
+- A grid with no column size is `auto`, which is as wide as its widest child's content. The API keys
+  page used one around a deliberately 720 px table and the whole page scrolled sideways on a phone.
+  Single-column grids that hold a wide scroller use `grid-cols-[minmax(0,1fr)]`.
+- A row of actions that "must not shrink" (`shrink-0`) will push its last button off the screen
+  instead. Action rows `flex-wrap` and justify to the end, as the preview toolbar now does.
+
+Page gutters are `px-4` below `sm` and `px-6` from it, the same on the header, the library and the
+API keys page.
 
 ## The studio, band by band
 
@@ -121,7 +136,8 @@ and a quiet `aria-live` autosave note, hidden below `lg` with `max-lg:sr-only` r
 because `display: none` would take the live region out of the accessibility tree. Right, inside
 `role="toolbar" aria-label="Template actions"`: the mode group, undo/redo (visual templates only),
 the device toggle, **Send test** as an outline button and **Save template** as the screen's single
-primary. Below `md` the middle cluster steps aside and only Save and **⋯** remain — and the **⋯**
+primary. Below `md` undo/redo, the device toggle and Send test step aside and the mode group, Save and **⋯**
+remain (the mode group is the only way into Code or Preview without a keyboard) — and the **⋯**
 menu grows a `md:hidden` **Send test** item, so the one action that works never disappears.
 
 **Envelope** (`envelope/EnvelopePanel`) — a `Collapsible` headed `Envelope & dispatch`, with
@@ -179,7 +195,7 @@ a status bar that speaks every byte count is unusable.
 
 Every strip that can run out of room (primitives, tab bar, status bar) scrolls inside itself with
 `overflow-x-auto [scrollbar-width:none]`; the page itself never scrolls sideways, and the e2e sweep at
-1440/1280/1024/768 asserts it for the sub-header, the envelope panel and the status bar too.
+1440/1280/1024/768/390 asserts it for the sub-header, the envelope panel and the status bar too.
 
 **Visual workspace** (`visual/VisualWorkspace`) — the canvas and its rail, and the only part of the
 studio that is downloaded on demand (ADR-18). `React.lazy` + `Suspense` with `VisualEditorSkeleton` as

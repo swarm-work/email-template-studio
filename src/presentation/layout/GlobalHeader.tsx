@@ -98,7 +98,10 @@ export function GlobalHeader({
 }: GlobalHeaderProps) {
   return (
     <header className="bg-card shrink-0 border-b">
-      <div className="mx-auto flex h-12 max-w-[1440px] min-w-0 items-center gap-3 px-6">
+      {/* `flex-wrap` so that below `md` the nav can drop onto a row of its own
+          (see the nav's `order-last w-full`); from `md` up everything fits on
+          the one 48px row, as before. */}
+      <div className="mx-auto flex min-h-12 max-w-[1440px] min-w-0 flex-wrap items-center gap-x-3 gap-y-1 px-4 max-md:pt-2 sm:px-6">
         {/* Swarm's own lockup (badge + wordmark) from the brand kit, then the
             product name. The link reads "Swarm Email Template Studio" to a
             screen reader; below sm only the logo fits. */}
@@ -122,12 +125,14 @@ export function GlobalHeader({
           <StatusBadge tone="neutral">{environment}</StatusBadge>
         </span>
 
-        {/* From md the nav is a scroll strip rather than disappearing: there is
-            no other route to the API keys screen, so dropping it below lg would
-            leave the app single-screen on a small laptop. */}
+        {/* The nav never disappears: it is the only route to the API keys
+            screen. From `md` it sits in the row and scrolls sideways inside
+            itself if it runs out of room; below `md` it moves to its own
+            full-width row under the brand (`order-last w-full`), still a
+            scroll strip, so a phone can reach every screen too. */}
         <nav
           aria-label="Product"
-          className="ml-4 hidden min-w-0 flex-1 [scrollbar-width:none] items-center gap-1 overflow-x-auto md:flex"
+          className="order-last -mx-1 flex w-full min-w-0 [scrollbar-width:none] items-center gap-1 overflow-x-auto px-1 pb-2 md:order-none md:mx-0 md:ml-4 md:w-auto md:flex-1 md:px-0 md:pb-0"
         >
           {NAV_ITEMS.map((item) => {
             const active = item.id === activePage
