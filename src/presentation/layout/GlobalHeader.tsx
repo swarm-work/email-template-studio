@@ -5,7 +5,6 @@
  * shows is either a prop or a planned item that says so — nothing here invents
  * a number (see the honesty rules in docs/DESIGN.md).
  */
-import { ExternalLink } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -15,8 +14,8 @@ import { ThemeToggle } from './ThemeToggle'
 
 /** The product areas that actually have a screen behind them today. */
 export type ScreenPage = 'api' | 'templates'
-/** Everything the nav lists, including the areas that are still planned. */
-export type ProductPage = ScreenPage | 'overview' | 'domains'
+/** Everything the nav lists, including the area that is still planned. */
+export type ProductPage = ScreenPage | 'overview'
 
 export interface GlobalHeaderProps {
   workspace: string
@@ -48,9 +47,12 @@ type NavItem =
   | { readonly id: ScreenPage; readonly label: string; readonly enabled: true }
   | { readonly id: ProductPage; readonly label: string; readonly enabled: false }
 
+// Domains, Docs and Feedback used to be here too. Two were placeholders that
+// only said "planned" and Docs sent people to react.email's documentation,
+// not ours; the owner asked for all three to go. Overview stays as the one
+// planned item because it is the next screen on the roadmap.
 const NAV_ITEMS: readonly NavItem[] = [
   { id: 'overview', label: 'Overview & Logs', enabled: false },
-  { id: 'domains', label: 'Domains', enabled: false },
   { id: 'api', label: 'API Keys & Webhooks', enabled: true },
   { id: 'templates', label: 'Template Studio', enabled: true },
 ]
@@ -176,24 +178,6 @@ export function GlobalHeader({
           </Tooltip>
 
           <ThemeToggle />
-
-          <Button asChild variant="ghost" size="sm">
-            <a href="https://react.email/docs" target="_blank" rel="noreferrer">
-              Docs
-              <ExternalLink aria-hidden="true" />
-            </a>
-          </Button>
-
-          <Button
-            variant="ghost"
-            size="sm"
-            className="hidden xl:inline-flex"
-            aria-disabled="true"
-            aria-describedby={PLANNED_REASON_ID}
-            onClick={() => toast.info('Feedback is planned for a later milestone.')}
-          >
-            Feedback
-          </Button>
 
           {/* A bare <span> is `role=generic`, which does not take a name, so the
               avatar is an image as far as assistive technology is concerned.

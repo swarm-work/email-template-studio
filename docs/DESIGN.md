@@ -56,7 +56,7 @@ Three more tokens exist only for the sign-in screen (`src/presentation/auth/Auth
 | Diagnostics           | real checks vs collapsed "not connected" placeholders                                                                                                                 |
 | Template card         | kind (Visual/Code), status, category, version chips, Modified badge, "Updated 3 days ago"                                                                             |
 | Template library      | skeleton (3 card outlines) / error Alert + Retry / empty / no search results — see below                                                                              |
-| Global header         | brand, workspace label, nav with `aria-current`, render pill, Docs, Feedback, avatar                                                                                  |
+| Global header         | brand, workspace label, nav with `aria-current`, render pill, theme toggle, avatar                                                                                    |
 | Dialogs               | Send test (explanatory, action disabled), Reset confirmations                                                                                                         |
 | Toasts                | bottom-right, one sentence, past tense                                                                                                                                |
 
@@ -87,9 +87,10 @@ name is empty, and "That name has no letters or numbers in it. Type a slug to us
 One `GlobalHeader` inside one `AppShell`, rendered once by `App.tsx` so it never remounts between
 screens; the first Tab lands on a **Skip to editor** link. Contents left to right: brand, workspace as
 a **static label** (there is one workspace — a dropdown that cannot switch anything is a lie), the
-nav (`Overview & Logs` and `Domains` are `aria-disabled` and say so when
-clicked; `API Keys & Webhooks` and `Template Studio` work, and the current one carries
-`aria-current="page"`), the render pill, Docs, Feedback and an initials avatar.
+nav (`Overview & Logs` is `aria-disabled` and says so when clicked; `API Keys & Webhooks` and `Template Studio` work, and the current one carries
+`aria-current="page"`), the render pill, the theme toggle and an initials avatar. `Domains`, **Docs**
+(which linked to react.email's documentation, not ours) and a planned **Feedback** button were removed
+at the owner's request; nothing replaces them.
 
 There is **no environment badge and no app footer**. Both showed a hard-coded `Local`, in production
 too, and the footer's version number and provider name were never something anyone looked for; on a
@@ -105,7 +106,7 @@ Every `aria-disabled` control in the header points at one `sr-only` sentence, "P
 milestone.", so a screen reader is told what is unavailable **and** why — the same disabled-with-reason
 rule the studio's **Save template** and **Convert to code** buttons follow.
 
-Below `xl` the workspace label, the pill and Feedback step aside so the nav fits. The nav never
+Below `xl` the workspace label and the pill step aside so the nav fits. The nav never
 disappears: it is the only route between the screens. From `md` it sits in the header row as a
 horizontal scroll strip; below `md` it drops to a full-width row of its own under the brand
 (`order-last w-full`), still a scroll strip, so a phone reaches every screen too. Nothing in the
