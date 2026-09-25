@@ -111,8 +111,9 @@ The editor screen is five horizontal bands. Each one answers a different questio
 competes with the editor for attention.
 
 **Sub-header** (`chrome/StudioSubHeader`) — `sticky top-0 z-30 flex min-h-[52px] min-w-0 flex-wrap
-items-center gap-2 border-b bg-card/85 px-4 backdrop-blur-sm`. Left: the breadcrumb
-`Templates / <name>` (the crumb is a button, the name is the page's `h1`, truncated
+items-center gap-2 border-b bg-card/85 px-4 backdrop-blur-sm`. Left: the way back,
+an outline **← Templates** button named `Back to templates` (below `sm` just the arrow), then the
+template's name as the page's `h1` (truncated
 `max-w-[14ch] sm:max-w-[28ch] lg:max-w-none`) and a rename pencil that is disabled with a reason.
 Then the status badge — `<status> · Unsaved changes` / `<status> · Saved`, where the status word is
 the template's own (`Draft`, `Ready`, `Deprecated`), so the badge cannot contradict the status bar —

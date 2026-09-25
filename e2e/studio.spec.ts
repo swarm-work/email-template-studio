@@ -98,7 +98,7 @@ async function waitForRender(page: Page) {
 
 /** The "Templates /" crumb in the studio sub-header. */
 async function backToLibrary(page: Page) {
-  await page.getByRole('button', { name: 'Templates', exact: true }).click()
+  await page.getByRole('button', { name: 'Back to templates', exact: true }).click()
   await expect(libraryHeading(page)).toBeVisible()
 }
 

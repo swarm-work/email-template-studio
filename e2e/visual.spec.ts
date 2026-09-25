@@ -102,7 +102,7 @@ test('the editor chunk is fetched for a visual template and for nothing else', a
   await expect(page.getByRole('region', { name: 'Code editor' })).toBeVisible()
   expect(editorRequests, 'a code template fetched an editor chunk').toEqual([])
 
-  await page.getByRole('button', { name: 'Templates', exact: true }).click()
+  await page.getByRole('button', { name: 'Back to templates', exact: true }).click()
   await openVisualTemplate(page)
   expect(editorRequests.length).toBeGreaterThan(0)
 })
@@ -618,7 +618,7 @@ test('converting a visual template leaves a code template that still renders', a
   await expect(previewBody(page)).toContainText(CONVERTED_TEXT, { timeout: FIRST_RENDER_TIMEOUT })
 
   // The library agrees...
-  await page.getByRole('button', { name: 'Templates', exact: true }).click()
+  await page.getByRole('button', { name: 'Back to templates', exact: true }).click()
   await expect(libraryHeading(page)).toBeVisible()
   // The card IS the button; the kind chip is drawn inside it.
   await expect(templateCard(page, name).getByText('Code', { exact: true })).toBeVisible()
