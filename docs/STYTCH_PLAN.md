@@ -304,3 +304,7 @@ Do not treat these as settled.
    `import.meta.env.VITE_STYTCH_PUBLIC_TOKEN` still compiles as `any` and T3 cannot rely on the compiler
    alone. `node_modules` was not installed when this was written.
 6. **The live Cloudflare and Stytch dashboard state**, and anything on the AWS side.
+
+## Status, 2026-09-24
+
+What happened when this plan met the real project — every issue, its cause, the fix and the decisions still open — is in `docs/STYTCH_LOG.md`. T1 is now answered there: a default B2B session token has no email claim at the top level; the address is on the email authentication factor only, and Google sign-in needs the claim template.

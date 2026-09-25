@@ -21,27 +21,36 @@
  * are `AuthScreen.tsx`, drawn by `PasswordGate` around this component. This
  * file only makes the prebuilt form fit inside that card.
  */
-import { useMemo } from 'react'
 import {
   B2BProducts,
   StytchB2B,
   StytchB2BProvider,
+  StytchEventType,
   createStytchB2BClient,
   shadcnTheme,
+  type Callbacks,
   type PresentationConfig,
   type Strings,
+  type StytchEvent,
   type Theme,
 } from '@stytch/react/b2b'
 
 /**
- * Twelve hours, matching the shared-password session it replaces.
+ * One hour, for now - and an open decision (docs/STYTCH_LOG.md, decision 1).
+ *
+ * It was twelve hours, to match the shared-password session it replaces. On
+ * 2026-09-24 the first sign-in that ever completed did so with this lowered to
+ * 60, in the same change that fixed the double Stytch client; twelve has not
+ * been re-tried since. Stytch sends this value on the discovery exchange, and
+ * the project has a maximum session duration in its dashboard. Whether that
+ * ceiling rejects a larger request or silently truncates it was never
+ * observed either way, so: raise the ceiling first, then raise this, and
+ * watch the exchange call once.
  *
  * This is the SESSION length, not the token's. The JWT itself lives about five
  * minutes and the SDK refreshes it in the background; see `server/auth.ts`.
- * The Stytch dashboard's `max_session_duration_minutes` is a CEILING that
- * silently truncates a larger request, so check it there before raising this.
  */
-const SESSION_DURATION_MINUTES = 12 * 60
+const SESSION_DURATION_MINUTES = 60
 
 /** Where Stytch sends the browser back to. Must match a Redirect URL exactly. */
 function redirectUrl(): string {
@@ -109,17 +118,67 @@ const strings: Strings = {
   'methodDivider.text': 'OR',
 }
 
-export default function StytchSignIn() {
-  // `createStytchB2BClient` reads the PUBLIC token. It is public by design and
-  // ships in the bundle; the project SECRET is a different credential and lives
-  // nowhere in this repository.
-  //
-  // Vite inlines this at BUILD time, so an unset variable is baked in as
-  // `undefined` and cannot be fixed by a Worker `var`. That is why the build
-  // step sets it from a repository variable, and why the guard below exists:
-  // Stytch's own token check only logs a warning, which is easy to miss.
-  const token = import.meta.env.VITE_STYTCH_PUBLIC_TOKEN
-  const client = useMemo(() => (token ? createStytchB2BClient(token) : null), [token])
+/**
+ * The Stytch client, created ONCE, at module scope.
+ *
+ * Not inside the component, and not in a `useMemo`: React's StrictMode calls
+ * `useMemo` initialisers twice in development, which built two clients, each
+ * with its own session manager and bootstrap fetch. Stytch warns about exactly
+ * this ("multiple copies of the Stytch client ... unintended side effects"),
+ * and a session exchange racing against a second session manager is the kind
+ * of side effect it means. Module scope runs once per page load, full stop.
+ *
+ * This is still safe for the lazy seam: this module is only ever imported
+ * through `React.lazy` from PasswordGate, in stytch mode, so "module scope"
+ * here means "the moment sign-in is actually needed", not app start-up.
+ *
+ * `createStytchB2BClient` reads the PUBLIC token. It is public by design and
+ * ships in the bundle; the project SECRET is a different credential and lives
+ * nowhere in this repository.
+ *
+ * Vite inlines the token at BUILD time, so an unset variable is baked in as
+ * `undefined` and cannot be fixed by a Worker `var`. That is why the build
+ * step sets it from a repository variable, and why the null branch below
+ * exists: Stytch's own token check only logs a warning, which is easy to miss.
+ */
+const PUBLIC_TOKEN = import.meta.env.VITE_STYTCH_PUBLIC_TOKEN
+const client = PUBLIC_TOKEN ? createStytchB2BClient(PUBLIC_TOKEN) : null
+
+/**
+ * The SDK events after which a real Stytch session exists.
+ *
+ * A Discovery sign-in ends in one of two places: the member picked an existing
+ * organisation (intermediate session EXCHANGE) or made a new one (organizations
+ * CREATE). Only then is the session cookie the Worker verifies actually set;
+ * the OAuth/magic-link "authenticate" events before it only yield an
+ * intermediate session, which the Worker rightly rejects. The other three are
+ * the non-discovery flows, listed so this stays correct if the flow type ever
+ * changes; today they never fire.
+ *
+ * Without this hook nothing tells the gate that sign-in finished: it probed the
+ * API once on mount, got 401, and would sit on the form until a manual reload.
+ */
+const SIGNED_IN_EVENTS: ReadonlySet<StytchEventType> = new Set([
+  StytchEventType.B2BDiscoveryIntermediateSessionExchange,
+  StytchEventType.B2BDiscoveryOrganizationsCreate,
+  StytchEventType.B2BOAuthAuthenticate,
+  StytchEventType.B2BMagicLinkAuthenticate,
+  StytchEventType.B2BSSOAuthenticate,
+])
+
+interface StytchSignInProps {
+  /** Called once Stytch holds a full session, so the gate can ask the API again. */
+  readonly onSignedIn?: () => void
+}
+
+export default function StytchSignIn({ onSignedIn }: StytchSignInProps) {
+  // Rebuilt per render on purpose: it closes over `onSignedIn`, and the SDK
+  // reads `callbacks` on each event rather than caching the first one.
+  const callbacks: Callbacks = {
+    onEvent: (event: StytchEvent) => {
+      if (SIGNED_IN_EVENTS.has(event.type)) onSignedIn?.()
+    },
+  }
 
   if (!client) {
     return (
@@ -138,6 +197,7 @@ export default function StytchSignIn() {
   return (
     <StytchB2BProvider stytch={client}>
       <StytchB2B
+        callbacks={callbacks}
         config={{
           // Discovery: the member types their address and Stytch works out
           // which organisation they belong to. The organisation's

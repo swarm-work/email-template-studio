@@ -67,7 +67,7 @@ type GateState =
   | { readonly kind: 'checking' }
   | { readonly kind: 'open' }
   | { readonly kind: 'locked'; readonly message?: string }
-  | { readonly kind: 'stytch' }
+  | { readonly kind: 'stytch'; readonly message?: string }
   | { readonly kind: 'unreachable'; readonly message: string }
 
 interface PasswordGateProps {
@@ -80,6 +80,10 @@ export function PasswordGate({ children, fetchImpl = defaultFetch }: PasswordGat
   const [state, setState] = useState<GateState>({ kind: 'checking' })
   const [password, setPassword] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  // Set only when Stytch reported a finished sign-in and the API STILL refused.
+  // That is the one moment the API's reason is worth showing: it names what the
+  // token is missing, which no amount of retrying the form will fix.
+  const [signInProblem, setSignInProblem] = useState<string | null>(null)
 
   /** Asks the API what it thinks of us, without touching state. */
   const probe = useCallback(async (): Promise<GateState> => {
@@ -91,9 +95,11 @@ export function PasswordGate({ children, fetchImpl = defaultFetch }: PasswordGat
     }
     if (response.ok) return { kind: 'open' }
     if (response.status === 401) {
-      const body = (await response.json().catch(() => null)) as { mode?: string } | null
+      const body = (await response.json().catch(() => null)) as { mode?: string; message?: string } | null
       if (body?.mode === 'password') return { kind: 'locked' }
-      if (body?.mode === 'stytch') return { kind: 'stytch' }
+      // The message is only shown AFTER a sign-in attempt (see `signInProblem`):
+      // before one, "no session cookie" is the normal state, not a problem.
+      if (body?.mode === 'stytch') return { kind: 'stytch', message: body.message }
       // Cloudflare Access (or nothing at all) is in front. There is no password
       // for the visitor to type; reloading is what sends them to the login.
       return { kind: 'unreachable', message: 'This studio requires you to sign in. Reload to continue.' }
@@ -112,6 +118,38 @@ export function PasswordGate({ children, fetchImpl = defaultFetch }: PasswordGat
       cancelled = true
     }
   }, [probe])
+
+  /**
+   * Stytch has finished: its session cookie is set. Two things follow.
+   *
+   * Leave `/authenticate` first, so a reload lands on the studio and not on the
+   * callback path with no token. `replaceState` rather than `pushState`: the
+   * callback URL should not be in the back-button history at all.
+   *
+   * Then ask the API again. The probe stays the single source of truth for
+   * "open" - the gate never opens on Stytch's word alone, because the Worker is
+   * the one that verifies the token, and it may still say no.
+   */
+  const onStytchSignedIn = useCallback(() => {
+    if (typeof window !== 'undefined' && window.location.pathname === AUTHENTICATE_PATH) {
+      window.history.replaceState(null, '', '/')
+    }
+    void probe().then((next) => {
+      setSignInProblem(
+        next.kind === 'stytch' ? (next.message ?? 'The studio API did not accept the session.') : null,
+      )
+      setState(next)
+    })
+  }, [probe])
+
+  /**
+   * Revokes the Stytch session and reloads onto the sign-in screen, through the
+   * same lazy seam the header uses (a static import here would put the SDK in
+   * every build's first download - see stytchSignOut.ts).
+   */
+  const onSignOutAndRetry = useCallback(() => {
+    void import('./stytchSignOut').then(({ signOutOfStytch }) => signOutOfStytch())
+  }, [])
 
   async function submit(event: React.FormEvent) {
     event.preventDefault()
@@ -160,8 +198,22 @@ export function PasswordGate({ children, fetchImpl = defaultFetch }: PasswordGat
               </AuthCardBody>
             }
           >
-            <StytchSignIn />
+            <StytchSignIn onSignedIn={onStytchSignedIn} />
           </Suspense>
+          {signInProblem && (
+            <AuthCardBody>
+              <p role="alert" className="text-danger-foreground text-sm">
+                Signed in with Stytch, but the studio API refused the session: {signInProblem}
+              </p>
+              {/* The only sure way out of a refused session is a NEW one. Stytch
+                  applies claim templates when a session is created, so a
+                  template added after sign-in never reaches the current
+                  session, however often the JWT refreshes. Revoke and start over. */}
+              <Button type="button" variant="outline" className="mt-3 w-full" onClick={onSignOutAndRetry}>
+                Sign out of Stytch and try again
+              </Button>
+            </AuthCardBody>
+          )}
         </AuthCard>
       </AuthGround>
     )
