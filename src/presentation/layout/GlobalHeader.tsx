@@ -5,7 +5,6 @@
  * shows is either a prop or a planned item that says so — nothing here invents
  * a number (see the honesty rules in docs/DESIGN.md).
  */
-import { useEffect, useRef } from 'react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -96,16 +95,6 @@ export function GlobalHeader({
   signedInAs,
   onSignOut,
 }: GlobalHeaderProps) {
-  // On a phone the nav is a strip wider than the screen, and the page you are
-  // on can be the item cut off at the edge. Scrolling it into view says where
-  // you are without a sideways swipe. `nearest` moves the strip only as far as
-  // needed and leaves the page's own vertical scroll alone. The `?.()` is for
-  // environments without the method (jsdom in the unit tests).
-  const activeItemRef = useRef<HTMLButtonElement>(null)
-  useEffect(() => {
-    activeItemRef.current?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
-  }, [activePage])
-
   return (
     <header className="bg-card shrink-0 border-b">
       {/* `flex-wrap` so that below `md` the nav can drop onto a row of its own
@@ -133,19 +122,19 @@ export function GlobalHeader({
 
         {/* The nav never disappears: it is the only route to the API keys
             screen. From `md` it sits in the row and scrolls sideways inside
-            itself if it runs out of room; below `md` it moves to its own
-            full-width row under the brand (`order-last w-full`), still a
-            scroll strip, so a phone can reach every screen too. */}
+            itself if it runs out of room. Below `md` it moves to its own
+            full-width row under the brand (`order-last w-full`) and WRAPS
+            rather than scrolling: a scroll strip on a phone hid half of its
+            first or last item at the edge with no visible way to reach it. */}
         <nav
           aria-label="Product"
-          className="order-last -mx-1 flex w-full min-w-0 [scrollbar-width:none] items-center gap-1 overflow-x-auto px-1 pb-2 md:order-none md:mx-0 md:ml-4 md:w-auto md:flex-1 md:px-0 md:pb-0"
+          className="order-last -mx-1 flex w-full min-w-0 [scrollbar-width:none] flex-wrap items-center gap-1 px-1 pb-2 md:order-none md:mx-0 md:ml-4 md:w-auto md:flex-1 md:flex-nowrap md:overflow-x-auto md:px-0 md:pb-0"
         >
           {NAV_ITEMS.map((item) => {
             const active = item.id === activePage
             return (
               <button
                 key={item.id}
-                ref={active ? activeItemRef : undefined}
                 type="button"
                 aria-current={active ? 'page' : undefined}
                 aria-disabled={item.enabled ? undefined : true}

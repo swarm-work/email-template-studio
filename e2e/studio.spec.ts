@@ -396,6 +396,15 @@ test('no screen scrolls sideways at any supported width, a phone included', asyn
 
     await backToLibrary(page)
 
+    // Every nav item is whole on screen: a scroll strip once left "Overview
+    // & Logs" cut in half at a phone's left edge, with no visible way to it.
+    for (const item of await page.getByRole('navigation', { name: 'Product' }).getByRole('button').all()) {
+      const box = await item.boundingBox()
+      expect(box, `nav item at ${width}px`).not.toBeNull()
+      expect(box!.x, `nav item left edge at ${width}px`).toBeGreaterThanOrEqual(0)
+      expect(box!.x + box!.width, `nav item right edge at ${width}px`).toBeLessThanOrEqual(width + 1)
+    }
+
     // The API keys page, reached the way a person would: through the nav,
     // which has to exist at this width for the click to work at all.
     await page.getByRole('button', { name: 'API Keys & Webhooks' }).click()
