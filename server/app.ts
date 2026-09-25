@@ -20,7 +20,7 @@
 import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import { z } from 'zod'
-import type { Authenticator, Identity } from './auth.ts'
+import type { Authenticator } from './auth.ts'
 import {
   checkPassword,
   createDisabledAuthenticator,
@@ -36,6 +36,9 @@ import type { ObjectStore } from './objectStore.ts'
 import type { TemplateStore } from './templateStore.ts'
 import { registerTemplateRoutes } from './templateRoutes.ts'
 import { registerUploadRoutes } from './uploadRoutes.ts'
+import type { StudioEnv } from './workspaceRoutes.ts'
+import { registerWorkspaceRoutes } from './workspaceRoutes.ts'
+import type { WorkspaceStore } from './workspaceStore.ts'
 
 /** The cap on the message body: HTML and the plain-text part together. */
 export const MAX_HTML_BYTES = 500 * 1024
@@ -106,8 +109,12 @@ export type SendRequest = z.infer<typeof sendRequestSchema>
  */
 export type HostPolicy = 'loopback' | 'same-origin'
 
-/** Hono context values this app sets. `identity` is set by the auth middleware. */
-type Variables = { identity: Identity }
+/**
+ * Hono context values this app sets. `identity` is set by the auth middleware
+ * on every /api/* route; `workspace` and `role` by the workspace middleware on
+ * the routes under /api/workspaces/:workspace (server/workspaceRoutes.ts).
+ */
+type Variables = StudioEnv['Variables']
 
 export interface AppDependencies {
   readonly config: SendServerConfig
@@ -132,6 +139,12 @@ export interface AppDependencies {
    * the template routes answer 503 storage-unavailable while sending keeps working.
    */
   readonly templateStore?: TemplateStore | null
+  /**
+   * Where workspaces and their members are stored. Absent or null means every
+   * route under /api/workspaces answers 503 - which includes the template and
+   * upload routes, since those live under a workspace.
+   */
+  readonly workspaceStore?: WorkspaceStore | null
   /** Where uploaded images are stored (R2 in the Worker). Absent or null -> uploads answer 503. */
   readonly objectStore?: ObjectStore | null
   /**
@@ -177,6 +190,7 @@ export function createApp({
   ),
   passwordGate,
   templateStore = null,
+  workspaceStore = null,
   objectStore = null,
   features = DEFAULT_STUDIO_FEATURES,
   now = () => Date.now(),
@@ -215,9 +229,13 @@ export function createApp({
     await next()
   })
 
-  // Registered AFTER the two middlewares above, so every template and upload
-  // route already has a checked origin and a named caller. `GET /media/:key`
-  // lives outside /api/* and is deliberately public (see uploadRoutes.ts).
+  // Registered AFTER the two middlewares above, so every route below already
+  // has a checked origin and a named caller. The workspace routes go FIRST:
+  // they install the middleware that resolves /api/workspaces/:workspace and
+  // checks the caller may enter it, which the template and upload routes
+  // (registered under that path) then rely on. `GET /media/:key` lives outside
+  // /api/* and is deliberately public (see uploadRoutes.ts).
+  registerWorkspaceRoutes(app, { workspaceStore, now })
   registerTemplateRoutes(app, { templateStore, now })
   registerUploadRoutes(app, {
     objectStore,

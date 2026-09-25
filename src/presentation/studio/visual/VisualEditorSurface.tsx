@@ -16,7 +16,8 @@ import { EmailEditor, type EmailEditorRef } from '@react-email/editor'
 import { Inspector } from '@react-email/editor/ui'
 import '@react-email/editor/themes/default.css'
 import type { EmailDocument } from '@/domain'
-import { uploadImage } from '@/infrastructure/providers/uploadImage'
+import { ImageUploadError, uploadImage } from '@/infrastructure/providers/uploadImage'
+import { useOptionalWorkspace } from '@/presentation/workspace/WorkspaceContext'
 import { studioEditorExtensions } from '@/infrastructure/render/editorExtensions'
 import { STUDIO_FONT_STACK, studioTheme } from '@/infrastructure/render/studioTheme'
 import type { VisualEditorHandle } from '@/infrastructure/render/visualEmailRenderer'
@@ -174,17 +175,25 @@ export function VisualEditorSurface({
     [editor],
   )
 
-  const handleUploadImage = useCallback(async (file: File) => {
-    try {
-      return await uploadImage(file)
-    } catch (error) {
-      toast.error(`Couldn't upload ${file.name}.`)
-      // Rethrown on purpose: the package removes its temporary image node only
-      // when this promise rejects. Swallowing it would leave a placeholder in
-      // the document that never becomes a picture.
-      throw error
-    }
-  }, [])
+  // Uploads land in the workspace the studio is open in. Optional, because the
+  // surface is also mounted on its own in tests, where there is no workspace
+  // and no upload ever happens.
+  const workspace = useOptionalWorkspace()
+  const handleUploadImage = useCallback(
+    async (file: File) => {
+      try {
+        if (!workspace) throw new ImageUploadError('No workspace is open to upload into.')
+        return await uploadImage(file, workspace.slug)
+      } catch (error) {
+        toast.error(`Couldn't upload ${file.name}.`)
+        // Rethrown on purpose: the package removes its temporary image node only
+        // when this promise rejects. Swallowing it would leave a placeholder in
+        // the document that never becomes a picture.
+        throw error
+      }
+    },
+    [workspace],
+  )
 
   return (
     <>

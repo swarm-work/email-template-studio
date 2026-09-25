@@ -9,7 +9,9 @@
 import { serve } from '@hono/node-server'
 import { createApp } from './app.ts'
 import { InMemoryTemplateStore } from './inMemoryTemplateStore.ts'
+import { InMemoryWorkspaceStore } from './inMemoryWorkspaceStore.ts'
 import { readStarterSeed } from './starterSeed.ts'
+import { DEFAULT_WORKSPACE, DEFAULT_WORKSPACE_CTX } from './workspaceStore.ts'
 import type { AuthConfig } from './auth.ts'
 import { createAuthenticator, loadAuthConfig } from './auth.ts'
 import type { SendServerConfig } from './config.ts'
@@ -55,6 +57,9 @@ function main(): void {
     authenticator,
     passwordGate: authConfig.mode === 'password' ? { password: authConfig.password } : undefined,
     templateStore: new InMemoryTemplateStore(readStarterSeed()),
+    // The same single workspace migration 0004 creates, so the starters have
+    // a home here too. The developer identity is an admin of it (ADR-33).
+    workspaceStore: new InMemoryWorkspaceStore([{ input: DEFAULT_WORKSPACE, ctx: DEFAULT_WORKSPACE_CTX }]),
     // No R2 here, so `POST /api/uploads` answers 503 and the visual editor
     // offers no image button in this runtime.
     objectStore: null,

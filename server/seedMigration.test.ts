@@ -14,6 +14,7 @@ import {
   readStarterSeed,
   SEED_MIGRATIONS,
 } from './starterSeed.ts'
+import { DEFAULT_WORKSPACE } from './workspaceStore.ts'
 
 const entries = readStarterSeed()
 const generated = buildSeedMigrations(entries)
@@ -68,14 +69,39 @@ describe('the generated seed migrations', () => {
     const db = new DatabaseSync(':memory:')
     db.exec(readFileSync(new URL('../migrations/0001_create_templates.sql', import.meta.url), 'utf8'))
     for (const { path } of generated) db.exec(readFileSync(path, 'utf8'))
+    // 0004 runs AFTER the seeds in production too, and is what gives their
+    // rows a workspace; the seeds themselves must keep applying without it.
+    db.exec(readFileSync(new URL('../migrations/0004_create_workspaces.sql', import.meta.url), 'utf8'))
 
-    const rows = db.prepare('SELECT id, slug, origin, current_version FROM templates ORDER BY slug').all()
+    const rows = db
+      .prepare('SELECT id, workspace_id, slug, origin, current_version FROM templates ORDER BY slug')
+      .all()
+    const ws = DEFAULT_WORKSPACE.id
     expect(rows).toEqual([
-      { id: 'tpl_password-reset', slug: 'password-reset', origin: 'starter', current_version: 1 },
-      { id: 'tpl_product-launch', slug: 'product-launch', origin: 'starter', current_version: 1 },
-      { id: 'tpl_team-invitation', slug: 'team-invitation', origin: 'starter', current_version: 1 },
+      {
+        id: 'tpl_password-reset',
+        workspace_id: ws,
+        slug: 'password-reset',
+        origin: 'starter',
+        current_version: 1,
+      },
+      {
+        id: 'tpl_product-launch',
+        workspace_id: ws,
+        slug: 'product-launch',
+        origin: 'starter',
+        current_version: 1,
+      },
+      {
+        id: 'tpl_team-invitation',
+        workspace_id: ws,
+        slug: 'team-invitation',
+        origin: 'starter',
+        current_version: 1,
+      },
       {
         id: 'tpl_welcome-verification',
+        workspace_id: ws,
         slug: 'welcome-verification',
         origin: 'starter',
         current_version: 1,
@@ -92,14 +118,16 @@ describe('the generated seed migrations', () => {
   it('is the same data the Node runtime seeds its in-memory store with', async () => {
     const store = new InMemoryTemplateStore(readStarterSeed())
 
-    const listed = await store.list()
+    const listed = await store.list(DEFAULT_WORKSPACE.id)
     expect(listed.map((template) => template.slug).sort()).toEqual([
       'password-reset',
       'product-launch',
       'team-invitation',
       'welcome-verification',
     ])
-    expect((await store.get('tpl_welcome-verification'))?.version.source).toContain('React')
-    expect((await store.get('tpl_product-launch'))?.version.kind).toBe('visual')
+    expect((await store.get(DEFAULT_WORKSPACE.id, 'tpl_welcome-verification'))?.version.source).toContain(
+      'React',
+    )
+    expect((await store.get(DEFAULT_WORKSPACE.id, 'tpl_product-launch'))?.version.kind).toBe('visual')
   })
 })

@@ -287,7 +287,7 @@ async function patchFromAnotherBrowser(browser: Browser, slug: string): Promise<
     const other = await context.newPage()
     await other.goto('/')
     const problem = await other.evaluate(async (wanted: string) => {
-      const listed = await fetch('/api/templates', {
+      const listed = await fetch('/api/workspaces/swarm-camp/templates', {
         headers: { accept: 'application/json' },
         credentials: 'same-origin',
       })
@@ -295,7 +295,7 @@ async function patchFromAnotherBrowser(browser: Browser, slug: string): Promise<
       const body = (await listed.json()) as { templates: { id: string; slug: string; revision: number }[] }
       const found = body.templates.find((template) => template.slug === wanted)
       if (!found) return `no template with the slug ${wanted}`
-      const patched = await fetch(`/api/templates/${found.id}`, {
+      const patched = await fetch(`/api/workspaces/swarm-camp/templates/${found.id}`, {
         method: 'PATCH',
         credentials: 'same-origin',
         headers: { 'content-type': 'application/json', 'x-studio-request': '1' },

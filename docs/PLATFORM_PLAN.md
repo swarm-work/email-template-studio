@@ -304,6 +304,11 @@ topic shows one undelivered message per event.
 
 ### Slice 1: workspaces (M)
 
+> **Built 2026-09-25** on the branch `feat/workspaces` (ADR-32, ADR-33). Two deviations from the
+> table below: members are read from the Stytch organisation _slug_ rather than the id, because the
+> id differs between Stytch's Test and Live projects; and the developer and password identities are
+> admins of every workspace, so `npm run dev` and Playwright need no bootstrap row.
+
 The foundation. Nothing user-visible changes except a real name in the header and a URL segment.
 
 | Task                                                                                                                                                                                                                                       | Where                                                                                                                            |

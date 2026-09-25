@@ -681,7 +681,7 @@ test('the preview downloads the rendered HTML and the plain text', async ({ page
 })
 
 test('API keys page generates a mock key and adds a webhook endpoint', async ({ page }) => {
-  await page.getByRole('button', { name: 'API Keys & Webhooks' }).click()
+  await page.getByRole('link', { name: 'API Keys & Webhooks' }).click()
   await expect(page.getByRole('heading', { level: 1, name: 'API Keys & Integration' })).toBeVisible()
   await expect(page.getByText('Welcome emails sandbox')).toBeVisible()
 

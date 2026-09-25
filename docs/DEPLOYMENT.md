@@ -310,6 +310,15 @@ Paste each printed `database_id` over the matching placeholder in `wrangler.json
 
 Migration files are numbered and applied in order; wrangler records which have run. **Migrations are never rolled back** (ADR-21): to undo something, write the next migration.
 
+**Migration 0004 (workspaces) changes every URL.** After it, templates live under
+`/api/workspaces/<slug>/templates` and the studio under `/w/<slug>/templates`; every template that
+existed before lands in the default workspace `swarm-camp` through the column's default, and anyone
+signed in through the Stytch organisation `swarm` (or the developer identity, or the password gate)
+is an admin of it. Apply it with the same `npm run db:migrate:prod` before deploying the Worker that
+expects it: a Worker from before 0004 answers `/api/templates`, a Worker from after answers only the
+workspace paths, so the migrate-then-deploy order matters here more than usual, and a rollback of
+the Worker alone (`wrangler rollback`) brings the old paths back without touching the data.
+
 **`npm run db:migrate` is now a prerequisite for `npm run dev`.** Since phase 7b the browser reads and writes templates through the API (`VITE_DATA_MODE` defaults to `http`, ADR-27), so a studio started against an unmigrated database shows "Templates could not be loaded" instead of a library — the first query hits tables that are not there, which the API answers as a 500. ("Template storage is unavailable" is the other failure: a server with no D1 binding at all, which answers 503.) The escape hatch is `VITE_DATA_MODE=memory npm run dev`: the studio then runs entirely in the browser with the starters loaded from `registry.ts`, saves nothing, and needs no database at all. It is meant for a quick look at the UI, not for work you want to keep.
 
 **Migrate before you deploy.** CI _would_ do this — the `Apply D1 migrations` step runs before `Deploy to Cloudflare`, gated on the same `CLOUDFLARE_API_TOKEN` — but that secret is not set (`HAS_TOKEN: false`), so the deploy job skips every step and neither has ever run. Today the release is by hand, once a remote database exists: `npm run db:migrate:prod && npm run deploy`.

@@ -67,6 +67,8 @@ export interface StoredVersion {
 /** A library card: the `templates` row, without any of the content blobs. */
 export interface StoredTemplateSummary {
   readonly id: string
+  /** The workspace this template belongs to (ADR-32). Every read and write is scoped by it. */
+  readonly workspaceId: string
   readonly slug: string
   readonly name: string
   readonly description: string
@@ -115,6 +117,7 @@ export interface NewVersionInput {
 /** A brand-new template and its version 1. The caller chooses the id. */
 export interface NewTemplateInput {
   readonly id: string
+  readonly workspaceId: string
   readonly slug: string
   readonly name: string
   readonly description: string
@@ -155,16 +158,23 @@ export type WriteOutcome =
  * Everything the template routes may do to storage. Two implementations:
  * `D1TemplateStore` (production) and `InMemoryTemplateStore` (tests and the
  * Node runtime). `server/templateStoreContract.ts` holds the suite both pass.
+ *
+ * Every method takes the workspace FIRST. A template in another workspace is
+ * indistinguishable from one that does not exist: reads answer `null`, writes
+ * answer `not-found`. That is the whole of the isolation rule (ADR-32), and
+ * keeping it inside the store means no route can forget it.
  */
 export interface TemplateStore {
   /** Newest-updated first. Summaries only: the library never needs the blobs. */
-  list(): Promise<readonly StoredTemplateSummary[]>
-  get(id: string): Promise<StoredTemplate | null>
+  list(workspaceId: string): Promise<readonly StoredTemplateSummary[]>
+  get(workspaceId: string, id: string): Promise<StoredTemplate | null>
   /** Newest version first; `null` when the template itself does not exist. */
-  listVersions(id: string): Promise<readonly StoredVersionSummary[] | null>
+  listVersions(workspaceId: string, id: string): Promise<readonly StoredVersionSummary[] | null>
+  /** The workspace is on the input; the slug only has to be unique inside it. */
   create(input: NewTemplateInput, ctx: WriteContext): Promise<WriteOutcome>
   /** Appends the next version. Refuses with `conflict` unless `expectedRevision` is current. */
   addVersion(
+    workspaceId: string,
     id: string,
     expectedRevision: number,
     input: NewVersionInput,
@@ -172,11 +182,12 @@ export interface TemplateStore {
   ): Promise<WriteOutcome>
   /** Bumps `revision` without creating a version. Same optimistic-concurrency rule. */
   updateMetadata(
+    workspaceId: string,
     id: string,
     expectedRevision: number,
     patch: MetadataPatch,
     ctx: WriteContext,
   ): Promise<WriteOutcome>
   /** Hard delete; the versions cascade with it. */
-  remove(id: string): Promise<'deleted' | 'not-found'>
+  remove(workspaceId: string, id: string): Promise<'deleted' | 'not-found'>
 }
