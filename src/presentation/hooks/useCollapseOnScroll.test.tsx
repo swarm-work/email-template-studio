@@ -4,7 +4,7 @@ import { act, render, screen } from '@testing-library/react'
 import { useRef } from 'react'
 import { COLLAPSE_THRESHOLD_PX, nextCollapsed, SETTLE_MS, useCollapseOnScroll } from './useCollapseOnScroll'
 
-const idle = { settling: false, held: false }
+const idle = { settling: false, held: false, maxScroll: 1000 }
 
 describe('nextCollapsed', () => {
   it('collapses when scrolling down past the threshold', () => {
@@ -27,6 +27,11 @@ describe('nextCollapsed', () => {
   it('stays collapsed while scrolled down in either direction, and opens only at the top', () => {
     expect(nextCollapsed(true, { ...idle, previousScrollTop: 400, scrollTop: 20 })).toBe(true)
     expect(nextCollapsed(true, { ...idle, previousScrollTop: 20, scrollTop: 0 })).toBe(false)
+  })
+
+  it('does not reopen from a clamp to 0 when collapsing left nothing to scroll', () => {
+    // A late clamp at the end of a smooth wheel scroll, after the settle window.
+    expect(nextCollapsed(true, { ...idle, maxScroll: 0, previousScrollTop: 133, scrollTop: 0 })).toBe(true)
   })
 
   it('never collapses while held, e.g. while focus is in the panel', () => {
@@ -58,8 +63,14 @@ function Harness({ hold }: { hold?: () => boolean }) {
   )
 }
 
-function scrollTo(top: number) {
+/**
+ * jsdom does no layout, so the scroller's sizes are stated per call:
+ * `scrollable: false` is the "collapsing made the content fit" case.
+ */
+function scrollTo(top: number, { scrollable = true } = {}) {
   const scroller = screen.getByTestId('scroller')
+  Object.defineProperty(scroller, 'clientHeight', { configurable: true, value: 400 })
+  Object.defineProperty(scroller, 'scrollHeight', { configurable: true, value: scrollable ? 1000 : 400 })
   act(() => {
     scroller.scrollTop = top
     scroller.dispatchEvent(new Event('scroll'))
@@ -86,6 +97,22 @@ describe('useCollapseOnScroll', () => {
     render(<Harness />)
     scrollTo(200)
     act(() => screen.getByRole('button', { name: 'expand' }).click())
+    expect(screen.getByTestId('state')).toHaveTextContent('open')
+  })
+
+  it('opens on an upward wheel at the top, when collapsing left nothing to scroll', () => {
+    vi.useFakeTimers()
+    render(<Harness />)
+    scrollTo(200)
+    // The content now fits, and the browser's clamp to 0 arrives late - after
+    // the settle window, as it does at the end of a smooth wheel scroll.
+    act(() => vi.advanceTimersByTime(SETTLE_MS + 1))
+    scrollTo(0, { scrollable: false })
+    expect(screen.getByTestId('state')).toHaveTextContent('collapsed')
+
+    act(() => {
+      screen.getByTestId('scroller').dispatchEvent(new WheelEvent('wheel', { deltaY: -100 }))
+    })
     expect(screen.getByTestId('state')).toHaveTextContent('open')
   })
 

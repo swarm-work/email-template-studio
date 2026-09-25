@@ -161,7 +161,8 @@ truncated, still headed `Envelope & dispatch` and still showing **Modified** —
 the top of the scroller or on a click on the row. It never minimises while focus is inside it, and it
 ignores scroll events for 250 ms after changing shape, because the browser moves `scrollTop` itself
 when the scroller changes height (clamping, and scroll anchoring, which the scroller switches off
-with `overflow-anchor: none`). Below `lg` the page scrolls rather than the editor, so the envelope
+with `overflow-anchor: none`). If minimising made the content fit, there is nothing left to scroll,
+so a wheel turned up at the top opens it as well. Below `lg` the page scrolls rather than the editor, so the envelope
 simply scrolls away and never minimises. The summary row fades in with `motion-safe:`, so reduced
 motion gets the swap without the fade. The envelope has no To field (recipients are chosen in the
 send dialog), so the summary shows Reply-to in its place.

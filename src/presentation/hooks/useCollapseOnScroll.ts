@@ -17,6 +17,12 @@
  *   opened it.
  * - Expand only at the very top. The gap between "past the threshold" and "at
  *   zero" is deliberate slack, so a panel near the threshold does not flicker.
+ * - "At the top" only counts when there is somewhere else to be. If
+ *   collapsing made the content fit, the browser clamps `scrollTop` to 0 -
+ *   sometimes a few hundred ms later, at the end of a smooth wheel scroll -
+ *   and that is not the person scrolling up. A scroller that cannot scroll
+ *   (`maxScroll` 0) therefore never reopens the panel from a scroll event;
+ *   an upward wheel at the top, or the summary row, does.
  * - Change nothing for a moment after the panel changed shape. Collapsing
  *   makes the scroller taller and expanding makes it shorter, and either way
  *   the browser moves `scrollTop` by itself (clamping it, or scroll anchoring
@@ -36,6 +42,8 @@ export interface ScrollSample {
   readonly scrollTop: number
   /** `scrollTop` at the previous event, to tell down from up. */
   readonly previousScrollTop: number
+  /** `scrollHeight - clientHeight`: how far this scroller can scroll at all. */
+  readonly maxScroll: number
   /** True just after the panel changed shape, while the layout settles (see above). */
   readonly settling: boolean
   /** True while something (usually focus inside the panel) must keep it open. */
@@ -48,7 +56,7 @@ export const SETTLE_MS = 250
 /** The whole rule, as a function of one scroll event. */
 export function nextCollapsed(collapsed: boolean, sample: ScrollSample): boolean {
   if (sample.settling) return collapsed
-  if (sample.scrollTop <= 0) return false
+  if (sample.scrollTop <= 0) return collapsed && sample.maxScroll <= 0
   if (collapsed || sample.held) return collapsed
   const scrollingDown = sample.scrollTop > sample.previousScrollTop
   return scrollingDown && sample.scrollTop > COLLAPSE_THRESHOLD_PX
@@ -97,6 +105,7 @@ export function useCollapseOnScroll({ scroller, hold }: UseCollapseOnScrollOptio
       const sample: ScrollSample = {
         scrollTop,
         previousScrollTop: previousScrollTop.current,
+        maxScroll: element.scrollHeight - element.clientHeight,
         settling: performance.now() - changedAt.current < SETTLE_MS,
         held: holdRef.current?.() ?? false,
       }
@@ -109,10 +118,25 @@ export function useCollapseOnScroll({ scroller, hold }: UseCollapseOnScrollOptio
       changedAt.current = performance.now()
       setCollapsed(next)
     }
-    // Passive: the listener never calls preventDefault, and saying so up front
-    // lets the browser scroll without waiting for this function to return.
+    // When the content only just overflowed, collapsing can make it fit: the
+    // scroller is then at 0 with nothing left to scroll, so no scroll event
+    // will ever say "back at the top". A wheel turned UP while already at the
+    // top is that same wish, so it opens the panel too.
+    const onWheel = (event: WheelEvent) => {
+      if (event.deltaY >= 0 || element.scrollTop > 0 || !collapsedRef.current) return
+      if (performance.now() - changedAt.current < SETTLE_MS) return
+      collapsedRef.current = false
+      changedAt.current = performance.now()
+      setCollapsed(false)
+    }
+    // Passive: neither listener calls preventDefault, and saying so up front
+    // lets the browser scroll without waiting for these functions to return.
     element.addEventListener('scroll', onScroll, { passive: true })
-    return () => element.removeEventListener('scroll', onScroll)
+    element.addEventListener('wheel', onWheel, { passive: true })
+    return () => {
+      element.removeEventListener('scroll', onScroll)
+      element.removeEventListener('wheel', onWheel)
+    }
   }, [scroller])
 
   const expand = useCallback(() => {
