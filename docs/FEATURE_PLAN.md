@@ -1,5 +1,13 @@
 # Feature plan: from the Template Studio to the full sending platform
 
+> **Superseded in part, 2026-09-25.** `docs/PLATFORM_PLAN.md` replaces decisions 18 to 20 (the
+> organisation / project / environment hierarchy) with one flat **workspace**, replaces section 10's
+> `organizations`, `members`, `projects`, `environments`, `api_keys`, `webhook_endpoints`,
+> `webhook_dispatches`, `email_messages` and `message_events` rows with its own schema, and turns
+> phase 4 plus phase 6 steps 3 to 5 into six deployable slices. Read that file first for anything to
+> do with workspaces, API keys, the sending API, SES events or outbound webhooks. The rest of this
+> document (studio upgrades, Overview and Logs, Domains, the design rules) still stands.
+
 Written 2026-09-09. This document turns the Resend-inspired feature list (four screens, a multi-project hierarchy, and an eleven-entity data model) into an ordered plan that builds on what already exists. It is the working backlog for the next milestones; `docs/ROADMAP.md` keeps the one-line milestone table, and `docs/PLAN.md` (branch `docs/cloudflare-build-plan`) keeps the hosting and backend details.
 
 How to read it:
