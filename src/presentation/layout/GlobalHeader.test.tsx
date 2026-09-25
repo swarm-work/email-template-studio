@@ -1,23 +1,25 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MemoryRouter } from 'react-router'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { GlobalHeader } from './GlobalHeader'
 
-function renderHeader(props: Partial<Parameters<typeof GlobalHeader>[0]> = {}) {
+const WORKSPACE = { slug: 'meridian-platform', name: 'meridian-platform' }
+
+function renderHeader(
+  props: Partial<Parameters<typeof GlobalHeader>[0]> = {},
+  path = '/w/meridian-platform/templates',
+) {
   return render(
-    <TooltipProvider>
-      <GlobalHeader
-        workspace="meridian-platform"
-        environment="Local"
-        lastRenderMs={null}
-        live={false}
-        activePage="templates"
-        onNavigate={() => {}}
-        {...props}
-      />
-    </TooltipProvider>,
+    // The nav is links, so the header needs a router to render at all; the
+    // memory router also decides which link is the current page.
+    <MemoryRouter initialEntries={[path]}>
+      <TooltipProvider>
+        <GlobalHeader workspace={WORKSPACE} lastRenderMs={null} live={false} {...props} />
+      </TooltipProvider>
+    </MemoryRouter>,
   )
 }
 
@@ -63,38 +65,52 @@ describe('GlobalHeader identity', () => {
   })
 })
 
-describe('GlobalHeader', () => {
-  it('marks exactly the active page with aria-current', () => {
-    renderHeader({ activePage: 'templates' })
+describe('GlobalHeader navigation', () => {
+  it('links every enabled screen under the current workspace and marks the open one', () => {
+    renderHeader({}, '/w/meridian-platform/templates')
 
-    expect(screen.getByRole('button', { name: 'Template Studio' })).toHaveAttribute('aria-current', 'page')
-    const current = screen
-      .getAllByRole('button')
-      .filter((button) => button.getAttribute('aria-current') === 'page')
-    expect(current).toHaveLength(1)
+    const studio = screen.getByRole('link', { name: 'Template Studio' })
+    expect(studio).toHaveAttribute('href', '/w/meridian-platform/templates')
+    expect(studio).toHaveAttribute('aria-current', 'page')
+
+    const api = screen.getByRole('link', { name: 'API Keys & Webhooks' })
+    expect(api).toHaveAttribute('href', '/w/meridian-platform/api')
+    expect(api).not.toHaveAttribute('aria-current')
   })
 
-  it('navigates to a page that exists and only explains the ones that do not', async () => {
-    const onNavigate = vi.fn()
-    renderHeader({ onNavigate })
-
-    await userEvent.click(screen.getByRole('button', { name: 'API Keys & Webhooks' }))
-    expect(onNavigate).toHaveBeenCalledWith('api')
-
-    onNavigate.mockClear()
-    await userEvent.click(screen.getByRole('button', { name: 'Domains' }))
-    expect(onNavigate).not.toHaveBeenCalled()
+  it('follows the URL, not a prop, for which page is current', () => {
+    renderHeader({}, '/w/meridian-platform/api')
+    expect(screen.getByRole('link', { name: 'API Keys & Webhooks' })).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByRole('link', { name: 'Template Studio' })).not.toHaveAttribute('aria-current')
   })
 
-  it('gives every planned control a reason, not just a disabled state', () => {
+  it('shows the workspace switcher in place of the plain label when given one', () => {
+    renderHeader({ workspaceSwitcher: <button type="button">Pick a workspace</button> })
+    expect(screen.getByRole('button', { name: 'Pick a workspace' })).toBeInTheDocument()
+    expect(screen.queryByText('meridian-platform', { selector: 'span' })).not.toBeInTheDocument()
+  })
+
+  it('gives the planned control a reason, not just a disabled state', () => {
     renderHeader()
-
-    const planned = screen.getByRole('button', { name: 'Domains' })
+    const planned = screen.getByRole('button', { name: 'Overview & Logs' })
     expect(planned).toHaveAttribute('aria-disabled', 'true')
     expect(planned).toHaveAccessibleDescription('Planned for a later milestone.')
-    expect(screen.getByRole('button', { name: 'Feedback' })).toHaveAccessibleDescription(
-      'Planned for a later milestone.',
-    )
+  })
+
+  it('lists exactly the three product areas, with no Docs, Feedback or Domains', () => {
+    renderHeader()
+    const nav = screen.getByRole('navigation', { name: 'Product' })
+    // The planned item is a button, the two real screens are links; the order
+    // on screen is what matters.
+    expect(Array.from(nav.querySelectorAll('a, button')).map((item) => item.textContent)).toEqual([
+      'Overview & Logs',
+      'API Keys & Webhooks',
+      'Template Studio',
+    ])
+    expect(within(nav).getAllByRole('link')).toHaveLength(2)
+    expect(screen.queryByRole('link', { name: /Docs/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Feedback' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Domains' })).not.toBeInTheDocument()
   })
 
   it('only says LIVE when the send server reports itself connected', () => {
@@ -102,22 +118,18 @@ describe('GlobalHeader', () => {
     expect(screen.getByText(/render worker/)).toHaveTextContent('Local · render worker —')
 
     rerender(
-      <TooltipProvider>
-        <GlobalHeader
-          workspace="meridian-platform"
-          environment="Local"
-          lastRenderMs={24}
-          live
-          activePage="templates"
-          onNavigate={() => {}}
-        />
-      </TooltipProvider>,
+      <MemoryRouter initialEntries={['/w/meridian-platform/templates']}>
+        <TooltipProvider>
+          <GlobalHeader workspace={WORKSPACE} lastRenderMs={24} live />
+        </TooltipProvider>
+      </MemoryRouter>,
     )
     expect(screen.getByText(/render worker/)).toHaveTextContent('LIVE · render worker 24 ms')
   })
 
-  it('names the avatar with a role that can carry a name', () => {
+  it('carries no environment badge: it said "Local" everywhere, production included', () => {
     renderHeader()
-    expect(screen.getByRole('img', { name: 'Signed in to meridian-platform' })).toHaveTextContent('MP')
+    // The render pill still starts with "Local ·"; a badge would be the bare word.
+    expect(screen.queryByText('Local', { exact: true })).not.toBeInTheDocument()
   })
 })

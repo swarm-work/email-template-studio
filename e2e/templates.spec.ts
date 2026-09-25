@@ -82,7 +82,7 @@ async function save(page: Page) {
 
 /** Goes back to the library the way the sub-header's breadcrumb does. */
 async function backToLibrary(page: Page) {
-  await page.getByRole('button', { name: 'Templates', exact: true }).click()
+  await page.getByRole('button', { name: 'Back to templates', exact: true }).click()
   await expect(libraryHeading(page)).toBeVisible()
 }
 
@@ -139,7 +139,9 @@ async function waitForRender(page: Page) {
  */
 async function reloadWithoutDrafts(page: Page) {
   await page.evaluate(() => sessionStorage.clear())
-  await page.reload()
+  // A full document load, like a reload - but to `/`, because the editor is
+  // a URL now (ADR-32) and a plain reload would reopen the same template.
+  await page.goto('/')
   await expect(libraryHeading(page)).toBeVisible()
 }
 
@@ -287,7 +289,7 @@ async function patchFromAnotherBrowser(browser: Browser, slug: string): Promise<
     const other = await context.newPage()
     await other.goto('/')
     const problem = await other.evaluate(async (wanted: string) => {
-      const listed = await fetch('/api/templates', {
+      const listed = await fetch('/api/workspaces/swarm-camp/templates', {
         headers: { accept: 'application/json' },
         credentials: 'same-origin',
       })
@@ -295,7 +297,7 @@ async function patchFromAnotherBrowser(browser: Browser, slug: string): Promise<
       const body = (await listed.json()) as { templates: { id: string; slug: string; revision: number }[] }
       const found = body.templates.find((template) => template.slug === wanted)
       if (!found) return `no template with the slug ${wanted}`
-      const patched = await fetch(`/api/templates/${found.id}`, {
+      const patched = await fetch(`/api/workspaces/swarm-camp/templates/${found.id}`, {
         method: 'PATCH',
         credentials: 'same-origin',
         headers: { 'content-type': 'application/json', 'x-studio-request': '1' },

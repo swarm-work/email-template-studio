@@ -16,7 +16,8 @@ import { EmailEditor, type EmailEditorRef } from '@react-email/editor'
 import { Inspector } from '@react-email/editor/ui'
 import '@react-email/editor/themes/default.css'
 import type { EmailDocument } from '@/domain'
-import { uploadImage } from '@/infrastructure/providers/uploadImage'
+import { ImageUploadError, uploadImage } from '@/infrastructure/providers/uploadImage'
+import { useOptionalWorkspace } from '@/presentation/workspace/WorkspaceContext'
 import { studioEditorExtensions } from '@/infrastructure/render/editorExtensions'
 import { STUDIO_FONT_STACK, studioTheme } from '@/infrastructure/render/studioTheme'
 import type { VisualEditorHandle } from '@/infrastructure/render/visualEmailRenderer'
@@ -115,6 +116,12 @@ export function VisualEditorSurface({
       onControlsChange(null)
       return
     }
+    // What was last handed up, so an event that changes nothing hands up
+    // nothing. Without this every editor event produced a NEW controls object,
+    // the studio re-rendered for it, and a re-render during a layout change
+    // (the envelope panel opening or closing above the canvas) made the editor
+    // emit again - React stopped the loop with "Maximum update depth exceeded".
+    let published: string | null = null
     const publish = () => {
       // Focus is part of the question, not a detail: the package's own
       // breadcrumb reports `Body` for an unfocused editor, and a fresh document
@@ -122,14 +129,20 @@ export function VisualEditorSurface({
       // buttons would be live from the first frame and would delete a block the
       // rail is not showing.
       const nodeSelected = editor.isFocused && selectedBlock(editor) !== null
-      setHasNodeSelection(nodeSelected)
       const can = editorExtras(editor.can())
-      const run = editorExtras(editor.commands)
+      const canUndo = can.undo()
+      const canRedo = can.redo()
+      const key = `${canUndo}|${canRedo}|${nodeSelected}`
+      if (key === published) return
+      published = key
+      setHasNodeSelection(nodeSelected)
       onControlsChange({
-        canUndo: can.undo(),
-        canRedo: can.redo(),
-        undo: () => void run.undo(),
-        redo: () => void run.redo(),
+        canUndo,
+        canRedo,
+        // Resolved when pressed, not now, so the command runs on the editor's
+        // state at that moment rather than on the state this snapshot saw.
+        undo: () => void editorExtras(editor.commands).undo(),
+        redo: () => void editorExtras(editor.commands).redo(),
         hasNodeSelection: nodeSelected,
       })
     }
@@ -174,17 +187,25 @@ export function VisualEditorSurface({
     [editor],
   )
 
-  const handleUploadImage = useCallback(async (file: File) => {
-    try {
-      return await uploadImage(file)
-    } catch (error) {
-      toast.error(`Couldn't upload ${file.name}.`)
-      // Rethrown on purpose: the package removes its temporary image node only
-      // when this promise rejects. Swallowing it would leave a placeholder in
-      // the document that never becomes a picture.
-      throw error
-    }
-  }, [])
+  // Uploads land in the workspace the studio is open in. Optional, because the
+  // surface is also mounted on its own in tests, where there is no workspace
+  // and no upload ever happens.
+  const workspace = useOptionalWorkspace()
+  const handleUploadImage = useCallback(
+    async (file: File) => {
+      try {
+        if (!workspace) throw new ImageUploadError('No workspace is open to upload into.')
+        return await uploadImage(file, workspace.slug)
+      } catch (error) {
+        toast.error(`Couldn't upload ${file.name}.`)
+        // Rethrown on purpose: the package removes its temporary image node only
+        // when this promise rejects. Swallowing it would leave a placeholder in
+        // the document that never becomes a picture.
+        throw error
+      }
+    },
+    [workspace],
+  )
 
   return (
     <>

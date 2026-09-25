@@ -5,6 +5,10 @@
  * never to `D1Database` directly, so this file needs no Cloudflare types and no
  * Hono. Every write goes through ONE `db.batch(...)`, which D1 runs as a single
  * transaction: either the whole write lands or none of it does.
+ *
+ * Every statement that names a template also names its workspace
+ * (`AND workspace_id = ?`). That one predicate, repeated, is the isolation
+ * rule of ADR-32: from another workspace a template simply is not there.
  */
 import { z } from 'zod'
 import type {
@@ -29,6 +33,7 @@ import type {
  */
 const templateRowSchema = z.object({
   id: z.string(),
+  workspace_id: z.string(),
   slug: z.string(),
   name: z.string(),
   description: z.string(),
@@ -74,8 +79,8 @@ const versionSummaryRowSchema = versionRowSchema.pick({
 })
 
 /** The columns a summary needs, joined to the current version for its kind. */
-const SUMMARY_SELECT = `SELECT t.id, t.slug, t.name, t.description, t.category, t.status, t.tags, t.origin,
-         t.current_version, t.revision, t.created_by, t.created_at, t.updated_by, t.updated_at, v.kind
+const SUMMARY_SELECT = `SELECT t.id, t.workspace_id, t.slug, t.name, t.description, t.category, t.status, t.tags,
+         t.origin, t.current_version, t.revision, t.created_by, t.created_at, t.updated_by, t.updated_at, v.kind
   FROM templates t
   JOIN template_versions v ON v.template_id = t.id AND v.version_number = t.current_version`
 
@@ -90,31 +95,42 @@ export class D1TemplateStore implements TemplateStore {
     this.#db = db
   }
 
-  async list(): Promise<readonly StoredTemplateSummary[]> {
+  async list(workspaceId: string): Promise<readonly StoredTemplateSummary[]> {
     // Newest-edited first; the id is the tie-break so two rows written in the
     // same batch (the starter seed) always come back in the same order.
-    const rows = await this.#db.prepare(`${SUMMARY_SELECT} ORDER BY t.updated_at DESC, t.id DESC`).all()
+    const rows = await this.#db
+      .prepare(`${SUMMARY_SELECT} WHERE t.workspace_id = ? ORDER BY t.updated_at DESC, t.id DESC`)
+      .bind(workspaceId)
+      .all()
     return rows.results.map((row) => toSummary(templateRowSchema.parse(row)))
   }
 
-  async get(id: string): Promise<StoredTemplate | null> {
-    const row = await this.#db.prepare(`${SUMMARY_SELECT} WHERE t.id = ?`).bind(id).first()
+  async get(workspaceId: string, id: string): Promise<StoredTemplate | null> {
+    const row = await this.#db
+      .prepare(`${SUMMARY_SELECT} WHERE t.id = ? AND t.workspace_id = ?`)
+      .bind(id, workspaceId)
+      .first()
     if (row === null) return null
     const summary = toSummary(templateRowSchema.parse(row))
     const version = await this.#currentVersion(id, summary.versionNumber)
     return { ...summary, version }
   }
 
-  async listVersions(id: string): Promise<readonly StoredVersionSummary[] | null> {
+  async listVersions(workspaceId: string, id: string): Promise<readonly StoredVersionSummary[] | null> {
+    // Joined to `templates` for the workspace check: version rows carry no
+    // workspace of their own, and must not answer for a foreign template.
     const rows = await this.#db
       .prepare(
-        `SELECT version_number, kind, note, created_by, created_at FROM template_versions
-         WHERE template_id = ? ORDER BY version_number DESC`,
+        `SELECT v.version_number, v.kind, v.note, v.created_by, v.created_at
+           FROM template_versions v
+           JOIN templates t ON t.id = v.template_id
+          WHERE v.template_id = ? AND t.workspace_id = ?
+          ORDER BY v.version_number DESC`,
       )
-      .bind(id)
+      .bind(id, workspaceId)
       .all()
     // A template always has at least version 1, so an empty history can only
-    // mean the template itself is gone.
+    // mean the template itself is gone (or is not in this workspace).
     if (rows.results.length === 0) return null
     return rows.results.map((row) => {
       const parsed = versionSummaryRowSchema.parse(row)
@@ -132,12 +148,13 @@ export class D1TemplateStore implements TemplateStore {
     const statements = [
       this.#db
         .prepare(
-          `INSERT INTO templates (id, slug, name, description, category, status, tags, origin,
+          `INSERT INTO templates (id, workspace_id, slug, name, description, category, status, tags, origin,
              current_version, revision, created_by, created_at, updated_by, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?, ?, ?)`,
         )
         .bind(
           input.id,
+          input.workspaceId,
           input.slug,
           input.name,
           input.description,
@@ -159,10 +176,11 @@ export class D1TemplateStore implements TemplateStore {
       if (isSlugConflict(error)) return { status: 'slug-taken' }
       throw error
     }
-    return this.#saved(input.id)
+    return this.#saved(input.workspaceId, input.id)
   }
 
   async addVersion(
+    workspaceId: string,
     id: string,
     expectedRevision: number,
     input: NewVersionInput,
@@ -179,29 +197,30 @@ export class D1TemplateStore implements TemplateStore {
           `UPDATE templates
              SET current_version = current_version + 1, revision = revision + 1,
                  updated_by = ?, updated_at = ?
-           WHERE id = ? AND revision = ?`,
+           WHERE id = ? AND workspace_id = ? AND revision = ?`,
         )
-        .bind(ctx.by, ctx.at, id, expectedRevision),
+        .bind(ctx.by, ctx.at, id, workspaceId, expectedRevision),
       this.#db
         .prepare(
           `INSERT INTO template_versions (${VERSION_COLUMNS})
            SELECT t.id || '_v' || t.current_version, t.id, t.current_version,
                   ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
              FROM templates t
-            WHERE t.id = ? AND t.revision = ? + 1
+            WHERE t.id = ? AND t.workspace_id = ? AND t.revision = ? + 1
               AND NOT EXISTS (
                 SELECT 1 FROM template_versions v
                  WHERE v.template_id = t.id AND v.version_number = t.current_version
               )`,
         )
-        .bind(...versionValues(input, ctx), id, expectedRevision),
+        .bind(...versionValues(input, ctx), id, workspaceId, expectedRevision),
     ])
 
-    if (result[0].meta.changes === 0) return this.#refused(id)
-    return this.#saved(id)
+    if (result[0].meta.changes === 0) return this.#refused(workspaceId, id)
+    return this.#saved(workspaceId, id)
   }
 
   async updateMetadata(
+    workspaceId: string,
     id: string,
     expectedRevision: number,
     patch: MetadataPatch,
@@ -216,7 +235,7 @@ export class D1TemplateStore implements TemplateStore {
                 description = COALESCE(?, description), category = COALESCE(?, category),
                 status = COALESCE(?, status), tags = COALESCE(?, tags),
                 revision = revision + 1, updated_by = ?, updated_at = ?
-          WHERE id = ? AND revision = ?`,
+          WHERE id = ? AND workspace_id = ? AND revision = ?`,
       )
       .bind(
         patch.name ?? null,
@@ -228,6 +247,7 @@ export class D1TemplateStore implements TemplateStore {
         ctx.by,
         ctx.at,
         id,
+        workspaceId,
         expectedRevision,
       )
 
@@ -238,19 +258,21 @@ export class D1TemplateStore implements TemplateStore {
       if (isSlugConflict(error)) return { status: 'slug-taken' }
       throw error
     }
-    if (result[0].meta.changes === 0) return this.#refused(id)
-    return this.#saved(id)
+    if (result[0].meta.changes === 0) return this.#refused(workspaceId, id)
+    return this.#saved(workspaceId, id)
   }
 
-  async remove(id: string): Promise<'deleted' | 'not-found'> {
+  async remove(workspaceId: string, id: string): Promise<'deleted' | 'not-found'> {
     // The versions go with it: `ON DELETE CASCADE` in migration 0001.
-    const result = await this.#db.batch([this.#db.prepare('DELETE FROM templates WHERE id = ?').bind(id)])
+    const result = await this.#db.batch([
+      this.#db.prepare('DELETE FROM templates WHERE id = ? AND workspace_id = ?').bind(id, workspaceId),
+    ])
     return result[0].meta.changes === 0 ? 'not-found' : 'deleted'
   }
 
   /** Reads the row back after a successful write, so the caller gets the server's truth. */
-  async #saved(id: string): Promise<WriteOutcome> {
-    const template = await this.get(id)
+  async #saved(workspaceId: string, id: string): Promise<WriteOutcome> {
+    const template = await this.get(workspaceId, id)
     if (template === null) throw new Error(`Template ${id} disappeared immediately after a write`)
     return { status: 'saved', template }
   }
@@ -259,8 +281,8 @@ export class D1TemplateStore implements TemplateStore {
    * A guarded write matched no row. That is either "someone else got there
    * first" or "there is nothing here", and only a re-read can tell them apart.
    */
-  async #refused(id: string): Promise<WriteOutcome> {
-    const template = await this.get(id)
+  async #refused(workspaceId: string, id: string): Promise<WriteOutcome> {
+    const template = await this.get(workspaceId, id)
     return template === null ? { status: 'not-found' } : { status: 'conflict', template }
   }
 
@@ -334,6 +356,7 @@ function versionValues(input: NewVersionInput, ctx: WriteContext): unknown[] {
 function toSummary(row: z.infer<typeof templateRowSchema>): StoredTemplateSummary {
   return {
     id: row.id,
+    workspaceId: row.workspace_id,
     slug: row.slug,
     name: row.name,
     description: row.description,
@@ -363,8 +386,9 @@ function parseTags(value: string): readonly string[] {
 
 /**
  * SQLite reports a broken unique index by message; the only one this store can
- * hit from user input is `templates.slug`. Everything else is rethrown so the
- * route turns it into a 500 rather than a misleading "that name is taken".
+ * hit from user input is the (workspace_id, slug) index, whose message names
+ * `templates.slug` among its columns. Everything else is rethrown so the route
+ * turns it into a 500 rather than a misleading "that name is taken".
  */
 export function isSlugConflict(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error)

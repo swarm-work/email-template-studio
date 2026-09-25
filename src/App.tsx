@@ -1,26 +1,125 @@
-import { useCallback, useEffect, useMemo, useState, type ReactElement } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { BrowserRouter, Navigate, Outlet, Route, Routes, useOutletContext } from 'react-router'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { Toaster } from '@/components/ui/sonner'
+import type { TemplateRepository } from '@/application/repositories/templateRepository'
+import type { Workspace } from '@/domain'
 import { ApiKeysPage } from '@/presentation/api/ApiKeysPage'
-import { emailProvider } from '@/infrastructure/providers/emailProvider'
-import { WorkerTemplateRenderer } from '@/infrastructure/render/renderClient'
-import { createSessionStore, getBrowserSessionStorage } from '@/infrastructure/session/sessionStore'
+import { emailProvider, type EmailProvider } from '@/infrastructure/providers/emailProvider'
+import { WorkerTemplateRenderer, type TemplateRenderer } from '@/infrastructure/render/renderClient'
+import {
+  createSessionStore,
+  getBrowserSessionStorage,
+  type StudioSessionStore,
+} from '@/infrastructure/session/sessionStore'
 import { createTemplateRepository } from '@/infrastructure/templates/createTemplateRepository'
+import { createWorkspaceRepository } from '@/infrastructure/workspaces/createWorkspaceRepository'
 import { PasswordGate } from '@/presentation/auth/PasswordGate'
 import { AppShell } from '@/presentation/layout/AppShell'
-import { AppFooter } from '@/presentation/layout/AppFooter'
-import { GlobalHeader, type ScreenPage } from '@/presentation/layout/GlobalHeader'
+import { GlobalHeader } from '@/presentation/layout/GlobalHeader'
 import { TemplatesRoute } from '@/presentation/templates/TemplatesRoute'
+import { rememberWorkspace } from '@/presentation/workspace/lastWorkspace'
+import { HomeRedirect, ResolveWorkspace } from '@/presentation/workspace/WorkspaceGate'
+import { WorkspaceProvider } from '@/presentation/workspace/WorkspaceContext'
+import { WorkspaceSettingsPage } from '@/presentation/workspace/WorkspaceSettingsPage'
+import { WorkspaceSwitcher } from '@/presentation/workspace/WorkspaceSwitcher'
 
-const WORKSPACE = 'meridian-platform'
+// Only the API keys page reads this now: it goes into the prefix of the mock
+// keys it generates (`st_local_…`). The header badge and the footer that used
+// to show it were removed - "Local" was on screen in every environment,
+// production included, so it told nobody anything true.
 const ENVIRONMENT = 'Local'
 
-/** Composition root: builds the infrastructure once and hands it to the screens. */
+/**
+ * What the screens under a workspace get from the frame around them, through
+ * the router's outlet context. One object, so a new screen only has to read it.
+ */
+interface StudioOutlet {
+  readonly workspace: Workspace
+  readonly repository: TemplateRepository
+  readonly renderer: TemplateRenderer
+  readonly store: StudioSessionStore
+  readonly provider: EmailProvider
+  readonly onRenderTime: (ms: number | null) => void
+  readonly onEditorOpenChange: (open: boolean) => void
+}
+
+/**
+ * Composition root: builds the infrastructure once and hands it to the screens.
+ *
+ * The URL is the state (docs/FEATURE_PLAN.md decision 18): `/w/:slug/...` names
+ * the workspace, and everything under it lives in `WorkspaceFrame`.
+ */
 export default function App() {
   const renderer = useMemo(() => new WorkerTemplateRenderer(), [])
-  const repository = useMemo(() => createTemplateRepository(), [])
   const store = useMemo(() => createSessionStore(getBrowserSessionStorage()), [])
-  const [activePage, setActivePage] = useState<ScreenPage>('templates')
+  const workspaceRepository = useMemo(() => createWorkspaceRepository(), [])
+
+  // Boot the render worker now rather than when a template is first opened: it
+  // is a large bundle and its load counts against the render timeout.
+  useEffect(() => {
+    renderer.warmUp()
+    return () => renderer.dispose()
+  }, [renderer])
+
+  return (
+    <TooltipProvider delayDuration={300}>
+      {/* Wraps every screen: whichever one is showing, the API behind it still
+          needs a caller it can name, so the gate belongs outside the router -
+          it also owns the /authenticate callback path before any route runs. */}
+      <PasswordGate>
+        <BrowserRouter>
+          <WorkspaceProvider repository={workspaceRepository}>
+            <Routes>
+              <Route path="/" element={<HomeRedirect />} />
+              <Route path="/w/:slug" element={<WorkspaceFrame renderer={renderer} store={store} />}>
+                <Route index element={<Navigate to="templates" replace />} />
+                <Route path="templates" element={<TemplatesScreen />} />
+                <Route path="templates/:templateId" element={<TemplatesScreen />} />
+                <Route path="api" element={<ApiKeysPage environment={ENVIRONMENT} />} />
+                <Route path="settings" element={<WorkspaceSettingsPage />} />
+                <Route path="*" element={<Navigate to="templates" replace />} />
+              </Route>
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </WorkspaceProvider>
+        </BrowserRouter>
+      </PasswordGate>
+      <Toaster position="bottom-right" />
+    </TooltipProvider>
+  )
+}
+
+interface WorkspaceFrameProps {
+  readonly renderer: TemplateRenderer
+  readonly store: StudioSessionStore
+}
+
+/** Resolves `:slug`, then renders the shell around whichever screen is open. */
+function WorkspaceFrame({ renderer, store }: WorkspaceFrameProps) {
+  return (
+    <ResolveWorkspace>
+      {(workspace) => <WorkspaceShell workspace={workspace} renderer={renderer} store={store} />}
+    </ResolveWorkspace>
+  )
+}
+
+/**
+ * The shell for one workspace: the header and the outlet the screens render
+ * into. Rendered once per workspace, so the header keeps its state (and its
+ * DOM node) while the screen inside changes.
+ */
+function WorkspaceShell({
+  workspace,
+  renderer,
+  store,
+}: WorkspaceFrameProps & { readonly workspace: Workspace }) {
+  // Templates belong to a workspace, so the repository is built for this one
+  // and rebuilt when the slug changes (which is what a switch is).
+  const repository = useMemo(() => createTemplateRepository(workspace.slug), [workspace.slug])
+
+  useEffect(() => rememberWorkspace(workspace.slug), [workspace.slug])
+
   // The studio with a template open is a full-height app screen (one viewport,
   // internal scrollers); every other screen is an ordinary page that scrolls.
   // The shell is rendered here, above the routes, so the route has to say which.
@@ -69,13 +168,6 @@ export default function App() {
     void import('@/presentation/auth/stytchSignOut').then(({ signOutOfStytch }) => signOutOfStytch())
   }, [])
 
-  // Boot the render worker now rather than when a template is first opened: it
-  // is a large bundle and its load counts against the render timeout.
-  useEffect(() => {
-    renderer.warmUp()
-    return () => renderer.dispose()
-  }, [renderer])
-
   // "LIVE" is only honest when the send server says it is connected.
   useEffect(() => {
     let cancelled = false
@@ -87,60 +179,53 @@ export default function App() {
     }
   }, [])
 
-  /**
-   * One screen per navigable page. The switch is exhaustive on purpose: adding
-   * a page to `ScreenPage` without a screen here is a compile error rather than
-   * a header that highlights something nobody rendered.
-   */
-  function screenFor(page: ScreenPage): ReactElement {
-    switch (page) {
-      case 'api':
-        return <ApiKeysPage environment={ENVIRONMENT} />
-      case 'templates':
-        return (
-          <TemplatesRoute
-            repository={repository}
-            renderer={renderer}
-            store={store}
-            provider={emailProvider}
-            onRenderTime={onRenderTime}
-            onEditorOpenChange={setEditorOpen}
-          />
-        )
-    }
-  }
+  const outlet = useMemo<StudioOutlet>(
+    () => ({
+      workspace,
+      repository,
+      renderer,
+      store,
+      provider: emailProvider,
+      onRenderTime,
+      onEditorOpenChange: setEditorOpen,
+    }),
+    [workspace, repository, renderer, store, onRenderTime],
+  )
 
   return (
-    <TooltipProvider delayDuration={300}>
-      {/* Wraps every screen: whichever one is showing, the API behind it still
-          needs a caller it can name, so the gate belongs outside the shell. */}
-      <PasswordGate>
-        <AppShell
-          density={activePage === 'templates' && editorOpen ? 'app' : 'page'}
-          header={
-            <GlobalHeader
-              workspace={WORKSPACE}
-              environment={ENVIRONMENT}
-              lastRenderMs={lastRenderMs}
-              live={live}
-              activePage={activePage}
-              onNavigate={setActivePage}
-              signedInAs={signedInAs}
-              onSignOut={authMode === 'stytch' ? onSignOut : undefined}
-            />
-          }
-          footer={
-            <AppFooter
-              environment={ENVIRONMENT}
-              version={__APP_VERSION__}
-              providerLabel={emailProvider.label}
-            />
-          }
-        >
-          {screenFor(activePage)}
-        </AppShell>
-      </PasswordGate>
-      <Toaster position="bottom-right" />
-    </TooltipProvider>
+    <AppShell
+      density={editorOpen ? 'app' : 'page'}
+      header={
+        <GlobalHeader
+          workspace={workspace}
+          workspaceSwitcher={<WorkspaceSwitcher />}
+          lastRenderMs={lastRenderMs}
+          live={live}
+          signedInAs={signedInAs}
+          onSignOut={authMode === 'stytch' ? onSignOut : undefined}
+        />
+      }
+    >
+      {/* Keyed by the slug: switching workspace remounts the screen, so an
+          editor open on one workspace's template never survives into another. */}
+      <Outlet key={workspace.slug} context={outlet} />
+    </AppShell>
+  )
+}
+
+/** The templates screen, fed from the frame's outlet context. */
+function TemplatesScreen() {
+  const { workspace, repository, renderer, store, provider, onRenderTime, onEditorOpenChange } =
+    useOutletContext<StudioOutlet>()
+  return (
+    <TemplatesRoute
+      workspaceSlug={workspace.slug}
+      repository={repository}
+      renderer={renderer}
+      store={store}
+      provider={provider}
+      onRenderTime={onRenderTime}
+      onEditorOpenChange={onEditorOpenChange}
+    />
   )
 }

@@ -755,6 +755,49 @@ run it through that starter's own validator.
 `e2e/theme.spec.ts` — which is where the rule that matters is actually enforced: the app goes dark,
 the email does not.
 
+## Workspaces: middleware, context values and "404, not 403"
+
+Slice 1 of `docs/PLATFORM_PLAN.md` added the first multi-tenant idea to the codebase. Four things
+in it are worth understanding on their own.
+
+### Middleware is a function that runs before the handler
+
+`server/workspaceRoutes.ts` registers one function for every path under
+`/api/workspaces/:workspace`. Hono calls it first; it either ends the request (`return notFound(c)`)
+or hands over (`await next()`). Before handing over it puts two values on the request's context
+(`c.set('workspace', …)`, `c.set('role', …)`), and every handler after it reads them with `c.get`.
+Compare a Salesforce trigger context: values computed once, up front, that everything downstream can
+rely on. The type `StudioEnv` in that file is what makes `c.get('workspace')` type-safe.
+
+### The store takes the workspace first, so a route cannot forget it
+
+Look at `server/templateStore.ts`: `get(workspaceId, id)`, `remove(workspaceId, id)`. You cannot
+call them without saying which workspace, and every SQL statement in `d1TemplateStore.ts` carries
+`AND workspace_id = ?`. That is deliberate. Putting the check in the routes instead would mean each
+of eight handlers remembering it; putting it in the store means there is nowhere to forget. The
+contract suite (`templateStoreContract.ts`, "keeps workspaces apart") is the test that proves both
+adapters agree.
+
+### 404 instead of 403
+
+`requireWorkspace` answers the same 404, byte for byte, whether a slug does not exist or the caller
+may not enter it. A 403 would confirm the workspace exists, which is information a stranger should
+not get. The test in `workspaceRoutes.test.ts` compares the two bodies with `toBe`.
+
+### A React context with an optional reader
+
+`src/presentation/workspace/WorkspaceContext.tsx` exposes `useWorkspace()`, which throws outside a
+workspace route (a wiring mistake should fail loudly), and `useOptionalWorkspace()`, which returns
+`null`. The visual editor uses the optional one: it is also mounted on its own in a test, where
+there is no workspace and no upload ever happens. Two hooks, one context, and the caller says which
+kind of absence it can live with.
+
+### Where to look
+
+- `server/workspaceAccess.ts` — the whole access rule, pure, with its tests in `workspaceStore.test.ts`.
+- `server/workspaceRoutes.ts` — the middleware and the routes.
+- `src/App.tsx` — the route table; `WorkspaceGate.tsx` — what `/` and an unknown slug do.
+
 ## Suggested reading order through the code
 
 1. `src/domain/*` — the vocabulary (10 minutes).

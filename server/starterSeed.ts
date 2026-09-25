@@ -11,6 +11,7 @@
  */
 import { readFileSync } from 'node:fs'
 import type { NewTemplateInput, TemplateKind, WriteContext } from './templateStore.ts'
+import { DEFAULT_WORKSPACE } from './workspaceStore.ts'
 
 /**
  * Where the starters are authored. They live in the app because they are real,
@@ -93,6 +94,10 @@ export function readStarterSeed(): StarterSeedEntry[] {
     batch: entry.seedBatch,
     input: {
       id: `tpl_${entry.slug}`,
+      // The generated SQL does NOT write this column: migrations 0002 and 0003
+      // ran before it existed, and 0004's DEFAULT puts their rows here. Only
+      // the in-memory store needs it said explicitly.
+      workspaceId: DEFAULT_WORKSPACE.id,
       slug: entry.slug,
       name: entry.name,
       description: entry.description,

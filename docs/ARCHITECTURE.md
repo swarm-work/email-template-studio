@@ -155,25 +155,58 @@ flowchart LR
 - **The draft is dropped, not rebased.** It holds a document describing a template that no longer
   exists, so `template-converted` is the one action that deletes it outright.
 
-## View state: one route owner, no router (yet)
+## Workspaces and routing: the URL is the state
 
-There is still no routing library. `presentation/templates/TemplatesRoute.tsx` holds one value,
-`StudioView = {kind:'library'} | {kind:'editor'; templateId}`, which deliberately mirrors the URLs the
-app will have: `/templates` and `/templates/:id`. Nothing else reads it — the library and the studio
-are handed `onOpenTemplate` / `onBackToLibrary` callbacks — so adding a real router later means
-replacing this one `useState` with `useParams`, and nothing below it changes.
+Since ADR-32 the studio runs inside a **workspace**, and the URL names it:
 
-The app always lands on the library, and the view is **not** persisted: reopening the tab should show
-you the shelf, not the last file you had open. Drafts still are persisted (`sessionStorage`), keyed by
-template id, so going back to the library and into another template keeps every edit.
+| URL                              | Screen                                                               |
+| -------------------------------- | -------------------------------------------------------------------- |
+| `/`                              | Redirects to the last-visited workspace, else the first one          |
+| `/w/:slug/templates`             | The library                                                          |
+| `/w/:slug/templates/:templateId` | The editor                                                           |
+| `/w/:slug/api`                   | API keys and webhooks (still the seeded mock)                        |
+| `/w/:slug/settings`              | Workspace settings and members                                       |
+| `/authenticate`                  | The Stytch callback, handled by `PasswordGate` before any route runs |
+
+`App.tsx` is the composition root and the only file that knows the route table (`react-router` in
+library mode). `WorkspaceProvider` loads `GET /api/workspaces` once per session; the `/w/:slug`
+element resolves the slug against that list (an unknown or unpermitted slug gets a page naming the
+workspaces that exist), then renders `AppShell` around an `Outlet` keyed by the slug, so switching
+workspace remounts the screen inside. The template repository is built per workspace
+(`createTemplateRepository(slug)`) and handed to the screens through the outlet context; screens call
+`useWorkspace()` for the current workspace and the list.
+
+`presentation/templates/TemplatesRoute.tsx` reads `:templateId` with `useParams()` and navigates with
+`useNavigate()`; nothing below it knows the router exists — the library and the studio are handed
+`onOpenTemplate` / `onBackToLibrary` callbacks. A deep link to a template that is not in the library
+lands on the library. Drafts are still persisted (`sessionStorage`), keyed by template id, so going
+back to the library and into another template keeps every edit.
 
 `TemplatesRoute` also owns the two hooks the screens share: `useTemplateLibrary` (what the repository
 says: `loading | error | empty | ready`) and `useStudio` (drafts, device, mode). `useStudio` lives
 above the editor rather than inside it precisely because the library needs `dirtyTemplateIds` to badge
 cards "Modified" while the editor is not mounted.
 
-`AppShell` is rendered once, by `App.tsx`, around whichever screen is showing, so the header never
-remounts between views.
+The header is rendered once per workspace, so it never remounts between screens; its nav items are
+`NavLink`s under the current slug, and the workspace switcher only builds links.
+
+### The request path on the server
+
+```mermaid
+flowchart LR
+  R["/api/workspaces/:workspace/templates/:id"] --> O["Host / Origin check"]
+  O --> A["authenticate<br/>server/auth.ts → Identity"]
+  A --> W["requireWorkspace<br/>server/workspaceRoutes.ts"]
+  W -->|"slug → row, roleFor(...)"| S["workspace + role on the context"]
+  S --> T["template route<br/>templateStore.get(workspace.id, id)"]
+  W -.->|"unknown slug, or no access"| N["404 not-found"]
+```
+
+`requireWorkspace` runs for everything under `/api/workspaces/:workspace`. It looks the slug up,
+asks `server/workspaceAccess.ts` for the caller's role (ADR-33: a named member row, else a `server`
+identity, else the workspace's Stytch organisation) and puts `workspace` and `role` on the Hono
+context. Admin-only routes check the role again with `requireAdmin`. Every store call below then
+names `workspace.id`, which is where isolation actually lives (ADR-32).
 
 ## State model
 
@@ -226,7 +259,7 @@ Templates used to be a `const` array in the bundle. They are now rows in Cloudfl
 
 ```mermaid
 flowchart LR
-  B["Browser<br/>TemplateRepository"] -->|"/api/templates"| H["Hono routes<br/>server/templateRoutes.ts"]
+  B["Browser<br/>TemplateRepository"] -->|"/api/workspaces/:slug/templates"| H["Hono routes<br/>server/templateRoutes.ts"]
   H --> S["TemplateStore (port)<br/>server/templateStore.ts"]
   S --> D1["D1TemplateStore<br/>Cloudflare D1 (SQLite)"]
   S --> M["InMemoryTemplateStore<br/>tests + server/node.ts"]
@@ -238,6 +271,8 @@ flowchart LR
 - **`server/templateStoreContract.ts`** is the Vitest suite both adapters pass, so "they behave the same" is a test rather than a hope.
 
 Two tables (`migrations/0001_create_templates.sql`): `templates` is the mutable library card, `template_versions` is append-only history. A save never updates a version row, it inserts the next one. `templates.revision` bumps on **every** write and is the optimistic-concurrency token: a client sends the revision it read as `expectedRevision`, and a write whose guard matches no row comes back as `409 conflict` carrying the server's current copy.
+
+Two more since migration 0004: `workspaces` and `workspace_members`, behind the same kind of port (`server/workspaceStore.ts`, `D1WorkspaceStore`, `InMemoryWorkspaceStore`, one contract suite). `templates.workspace_id` names the owner, the slug index is `(workspace_id, slug)`, and every `TemplateStore` method takes the workspace first (ADR-32).
 
 Starters are seeded by `migrations/0002_seed_starter_templates.sql`, generated from the real `*.email.tsx` files by `scripts/generate-seed-migration.mjs` (ADR-23). They are ordinary editable rows, not a special case.
 
@@ -251,7 +286,7 @@ flowchart LR
   H --> P["TemplateRepository (port)"]
   P --> HTTP["HttpTemplateRepository<br/>fetch + Zod"]
   P --> MEM["InMemoryTemplateRepository<br/>VITE_DATA_MODE=memory"]
-  HTTP -->|"/api/templates"| API["Hono routes"]
+  HTTP -->|"/api/workspaces/:slug/templates"| API["Hono routes"]
   HTTP --> MAP["templateMapper.ts<br/>DTO → TemplateRecord"]
 ```
 

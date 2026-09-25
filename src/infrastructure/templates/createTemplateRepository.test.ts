@@ -10,7 +10,7 @@ import { createTemplateRepository } from './createTemplateRepository'
 async function usesFetch(mode: string | undefined): Promise<boolean> {
   const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('offline'))
   try {
-    await createTemplateRepository(mode).list()
+    await createTemplateRepository('swarm-camp', mode).list()
     return fetchSpy.mock.calls.length > 0
   } finally {
     fetchSpy.mockRestore()

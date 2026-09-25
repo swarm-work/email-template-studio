@@ -52,7 +52,7 @@ interface WebhookEndpoint {
 }
 
 interface ApiKeysPageProps {
-  /** Named on generated mock keys. The shell owns the header and the footer. */
+  /** Named on generated mock keys. The shell owns the header. */
   environment: string
 }
 
@@ -126,7 +126,7 @@ export function ApiKeysPage({ environment }: ApiKeysPageProps) {
   const activeKeys = keys.filter((key) => key.status !== 'revoked').length
 
   return (
-    <div className="mx-auto w-full max-w-[1440px] space-y-6 px-6 py-6">
+    <div className="mx-auto w-full max-w-[1440px] space-y-6 px-4 py-6 sm:px-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div className="space-y-1.5">
           <div className="flex items-center gap-2">
@@ -158,12 +158,16 @@ export function ApiKeysPage({ environment }: ApiKeysPageProps) {
         </div>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(360px,0.9fr)]">
+      {/* `grid-cols-1` alone is not enough: a `1fr` track still refuses to be
+          narrower than its content, and the key table below is 720px wide on
+          purpose (it scrolls inside its own box). `minmax(0,1fr)` lets the
+          track shrink to the screen so only the table scrolls, not the page. */}
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(360px,0.9fr)]">
         <CredentialsManagerCard keys={keys} onRotate={setKeys} onRevoke={setRevokeTarget} />
         <IntegrationQuickstartCard onCopy={copyText} />
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
         <WebhookDispatchCard webhooks={webhooks} />
         <SecurityNotesCard />
       </div>
@@ -328,7 +332,10 @@ function IntegrationQuickstartCard({ onCopy }: { onCopy: (text: string, label: s
                   Copy snippet
                 </Button>
               </div>
-              <pre className="bg-editor text-editor-foreground max-h-[360px] overflow-auto rounded-lg p-4 font-mono text-xs whitespace-pre-wrap">
+              {/* `wrap-anywhere`: the endpoint URL has no spaces to wrap at, so on
+                  a phone it ran out of the box. Breaking it visually changes
+                  nothing that is copied - Copy snippet takes the string. */}
+              <pre className="bg-editor text-editor-foreground max-h-[360px] overflow-auto rounded-lg p-4 font-mono text-xs wrap-anywhere whitespace-pre-wrap">
                 {snippetByLanguage[item]}
               </pre>
             </TabsContent>

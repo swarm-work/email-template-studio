@@ -148,7 +148,9 @@ describe('createDisabledAuthenticator', () => {
 describe('createDeveloperAuthenticator', () => {
   it('returns the fixed identity regardless of headers', async () => {
     const result = await createDeveloperAuthenticator('dev@example.test').authenticate(new Headers())
-    expect(result).toEqual({ ok: true, identity: { email: 'dev@example.test' } })
+    // 'server': the identity comes from configuration, not a directory, so
+    // workspaces admit it everywhere (ADR-33).
+    expect(result).toEqual({ ok: true, identity: { email: 'dev@example.test', origin: 'server', roles: [] } })
   })
 })
 
@@ -156,7 +158,10 @@ describe('createAccessAuthenticator', () => {
   it('accepts a correctly signed, current token and returns the email', async () => {
     const auth = authenticatorWith(certsFetch())
     const result = await auth.authenticate(headersWith(await makeToken()))
-    expect(result).toEqual({ ok: true, identity: { email: 'person@swarm.work' } })
+    expect(result).toEqual({
+      ok: true,
+      identity: { email: 'person@swarm.work', origin: 'directory', roles: [] },
+    })
   })
 
   it('refuses a request with no token', async () => {
