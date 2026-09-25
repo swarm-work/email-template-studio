@@ -139,7 +139,9 @@ async function waitForRender(page: Page) {
  */
 async function reloadWithoutDrafts(page: Page) {
   await page.evaluate(() => sessionStorage.clear())
-  await page.reload()
+  // A full document load, like a reload - but to `/`, because the editor is
+  // a URL now (ADR-32) and a plain reload would reopen the same template.
+  await page.goto('/')
   await expect(libraryHeading(page)).toBeVisible()
 }
 

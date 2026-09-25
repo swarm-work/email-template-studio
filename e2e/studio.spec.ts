@@ -331,7 +331,9 @@ test('drafts survive switching templates and reloading the page', async ({ page 
   await openTemplate(page, PASSWORD_RESET)
   await waitForRender(page)
 
-  await page.reload()
+  // A full document load, like a reload - but to `/`, because the editor is
+  // a URL now (ADR-32) and a plain reload would reopen Password reset.
+  await page.goto('/')
   await openTemplate(page, WELCOME)
   await openEditorTab(page, 'preview-props.json')
   await expect(page.getByLabel(PAYLOAD_LABEL)).toContainText('Draft Person')
