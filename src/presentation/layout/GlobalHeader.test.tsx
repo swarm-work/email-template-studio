@@ -10,7 +10,6 @@ function renderHeader(props: Partial<Parameters<typeof GlobalHeader>[0]> = {}) {
     <TooltipProvider>
       <GlobalHeader
         workspace="meridian-platform"
-        environment="Local"
         lastRenderMs={null}
         live={false}
         activePage="templates"
@@ -105,7 +104,6 @@ describe('GlobalHeader', () => {
       <TooltipProvider>
         <GlobalHeader
           workspace="meridian-platform"
-          environment="Local"
           lastRenderMs={24}
           live
           activePage="templates"
@@ -114,6 +112,12 @@ describe('GlobalHeader', () => {
       </TooltipProvider>,
     )
     expect(screen.getByText(/render worker/)).toHaveTextContent('LIVE · render worker 24 ms')
+  })
+
+  it('carries no environment badge: it said "Local" everywhere, production included', () => {
+    renderHeader()
+    // The render pill still starts with "Local ·"; a badge would be the bare word.
+    expect(screen.queryByText('Local', { exact: true })).not.toBeInTheDocument()
   })
 
   it('names the avatar with a role that can carry a name', () => {

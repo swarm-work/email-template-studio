@@ -598,8 +598,9 @@ test('the open editor is exactly one viewport tall and scrolls inside itself', a
   }))
   expect(page_.scrollHeight).toBeLessThanOrEqual(page_.clientHeight + 1)
 
-  // The status bar is pinned at the bottom of the editor, above the footer,
-  // without anyone having to scroll to it.
+  // The status bar is pinned at the bottom of the editor without anyone
+  // having to scroll to it. It is the last thing on screen now that the app
+  // footer is gone.
   const bar = await statusBar(page).boundingBox()
   expect(bar).not.toBeNull()
   expect(bar!.y + bar!.height).toBeLessThanOrEqual(900)

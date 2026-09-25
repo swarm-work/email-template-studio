@@ -52,7 +52,7 @@ interface WebhookEndpoint {
 }
 
 interface ApiKeysPageProps {
-  /** Named on generated mock keys. The shell owns the header and the footer. */
+  /** Named on generated mock keys. The shell owns the header. */
   environment: string
 }
 

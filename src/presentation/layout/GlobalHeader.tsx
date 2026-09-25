@@ -9,7 +9,6 @@ import { ExternalLink } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { StatusBadge } from '@/presentation/shared/StatusBadge'
 import { SwarmLogo } from '@/presentation/shared/SwarmLogo'
 import { cn } from '@/lib/utils'
 import { ThemeToggle } from './ThemeToggle'
@@ -21,7 +20,6 @@ export type ProductPage = ScreenPage | 'overview' | 'domains'
 
 export interface GlobalHeaderProps {
   workspace: string
-  environment: string
   /** How long the last preview render took in this browser; null before the first one. */
   lastRenderMs: number | null
   /** True only when the send server reports itself connected: then, and only then, this is live. */
@@ -88,7 +86,6 @@ function initialsOf(name: string): string {
 
 export function GlobalHeader({
   workspace,
-  environment,
   lastRenderMs,
   live,
   activePage,
@@ -120,10 +117,6 @@ export function GlobalHeader({
         {/* A static label, not a picker: there is exactly one workspace. Below xl
             the nav needs the room, and the avatar still names the workspace. */}
         <span className="text-muted-foreground hidden truncate font-mono text-xs xl:inline">{workspace}</span>
-
-        <span className="hidden sm:inline-flex">
-          <StatusBadge tone="neutral">{environment}</StatusBadge>
-        </span>
 
         {/* The nav never disappears: it is the only route to the API keys
             screen. From `md` it sits in the row and scrolls sideways inside

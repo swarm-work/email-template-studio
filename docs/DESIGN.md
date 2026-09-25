@@ -56,7 +56,7 @@ Three more tokens exist only for the sign-in screen (`src/presentation/auth/Auth
 | Diagnostics           | real checks vs collapsed "not connected" placeholders                                                                                                                 |
 | Template card         | kind (Visual/Code), status, category, version chips, Modified badge, "Updated 3 days ago"                                                                             |
 | Template library      | skeleton (3 card outlines) / error Alert + Retry / empty / no search results — see below                                                                              |
-| Global header         | brand, workspace label, env badge, nav with `aria-current`, render pill, Docs, Feedback, avatar                                                                       |
+| Global header         | brand, workspace label, nav with `aria-current`, render pill, Docs, Feedback, avatar                                                                                  |
 | Dialogs               | Send test (explanatory, action disabled), Reset confirmations                                                                                                         |
 | Toasts                | bottom-right, one sentence, past tense                                                                                                                                |
 
@@ -87,9 +87,15 @@ name is empty, and "That name has no letters or numbers in it. Type a slug to us
 One `GlobalHeader` inside one `AppShell`, rendered once by `App.tsx` so it never remounts between
 screens; the first Tab lands on a **Skip to editor** link. Contents left to right: brand, workspace as
 a **static label** (there is one workspace — a dropdown that cannot switch anything is a lie), the
-environment badge, the nav (`Overview & Logs` and `Domains` are `aria-disabled` and say so when
+nav (`Overview & Logs` and `Domains` are `aria-disabled` and say so when
 clicked; `API Keys & Webhooks` and `Template Studio` work, and the current one carries
 `aria-current="page"`), the render pill, Docs, Feedback and an initials avatar.
+
+There is **no environment badge and no app footer**. Both showed a hard-coded `Local`, in production
+too, and the footer's version number and provider name were never something anyone looked for; on a
+phone the footer cost three lines of screen. When the app can tell environments apart for real
+(docs/PLAN.md), that belongs in the header as a fact, not back as a fixed label. The studio's own
+status bar is the last band on the editor screen.
 
 The render pill reads `Local · render worker 24 ms`, and only says `LIVE` when the send server reports
 itself connected — it is a measurement of this browser, which is what its tooltip says. It falls back to
