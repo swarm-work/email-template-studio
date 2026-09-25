@@ -414,7 +414,8 @@ test('no screen scrolls sideways at any supported width, a phone included', asyn
     await expect(page.getByRole('heading', { level: 1, name: 'API Keys & Integration' })).toBeVisible()
     const apiKeys = await overflow()
     expect(apiKeys.scrollWidth, `API keys at ${width}px`).toBeLessThanOrEqual(apiKeys.clientWidth)
-    await page.getByRole('link', { name: 'Template Studio' }).click()
+    // `exact`: the brand link's name, "Swarm Email Template Studio", contains this one.
+    await page.getByRole('link', { name: 'Template Studio', exact: true }).click()
   }
 })
 
