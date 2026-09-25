@@ -406,6 +406,39 @@ test('no screen scrolls sideways at any supported width, a phone included', asyn
   }
 })
 
+test('the envelope minimises while the editor is scrolled down, and comes back', async ({ page }) => {
+  await openTemplate(page, WELCOME)
+  await expect(sourcePanel(page)).toBeVisible()
+  const subject = envelopePanel(page).getByLabel('Subject line')
+  await expect(subject).toBeVisible()
+
+  // The editor's one scroller is the element the envelope panel sits above.
+  const scroller = page.locator('main .overflow-y-auto').first()
+  await scroller.evaluate((element) => {
+    element.scrollTop = 300
+  })
+  const summary = envelopePanel(page).getByRole('button', { name: /^Show envelope/ })
+  await expect(summary).toBeVisible()
+  await expect(subject).toBeHidden()
+
+  // Back at the top, it opens by itself. The pause is the hook's settle window
+  // (SETTLE_MS, 250 ms): scroll events straight after a change are treated as
+  // the browser re-laying out, not a person, so a script this fast has to wait.
+  await page.waitForTimeout(300)
+  await scroller.evaluate((element) => {
+    element.scrollTop = 0
+  })
+  await expect(subject).toBeVisible()
+
+  // And from further down, a click on the summary opens it too.
+  await page.waitForTimeout(300)
+  await scroller.evaluate((element) => {
+    element.scrollTop = 300
+  })
+  await summary.click()
+  await expect(subject).toBeVisible()
+})
+
 test('the editors keep their undo history and their gutters across a tab switch', async ({ page }) => {
   await openTemplate(page, WELCOME)
   const source = page.getByLabel(WELCOME_SOURCE_LABEL)

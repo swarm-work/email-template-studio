@@ -148,6 +148,17 @@ a `?` tooltip instead: a chip that explains nothing is decoration. The grid is
 reply-to are edited and go straight into the draft; From identity comes from the send server;
 description and tags are metadata and are read-only until saving exists.
 
+From `lg` up the panel **minimises while the editor is scrolled down** (`useCollapseOnScroll`): past
+48 px of downward scroll it becomes one `h-9` summary row — `Subject … · From … · Reply-to …`,
+truncated, still headed `Envelope & dispatch` and still showing **Modified** — and it opens again at
+the top of the scroller or on a click on the row. It never minimises while focus is inside it, and it
+ignores scroll events for 250 ms after changing shape, because the browser moves `scrollTop` itself
+when the scroller changes height (clamping, and scroll anchoring, which the scroller switches off
+with `overflow-anchor: none`). Below `lg` the page scrolls rather than the editor, so the envelope
+simply scrolls away and never minimises. The summary row fades in with `motion-safe:`, so reduced
+motion gets the swap without the fade. The envelope has no To field (recipients are chosen in the
+send dialog), so the summary shows Reply-to in its place.
+
 **Code workspace** (`code/CodeWorkspace`) — `CompileInfoStrip`, then the primitives row, then
 `grid xl:grid-cols-[minmax(0,1fr)_300px]` with the editor left and the rail right; below `xl` the rail
 stacks under the editor as `md:grid-cols-2`. The editor panel is one region, `Code editor`, holding
@@ -439,6 +450,6 @@ Short, direct, sentence case. Say what happened and what to do next. Examples us
 ## Motion rules
 
 - Durations 150–300 ms. The badge's roll-in is CSS keyframes on the `EASE_OUT` curve; phase 6 removed `motion` entirely (ADR-4 update, TECH_DEBT #30), so nothing in the studio runs spring physics any more.
-- Every transition is a state change: badge status, device width, collapsible chevron, spinner while rendering.
+- Every transition is a state change: badge status, device width, collapsible chevron, spinner while rendering, the envelope's summary row fading in.
 - `prefers-reduced-motion` disables all of it (global CSS rule, plus a `@media` block that switches the badge's `.badge-roll` and `.badge-pulse` animations off).
 - Nothing blocks input; the preview keeps its last good state while updating.

@@ -140,3 +140,45 @@ describe('EnvelopePanel', () => {
     expect(reset).toHaveAccessibleDescription('There are no changes to the envelope to reset.')
   })
 })
+
+describe('EnvelopePanel, compact', () => {
+  function renderCompact(onExpand = vi.fn()) {
+    render(
+      <TooltipProvider>
+        <EnvelopePanel
+          envelope={{ ...TEMPLATE.envelope, subject: 'Verify your email', replyTo: '' }}
+          metadata={TEMPLATE.metadata}
+          dirty
+          onChange={() => {}}
+          onReset={() => {}}
+          from="studio@example.test"
+          onMetadataChange={() => {}}
+          compact
+          onExpand={onExpand}
+        />
+      </TooltipProvider>,
+    )
+    return onExpand
+  }
+
+  it('keeps the region and its name, and sums the envelope up on one row', () => {
+    renderCompact()
+    const region = screen.getByRole('region', { name: 'Envelope & dispatch' })
+    expect(region).toHaveTextContent('Verify your email')
+    expect(region).toHaveTextContent('studio@example.test')
+    // An empty reply-to means "replies go to the sender", so it says that.
+    expect(region).toHaveTextContent('same as From')
+    // Unsaved envelope edits are still flagged while it is small.
+    expect(screen.getByText('Modified')).toBeInTheDocument()
+    // The fields themselves are gone until it opens again.
+    expect(screen.queryByLabelText('Subject line')).not.toBeInTheDocument()
+  })
+
+  it('opens again from a click on the summary', async () => {
+    const onExpand = renderCompact()
+    const summary = screen.getByRole('button', { name: /^Show envelope/ })
+    expect(summary).toHaveAttribute('aria-expanded', 'false')
+    await userEvent.click(summary)
+    expect(onExpand).toHaveBeenCalledTimes(1)
+  })
+})
