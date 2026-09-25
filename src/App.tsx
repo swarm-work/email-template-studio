@@ -16,7 +16,6 @@ import { createTemplateRepository } from '@/infrastructure/templates/createTempl
 import { createWorkspaceRepository } from '@/infrastructure/workspaces/createWorkspaceRepository'
 import { PasswordGate } from '@/presentation/auth/PasswordGate'
 import { AppShell } from '@/presentation/layout/AppShell'
-import { AppFooter } from '@/presentation/layout/AppFooter'
 import { GlobalHeader } from '@/presentation/layout/GlobalHeader'
 import { TemplatesRoute } from '@/presentation/templates/TemplatesRoute'
 import { rememberWorkspace } from '@/presentation/workspace/lastWorkspace'
@@ -25,10 +24,10 @@ import { WorkspaceProvider } from '@/presentation/workspace/WorkspaceContext'
 import { WorkspaceSettingsPage } from '@/presentation/workspace/WorkspaceSettingsPage'
 import { WorkspaceSwitcher } from '@/presentation/workspace/WorkspaceSwitcher'
 
-/**
- * The deployment this build runs in. Still a constant: `STUDIO_ENVIRONMENT`
- * exists on the Worker and nothing reads it yet (docs/PRIORITIES.md section 5).
- */
+// Only the API keys page reads this now: it goes into the prefix of the mock
+// keys it generates (`st_local_…`). The header badge and the footer that used
+// to show it were removed - "Local" was on screen in every environment,
+// production included, so it told nobody anything true.
 const ENVIRONMENT = 'Local'
 
 /**
@@ -106,9 +105,9 @@ function WorkspaceFrame({ renderer, store }: WorkspaceFrameProps) {
 }
 
 /**
- * The shell for one workspace: header, footer, and the outlet the screens
- * render into. Rendered once per workspace, so the header keeps its state
- * (and its DOM node) while the screen inside changes.
+ * The shell for one workspace: the header and the outlet the screens render
+ * into. Rendered once per workspace, so the header keeps its state (and its
+ * DOM node) while the screen inside changes.
  */
 function WorkspaceShell({
   workspace,
@@ -200,15 +199,11 @@ function WorkspaceShell({
         <GlobalHeader
           workspace={workspace}
           workspaceSwitcher={<WorkspaceSwitcher />}
-          environment={ENVIRONMENT}
           lastRenderMs={lastRenderMs}
           live={live}
           signedInAs={signedInAs}
           onSignOut={authMode === 'stytch' ? onSignOut : undefined}
         />
-      }
-      footer={
-        <AppFooter environment={ENVIRONMENT} version={__APP_VERSION__} providerLabel={emailProvider.label} />
       }
     >
       {/* Keyed by the slug: switching workspace remounts the screen, so an

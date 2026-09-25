@@ -82,7 +82,7 @@ async function save(page: Page) {
 
 /** Goes back to the library the way the sub-header's breadcrumb does. */
 async function backToLibrary(page: Page) {
-  await page.getByRole('button', { name: 'Templates', exact: true }).click()
+  await page.getByRole('button', { name: 'Back to templates', exact: true }).click()
   await expect(libraryHeading(page)).toBeVisible()
 }
 

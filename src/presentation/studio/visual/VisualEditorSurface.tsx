@@ -116,6 +116,12 @@ export function VisualEditorSurface({
       onControlsChange(null)
       return
     }
+    // What was last handed up, so an event that changes nothing hands up
+    // nothing. Without this every editor event produced a NEW controls object,
+    // the studio re-rendered for it, and a re-render during a layout change
+    // (the envelope panel opening or closing above the canvas) made the editor
+    // emit again - React stopped the loop with "Maximum update depth exceeded".
+    let published: string | null = null
     const publish = () => {
       // Focus is part of the question, not a detail: the package's own
       // breadcrumb reports `Body` for an unfocused editor, and a fresh document
@@ -123,14 +129,20 @@ export function VisualEditorSurface({
       // buttons would be live from the first frame and would delete a block the
       // rail is not showing.
       const nodeSelected = editor.isFocused && selectedBlock(editor) !== null
-      setHasNodeSelection(nodeSelected)
       const can = editorExtras(editor.can())
-      const run = editorExtras(editor.commands)
+      const canUndo = can.undo()
+      const canRedo = can.redo()
+      const key = `${canUndo}|${canRedo}|${nodeSelected}`
+      if (key === published) return
+      published = key
+      setHasNodeSelection(nodeSelected)
       onControlsChange({
-        canUndo: can.undo(),
-        canRedo: can.redo(),
-        undo: () => void run.undo(),
-        redo: () => void run.redo(),
+        canUndo,
+        canRedo,
+        // Resolved when pressed, not now, so the command runs on the editor's
+        // state at that moment rather than on the state this snapshot saw.
+        undo: () => void editorExtras(editor.commands).undo(),
+        redo: () => void editorExtras(editor.commands).redo(),
         hasNodeSelection: nodeSelected,
       })
     }

@@ -9,28 +9,25 @@
  * 18 in docs/FEATURE_PLAN.md), so every enabled item is a `NavLink` under the
  * current workspace and the router marks the active one with `aria-current`.
  */
-import { ExternalLink } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { NavLink } from 'react-router'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { StatusBadge } from '@/presentation/shared/StatusBadge'
 import { SwarmLogo } from '@/presentation/shared/SwarmLogo'
 import { cn } from '@/lib/utils'
 import { ThemeToggle } from './ThemeToggle'
 
 /** The product areas that actually have a screen behind them today. */
 export type ScreenPage = 'api' | 'templates'
-/** Everything the nav lists, including the areas that are still planned. */
-export type ProductPage = ScreenPage | 'overview' | 'domains'
+/** Everything the nav lists, including the area that is still planned. */
+export type ProductPage = ScreenPage | 'overview'
 
 export interface GlobalHeaderProps {
   /** The workspace the studio is open in: its slug builds the links, its name backs the avatar. */
   workspace: { readonly slug: string; readonly name: string }
   /** The picker that replaces the plain workspace label. Optional so the header renders alone in tests. */
   workspaceSwitcher?: ReactNode
-  environment: string
   /** How long the last preview render took in this browser; null before the first one. */
   lastRenderMs: number | null
   /** True only when the send server reports itself connected: then, and only then, this is live. */
@@ -56,9 +53,12 @@ type NavItem =
   | { readonly id: ScreenPage; readonly label: string; readonly enabled: true }
   | { readonly id: ProductPage; readonly label: string; readonly enabled: false }
 
+// Domains, Docs and Feedback used to be here too. Two were placeholders that
+// only said "planned" and Docs sent people to react.email's documentation,
+// not ours; the owner asked for all three to go. Overview stays as the one
+// planned item because it is the next screen on the roadmap.
 const NAV_ITEMS: readonly NavItem[] = [
   { id: 'overview', label: 'Overview & Logs', enabled: false },
-  { id: 'domains', label: 'Domains', enabled: false },
   { id: 'api', label: 'API Keys & Webhooks', enabled: true },
   { id: 'templates', label: 'Template Studio', enabled: true },
 ]
@@ -98,7 +98,6 @@ const NAV_ITEM_CLASS =
 export function GlobalHeader({
   workspace,
   workspaceSwitcher,
-  environment,
   lastRenderMs,
   live,
   signedInAs,
@@ -106,7 +105,10 @@ export function GlobalHeader({
 }: GlobalHeaderProps) {
   return (
     <header className="bg-card shrink-0 border-b">
-      <div className="mx-auto flex h-12 max-w-[1440px] min-w-0 items-center gap-3 px-6">
+      {/* `flex-wrap` so that below `md` the nav can drop onto a row of its own
+          (see the nav's `order-last w-full`); from `md` up everything fits on
+          the one 48px row, as before. */}
+      <div className="mx-auto flex min-h-12 max-w-[1440px] min-w-0 flex-wrap items-center gap-x-3 gap-y-1 px-4 max-md:pt-2 sm:px-6">
         {/* Swarm's own lockup (badge + wordmark) from the brand kit, then the
             product name. The link reads "Swarm Email Template Studio" to a
             screen reader; below sm only the logo fits. */}
@@ -130,16 +132,15 @@ export function GlobalHeader({
           )}
         </span>
 
-        <span className="hidden sm:inline-flex">
-          <StatusBadge tone="neutral">{environment}</StatusBadge>
-        </span>
-
-        {/* From md the nav is a scroll strip rather than disappearing: there is
-            no other route to the API keys screen, so dropping it below lg would
-            leave the app single-screen on a small laptop. */}
+        {/* The nav never disappears: it is the only route to the API keys
+            screen. From `md` it sits in the row and scrolls sideways inside
+            itself if it runs out of room. Below `md` it moves to its own
+            full-width row under the brand (`order-last w-full`) and WRAPS
+            rather than scrolling: a scroll strip on a phone hid half of its
+            first or last item at the edge with no visible way to reach it. */}
         <nav
           aria-label="Product"
-          className="ml-4 hidden min-w-0 flex-1 [scrollbar-width:none] items-center gap-1 overflow-x-auto md:flex"
+          className="order-last -mx-1 flex w-full min-w-0 [scrollbar-width:none] flex-wrap items-center gap-1 px-1 pb-2 md:order-none md:mx-0 md:ml-4 md:w-auto md:flex-1 md:flex-nowrap md:overflow-x-auto md:px-0 md:pb-0"
         >
           {NAV_ITEMS.map((item) =>
             item.enabled ? (
@@ -191,24 +192,6 @@ export function GlobalHeader({
           </Tooltip>
 
           <ThemeToggle />
-
-          <Button asChild variant="ghost" size="sm">
-            <a href="https://react.email/docs" target="_blank" rel="noreferrer">
-              Docs
-              <ExternalLink aria-hidden="true" />
-            </a>
-          </Button>
-
-          <Button
-            variant="ghost"
-            size="sm"
-            className="hidden xl:inline-flex"
-            aria-disabled="true"
-            aria-describedby={PLANNED_REASON_ID}
-            onClick={() => toast.info('Feedback is planned for a later milestone.')}
-          >
-            Feedback
-          </Button>
 
           {/* A bare <span> is `role=generic`, which does not take a name, so the
               avatar is an image as far as assistive technology is concerned.

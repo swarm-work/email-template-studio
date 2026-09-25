@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -17,7 +17,7 @@ function renderHeader(
     // memory router also decides which link is the current page.
     <MemoryRouter initialEntries={[path]}>
       <TooltipProvider>
-        <GlobalHeader workspace={WORKSPACE} environment="Local" lastRenderMs={null} live={false} {...props} />
+        <GlobalHeader workspace={WORKSPACE} lastRenderMs={null} live={false} {...props} />
       </TooltipProvider>
     </MemoryRouter>,
   )
@@ -90,15 +90,27 @@ describe('GlobalHeader navigation', () => {
     expect(screen.queryByText('meridian-platform', { selector: 'span' })).not.toBeInTheDocument()
   })
 
-  it('gives every planned control a reason, not just a disabled state', () => {
+  it('gives the planned control a reason, not just a disabled state', () => {
     renderHeader()
-
-    const planned = screen.getByRole('button', { name: 'Domains' })
+    const planned = screen.getByRole('button', { name: 'Overview & Logs' })
     expect(planned).toHaveAttribute('aria-disabled', 'true')
     expect(planned).toHaveAccessibleDescription('Planned for a later milestone.')
-    expect(screen.getByRole('button', { name: 'Feedback' })).toHaveAccessibleDescription(
-      'Planned for a later milestone.',
-    )
+  })
+
+  it('lists exactly the three product areas, with no Docs, Feedback or Domains', () => {
+    renderHeader()
+    const nav = screen.getByRole('navigation', { name: 'Product' })
+    // The planned item is a button, the two real screens are links; the order
+    // on screen is what matters.
+    expect(Array.from(nav.querySelectorAll('a, button')).map((item) => item.textContent)).toEqual([
+      'Overview & Logs',
+      'API Keys & Webhooks',
+      'Template Studio',
+    ])
+    expect(within(nav).getAllByRole('link')).toHaveLength(2)
+    expect(screen.queryByRole('link', { name: /Docs/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Feedback' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Domains' })).not.toBeInTheDocument()
   })
 
   it('only says LIVE when the send server reports itself connected', () => {
@@ -108,10 +120,16 @@ describe('GlobalHeader navigation', () => {
     rerender(
       <MemoryRouter initialEntries={['/w/meridian-platform/templates']}>
         <TooltipProvider>
-          <GlobalHeader workspace={WORKSPACE} environment="Local" lastRenderMs={24} live />
+          <GlobalHeader workspace={WORKSPACE} lastRenderMs={24} live />
         </TooltipProvider>
       </MemoryRouter>,
     )
     expect(screen.getByText(/render worker/)).toHaveTextContent('LIVE · render worker 24 ms')
+  })
+
+  it('carries no environment badge: it said "Local" everywhere, production included', () => {
+    renderHeader()
+    // The render pill still starts with "Local ·"; a badge would be the bare word.
+    expect(screen.queryByText('Local', { exact: true })).not.toBeInTheDocument()
   })
 })
