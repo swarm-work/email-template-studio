@@ -7,7 +7,7 @@
  *
  * Presentation layer: no rules about what the text means.
  */
-import { useEffect, useImperativeHandle, useMemo, useRef, type Ref } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import CodeMirror, { EditorView, type Extension } from '@uiw/react-codemirror'
 import { javascript } from '@codemirror/lang-javascript'
 import { json, jsonParseLinter } from '@codemirror/lang-json'
@@ -27,14 +27,6 @@ const languageExtensions: Record<EditorLanguage, () => Extension[]> = {
   text: () => [],
 }
 
-/** What a parent can ask an editor to do without owning its state. */
-export interface CodeEditorHandle {
-  /** Inserts `snippet` where the cursor is, matching the current line's indentation. */
-  insertAtCursor(snippet: string): void
-  /** Puts the caret back in the editor (used after inserting from a toolbar). */
-  focus(): void
-}
-
 export interface CodeEditorProps {
   value: string
   onChange?: (value: string) => void
@@ -43,8 +35,6 @@ export interface CodeEditorProps {
   label: string
   readOnly?: boolean
   className?: string
-  /** Imperative access for toolbars (insert a primitive, focus). */
-  ref?: Ref<CodeEditorHandle>
   /**
    * Bump this when the editor becomes visible again after being hidden.
    * CodeMirror measures itself on creation; inside a `hidden` panel every
@@ -63,7 +53,6 @@ export function CodeEditor({
   label,
   readOnly = false,
   className,
-  ref,
   refreshKey,
   onCreateEditor,
 }: CodeEditorProps) {
@@ -76,30 +65,6 @@ export function CodeEditor({
       EditorView.contentAttributes.of({ 'aria-label': label }),
     ],
     [language, label],
-  )
-
-  useImperativeHandle(
-    ref,
-    () => ({
-      insertAtCursor(snippet: string) {
-        const view = viewRef.current
-        if (!view) return
-        const { from, to } = view.state.selection.main
-        const line = view.state.doc.lineAt(from)
-        const indent = /^[\t ]*/.exec(line.text)?.[0] ?? ''
-        const text = indentSnippet(snippet, indent)
-        view.dispatch({
-          changes: { from, to, insert: text },
-          selection: { anchor: from + text.length },
-          scrollIntoView: true,
-        })
-        view.focus()
-      },
-      focus() {
-        viewRef.current?.focus()
-      },
-    }),
-    [],
   )
 
   useEffect(() => {
@@ -133,16 +98,4 @@ export function CodeEditor({
       />
     </div>
   )
-}
-
-/**
- * Re-indents a multi-line snippet so it lines up with where the cursor is.
- * The first line is left alone: the cursor is already sitting at that column.
- */
-function indentSnippet(snippet: string, indent: string): string {
-  if (indent === '') return snippet
-  return snippet
-    .split('\n')
-    .map((line, index) => (index === 0 || line === '' ? line : `${indent}${line}`))
-    .join('\n')
 }

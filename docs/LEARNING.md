@@ -751,7 +751,7 @@ run it through that starter's own validator.
 ### Where to look
 
 `src/presentation/layout/theme.ts` (the pure rules, and their test), `useTheme.ts` (the effects),
-`ThemeToggle.tsx` (the control), `src/application/propsPresets.ts` and its table test, and
+`AccountMenu.tsx` (the control), `src/application/propsPresets.ts` and its table test, and
 `e2e/theme.spec.ts` — which is where the rule that matters is actually enforced: the app goes dark,
 the email does not.
 

@@ -167,7 +167,7 @@ simply scrolls away and never minimises. The summary row fades in with `motion-s
 motion gets the swap without the fade. The envelope has no To field (recipients are chosen in the
 send dialog), so the summary shows Reply-to in its place.
 
-**Code workspace** (`code/CodeWorkspace`) — `CompileInfoStrip`, then the primitives row, then
+**Code workspace** (`code/CodeWorkspace`) — `CompileInfoStrip`, then
 `grid xl:grid-cols-[minmax(0,1fr)_300px]` with the editor left and the rail right; below `xl` the rail
 stacks under the editor as `md:grid-cols-2`. The editor panel is one region, `Code editor`, holding
 the tab strip (`template.tsx · preview-props.json · Compiled HTML · Plain text`, mono for the file
@@ -415,7 +415,6 @@ Short, direct, sentence case. Say what happened and what to do next. Examples us
 - "Set by the send server." (From identity) · "Enter a valid email address." (reply-to)
 - "Only visible in this studio. Never sent." (internal description and tags, both editable since phase 7b)
 - "Values used by the preview and by test sends. They are never sent to real recipients." (props payload)
-- "Put the cursor in template.tsx to insert a primitive." (primitives row on another tab)
 - "Compiled with Sucrase — types are stripped, not checked." (compile strip)
 - "Gmail hides everything past about 102 KB behind a 'View entire message' link." (status bar tooltip)
 - "Open the visual editor first: the conversion reads the canvas." (convert to code, while the canvas is not mounted — the feature flag is off, or the server has not answered yet)

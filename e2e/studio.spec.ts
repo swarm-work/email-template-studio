@@ -488,14 +488,12 @@ test('the editors keep their undo history and their gutters across a tab switch'
   await expect(source).not.toContainText('// scratch note')
 })
 
-test('a primitive chip inserts a React Email element at the cursor', async ({ page }) => {
+test('the code editor has no primitives row above its tabs', async ({ page }) => {
+  // The row of <Section>, <Text>, <Heading>… chips was removed at the owner's
+  // request; the tab strip is now the first thing in the editor column.
   await openTemplate(page, WELCOME)
-  const source = page.getByLabel(WELCOME_SOURCE_LABEL)
-  await source.click()
-  await page.keyboard.press('ControlOrMeta+End')
-
-  await page.getByRole('button', { name: 'Insert <Row>/<Column>' }).click()
-  await expect(source).toContainText('<Column></Column>')
+  await expect(page.getByLabel(WELCOME_SOURCE_LABEL)).toBeVisible()
+  await expect(page.getByRole('button', { name: /^Insert </ })).toHaveCount(0)
 })
 
 test('the keyboard shortcuts are registered and say when an action does not apply', async ({ page }) => {

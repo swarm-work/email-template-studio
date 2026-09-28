@@ -2,8 +2,9 @@
  * Signing out of Stytch.
  *
  * This is a separate module from `StytchSignIn.tsx` for one reason: the header
- * is mounted on every screen, and the header is where the sign-out control
- * lives. If it reached the SDK through a normal import, the 214 KB chunk would
+ * is mounted on every screen, and its account menu is where the sign-out
+ * control lives (the header-less `WorkspaceGate` screens offer it too, through
+ * the same `useSignedInIdentity`). If it reached the SDK through a normal import, the 214 KB chunk would
  * be in the first download of every page, including builds with no Stytch at
  * all — the very thing `StytchSignIn.tsx` is lazily loaded to avoid.
  *
@@ -26,7 +27,7 @@ export async function signOutOfStytch(
   const token = import.meta.env.VITE_STYTCH_PUBLIC_TOKEN
   if (!token) {
     // Nothing to revoke: this build has no Stytch in it. Say so rather than
-    // throwing, since the caller is a button in a header that is always there.
+    // throwing, since the caller is a control on screens that are always there.
     return 'This studio is not using Stytch, so there is no session to end.'
   }
 

@@ -28,8 +28,19 @@ function libraryHeading(page: Page) {
 function templateCard(page: Page, name: string) {
   return page.getByRole('button', { name: `Open ${name}`, exact: true })
 }
-function themeOption(page: Page, name: string) {
-  return page.getByRole('radiogroup', { name: 'Colour theme' }).getByRole('radio', { name, exact: true })
+/** Opens the account menu from the avatar and returns its dark-mode switch. */
+async function darkModeSwitch(page: Page) {
+  await page.getByRole('button', { name: /^Signed in/ }).click()
+  return page.getByRole('menu').getByRole('menuitemcheckbox', { name: 'Dark mode' })
+}
+
+/** Flips the switch to `on` if it is not there already, then closes the menu. */
+async function setDarkMode(page: Page, on: boolean) {
+  const toggle = await darkModeSwitch(page)
+  if ((await toggle.getAttribute('aria-checked')) !== String(on)) await toggle.click()
+  await expect(toggle).toHaveAttribute('aria-checked', String(on))
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('menu')).toBeHidden()
 }
 
 /** Turns `rgb(r, g, b)` into the three numbers, so a test can say "light". */
@@ -60,12 +71,17 @@ test.afterEach(async ({ page }) => {
   expect((page as PageWithErrors).__errors).toEqual([])
 })
 
-test('the theme toggle starts on System and switches the app between light and dark', async ({ page }) => {
-  await expect(themeOption(page, 'System theme')).toHaveAttribute('aria-checked', 'true')
+test('the account menu switch flips the app between light and dark and remembers it', async ({ page }) => {
+  // Nothing stored and a light machine: the switch starts off and nothing is written.
   const root = page.locator('html')
   await expect(root).not.toHaveClass(/dark/)
+  const toggle = await darkModeSwitch(page)
+  await expect(toggle).toHaveAttribute('aria-checked', 'false')
+  expect(await page.evaluate(() => localStorage.getItem('email-template-studio:theme'))).toBeNull()
 
-  await themeOption(page, 'Dark theme').click()
+  // Flipping it keeps the menu open, so the change is seen where it was made.
+  await toggle.click()
+  await expect(toggle).toHaveAttribute('aria-checked', 'true')
   await expect(root).toHaveClass(/dark/)
   await expect(page.locator('meta[name="color-scheme"]')).toHaveAttribute('content', 'dark')
   // The app ground really is dark, not just labelled so.
@@ -76,14 +92,15 @@ test('the theme toggle starts on System and switches the app between light and d
   await page.reload()
   await expect(libraryHeading(page)).toBeVisible()
   await expect(page.locator('html')).toHaveClass(/dark/)
-  await expect(themeOption(page, 'Dark theme')).toHaveAttribute('aria-checked', 'true')
+  const reloaded = await darkModeSwitch(page)
+  await expect(reloaded).toHaveAttribute('aria-checked', 'true')
 
-  await themeOption(page, 'Light theme').click()
+  await reloaded.click()
   await expect(page.locator('html')).not.toHaveClass(/dark/)
 })
 
 test('a code template keeps its email light and its editor dark in dark mode', async ({ page }) => {
-  await themeOption(page, 'Dark theme').click()
+  await setDarkMode(page, true)
   await expect(page.locator('html')).toHaveClass(/dark/)
 
   await templateCard(page, WELCOME).click()
@@ -115,7 +132,7 @@ test('a code template keeps its email light and its editor dark in dark mode', a
 })
 
 test('the visual canvas sheet stays a white page in dark mode', async ({ page }) => {
-  await themeOption(page, 'Dark theme').click()
+  await setDarkMode(page, true)
   await expect(page.locator('html')).toHaveClass(/dark/)
 
   await templateCard(page, PRODUCT_LAUNCH).click()
@@ -136,18 +153,18 @@ test('the visual canvas sheet stays a white page in dark mode', async ({ page })
 })
 
 /**
- * `System` is the default every user starts on, and it is the only state that
- * depends on the live `prefers-color-scheme` subscription. The other tests all
- * click an explicit choice, so this is the branch that would otherwise ship
+ * Following the operating system is what every user starts on, and it is the
+ * only state that depends on the live `prefers-color-scheme` subscription. No
+ * control offers it any more (ADR-29 update), but it is still the default until
+ * the switch is flipped, so this is the branch that would otherwise ship
  * untested: a dark operating system, nothing stored.
  */
 test.describe('under a dark operating system', () => {
   test.use({ colorScheme: 'dark' })
 
-  test('System draws the app dark, follows a change live, and still leaves the email light', async ({
+  test('an untouched switch follows the OS live, a flip wins, and the email stays light', async ({
     page,
   }) => {
-    await expect(themeOption(page, 'System theme')).toHaveAttribute('aria-checked', 'true')
     await expect(page.locator('html')).toHaveClass(/dark/)
     await expect(page.locator('meta[name="color-scheme"]')).toHaveAttribute('content', 'dark')
 
@@ -157,10 +174,18 @@ test.describe('under a dark operating system', () => {
     const sheetBackground = await sheet.evaluate((element) => getComputedStyle(element).backgroundColor)
     expect(isNearWhite(sheetBackground), `the canvas sheet went dark: ${sheetBackground}`).toBe(true)
 
-    // The machine changes while the studio is open: `System` has to follow it
-    // without a reload, which is what the matchMedia subscription is for.
+    // The machine changes while the studio is open: an untouched preference has
+    // to follow it without a reload, which is what the matchMedia subscription is for.
     await page.emulateMedia({ colorScheme: 'light' })
     await expect(page.locator('html')).not.toHaveClass(/dark/)
-    await expect(themeOption(page, 'System theme')).toHaveAttribute('aria-checked', 'true')
+    const toggle = await darkModeSwitch(page)
+    await expect(toggle).toHaveAttribute('aria-checked', 'false')
+
+    // Once the person chooses, the choice wins over the machine, reload included.
+    await toggle.click()
+    await expect(page.locator('html')).toHaveClass(/dark/)
+    await page.emulateMedia({ colorScheme: 'light' })
+    await page.reload()
+    await expect(page.locator('html')).toHaveClass(/dark/)
   })
 })

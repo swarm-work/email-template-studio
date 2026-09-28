@@ -37,31 +37,39 @@ describe('GlobalHeader brand', () => {
 describe('GlobalHeader identity', () => {
   it('names the workspace when nobody is signed in, as it always has', () => {
     renderHeader()
-    expect(screen.getByRole('img', { name: 'Signed in to meridian-platform' })).toHaveTextContent('MP')
-    expect(screen.queryByRole('button', { name: 'Sign out' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Signed in to meridian-platform' })).toHaveTextContent('MP')
   })
 
   it('names the PERSON once the API reports one', () => {
     // The whole point of ADR-31: the avatar, the send log and D1's created_by
     // column all stop saying `shared-password` and start naming a human.
     renderHeader({ signedInAs: 'jericho.delrosario@swarm.work' })
-    const avatar = screen.getByRole('img', { name: 'Signed in as jericho.delrosario@swarm.work' })
+    const avatar = screen.getByRole('button', { name: 'Signed in as jericho.delrosario@swarm.work' })
     expect(avatar).toHaveTextContent('JD')
   })
 
-  it('offers sign out only when there is something to sign out of', async () => {
+  it('keeps the theme and sign out inside the account menu, not in the row', async () => {
     const onSignOut = vi.fn()
     renderHeader({ signedInAs: 'echo@swarm.work', onSignOut })
-    await userEvent.click(screen.getByRole('button', { name: 'Sign out' }))
+    // Nothing of the old cluster is left beside the avatar.
+    expect(screen.queryByRole('radiogroup', { name: 'Colour theme' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Sign out' })).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Signed in as echo@swarm.work' }))
+    const menu = await screen.findByRole('menu')
+    expect(within(menu).getByRole('menuitemcheckbox', { name: 'Dark mode' })).toBeInTheDocument()
+    await userEvent.click(within(menu).getByRole('menuitem', { name: 'Sign out' }))
     expect(onSignOut).toHaveBeenCalledTimes(1)
   })
 
-  it('hides sign out when the mode has no session of its own to end', () => {
+  it('has no sign out when the mode has no session of its own to end', async () => {
     // Cloudflare Access and the shared password both land here: under Access the
     // identity provider owns signing out, and under the password there is no
     // person to sign out.
     renderHeader({ signedInAs: 'echo@swarm.work' })
-    expect(screen.queryByRole('button', { name: 'Sign out' })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Signed in as echo@swarm.work' }))
+    await screen.findByRole('menu')
+    expect(screen.queryByRole('menuitem', { name: 'Sign out' })).not.toBeInTheDocument()
   })
 })
 

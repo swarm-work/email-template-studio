@@ -2,13 +2,18 @@
  * The screens around the workspace list: where `/` goes, what an unknown slug
  * gets, and what "you have no workspace" looks like.
  *
- * Presentation layer. Nothing here fetches; it reads `useWorkspaceList()`.
+ * Presentation layer. The workspace list comes from `useWorkspaceList()`; who
+ * is signed in comes from `useSignedInIdentity()`, because these screens render
+ * OUTSIDE the header and its account menu, and without their own sign-out a
+ * person signed in with the wrong account had no way out of them.
  */
 import { Navigate, useParams } from 'react-router'
 import type { ReactNode } from 'react'
+import { LogOut } from 'lucide-react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import type { Workspace } from '@/domain'
+import { useSignedInIdentity } from '@/presentation/auth/useSignedInIdentity'
 import { pickHomeWorkspace } from './lastWorkspace'
 import { CurrentWorkspaceProvider, useWorkspaceList } from './WorkspaceContext'
 import { workspaceHome } from './WorkspaceSwitcher'
@@ -46,6 +51,29 @@ function Centered({ children }: { children: ReactNode }) {
   )
 }
 
+/**
+ * Which account this is, and a way to leave it, under the message on a screen
+ * that has no header. Sign out only exists in Stytch mode, as in the header.
+ * Draws nothing until the API has named someone.
+ */
+function SignedInAs() {
+  const { signedInAs, onSignOut } = useSignedInIdentity()
+  if (!signedInAs) return null
+  return (
+    <div className="text-muted-foreground mt-4 flex flex-wrap items-center gap-3 text-sm">
+      <span className="min-w-0 break-all">
+        Signed in as <span className="text-foreground font-mono text-xs">{signedInAs}</span>
+      </span>
+      {onSignOut ? (
+        <Button variant="outline" size="sm" onClick={onSignOut}>
+          <LogOut aria-hidden="true" />
+          Sign out
+        </Button>
+      ) : null}
+    </div>
+  )
+}
+
 function ListError({ failure, onRetry }: { failure: string; onRetry: () => void }) {
   return (
     <div className="mx-auto w-full max-w-[720px] px-6 py-12">
@@ -58,6 +86,7 @@ function ListError({ failure, onRetry }: { failure: string; onRetry: () => void 
           </Button>
         </AlertDescription>
       </Alert>
+      <SignedInAs />
     </div>
   )
 }
@@ -72,6 +101,7 @@ function NoWorkspace() {
           organisation.
         </AlertDescription>
       </Alert>
+      <SignedInAs />
     </div>
   )
 }
@@ -96,6 +126,7 @@ function UnknownWorkspace({ slug, workspaces }: { slug: string; workspaces: read
           ) : null}
         </AlertDescription>
       </Alert>
+      <SignedInAs />
     </div>
   )
 }
