@@ -1,5 +1,7 @@
 /**
- * The frame every screen sits in: skip link, header, main, footer.
+ * The frame every screen sits in: skip link, header, main. There is no footer:
+ * the one it had repeated an environment name and a version nobody needed, and
+ * on a phone it cost three lines of the screen (removed at the owner's request).
  *
  * Presentation layer: layout only, no rules. It is rendered once, by `App.tsx`,
  * so the header keeps its state (and its DOM node) while the screen inside
@@ -18,11 +20,10 @@ export type ShellDensity = 'page' | 'app'
 export interface AppShellProps {
   density?: ShellDensity
   header: ReactNode
-  footer: ReactNode
   children: ReactNode
 }
 
-export function AppShell({ density = 'page', header, footer, children }: AppShellProps) {
+export function AppShell({ density = 'page', header, children }: AppShellProps) {
   return (
     <div
       className={cn('flex min-h-dvh flex-col', density === 'app' && 'lg:h-dvh lg:min-h-0 lg:overflow-hidden')}
@@ -39,7 +40,6 @@ export function AppShell({ density = 'page', header, footer, children }: AppShel
       <main id="main" className="flex min-h-0 flex-1 flex-col">
         {children}
       </main>
-      {footer}
     </div>
   )
 }

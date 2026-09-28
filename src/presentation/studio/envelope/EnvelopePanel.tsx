@@ -7,8 +7,8 @@
  * keeps no copy of the text, which is why typing here can never disagree with
  * what the preview and the send dialog use.
  */
-import { useId, useState } from 'react'
-import { Check, HelpCircle, RotateCcw, TriangleAlert } from 'lucide-react'
+import { useId, useState, type Ref } from 'react'
+import { Check, ChevronDown, HelpCircle, RotateCcw, TriangleAlert } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Input } from '@/components/ui/input'
@@ -61,6 +61,17 @@ export interface EnvelopePanelProps {
    * the draft would mean a rename only appeared once somebody saved a version.
    */
   onMetadataChange: (patch: TemplateMetadataPatch) => void
+  /**
+   * True while the editor below is scrolled down: the panel shrinks to one
+   * summary row so the editor gets the height back. Decided by the studio
+   * (`useCollapseOnScroll`), not here, because only the studio can see the
+   * scroller.
+   */
+  compact?: boolean
+  /** Called when the summary row is clicked; the studio expands the panel. */
+  onExpand?: () => void
+  /** The section element, so the studio can measure it and see where focus is. */
+  ref?: Ref<HTMLElement>
 }
 
 export function EnvelopePanel({
@@ -71,6 +82,9 @@ export function EnvelopePanel({
   onReset,
   from,
   onMetadataChange,
+  compact = false,
+  onExpand,
+  ref,
 }: EnvelopePanelProps) {
   const headingId = useId()
   const fieldId = useId()
@@ -82,8 +96,44 @@ export function EnvelopePanel({
   const subjectFields = listMergeFields(envelope.subject)
   const replyToError = replyToProblem(envelope.replyTo)
 
+  if (compact) {
+    return (
+      <section ref={ref} aria-labelledby={headingId} className="bg-card shrink-0 border-b">
+        {/* The same heading as the full panel, so the region keeps its name
+            ("Envelope & dispatch") whichever shape it is in. `motion-safe:`
+            means the fade only runs for people who have not asked their
+            system to reduce motion (docs/DESIGN.md, motion rules). */}
+        <div className="motion-safe:animate-in motion-safe:fade-in-0 flex h-9 min-w-0 items-center gap-2 px-4 motion-safe:duration-200">
+          <h2 id={headingId} className="shrink-0 text-xs font-medium">
+            Envelope &amp; dispatch
+          </h2>
+          {dirty ? <StatusBadge tone="warning">Modified</StatusBadge> : null}
+          <button
+            type="button"
+            onClick={onExpand}
+            aria-expanded="false"
+            className="text-muted-foreground hover:text-foreground focus-visible:ring-ring/50 flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 text-left text-xs transition-colors focus-visible:ring-3 focus-visible:outline-none"
+          >
+            {/* One line, truncated: the point is to recognise the email at a
+                glance, not to read every field. The full text is one click
+                away. */}
+            <span className="min-w-0 flex-1 truncate">
+              <span className="sr-only">Show envelope. </span>
+              <SummaryPart label="Subject" value={envelope.subject || 'No subject'} />
+              <SummarySeparator />
+              <SummaryPart label="From" value={from ?? '—'} mono />
+              <SummarySeparator />
+              <SummaryPart label="Reply-to" value={envelope.replyTo || 'same as From'} mono />
+            </span>
+            <ChevronDown className="size-3.5 shrink-0" aria-hidden="true" />
+          </button>
+        </div>
+      </section>
+    )
+  }
+
   return (
-    <section aria-labelledby={headingId} className="bg-card shrink-0 border-b">
+    <section ref={ref} aria-labelledby={headingId} className="bg-card shrink-0 border-b">
       <Collapsible open={open} onOpenChange={setOpen}>
         <div className="flex min-w-0 flex-wrap items-center gap-2 px-4 py-2">
           <h2 id={headingId} className="text-xs font-medium">
@@ -235,6 +285,24 @@ export function EnvelopePanel({
         </CollapsibleContent>
       </Collapsible>
     </section>
+  )
+}
+
+/** "Subject Verify your email" in the compact row: a quiet label, then the value. */
+function SummaryPart({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <>
+      <span className="meta-label">{label}</span>{' '}
+      <span className={cn('text-foreground', mono && 'font-mono')}>{value}</span>
+    </>
+  )
+}
+
+function SummarySeparator() {
+  return (
+    <span className="text-border mx-1.5" aria-hidden="true">
+      ·
+    </span>
   )
 }
 

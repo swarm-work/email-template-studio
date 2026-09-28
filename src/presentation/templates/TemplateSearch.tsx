@@ -14,7 +14,7 @@ export interface TemplateSearchProps {
 
 export function TemplateSearch({ value, onChange }: TemplateSearchProps) {
   return (
-    <div className="relative min-w-0 sm:w-64">
+    <div className="relative min-w-0 flex-1 sm:w-64 sm:flex-none">
       <Search
         className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2"
         aria-hidden="true"

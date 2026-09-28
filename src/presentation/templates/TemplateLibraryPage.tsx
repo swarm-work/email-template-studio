@@ -51,14 +51,16 @@ export function TemplateLibraryPage({
   return (
     <section
       aria-label="Template library"
-      className="mx-auto flex w-full max-w-[1440px] flex-col gap-4 px-6 py-6"
+      className="mx-auto flex w-full max-w-[1440px] flex-col gap-4 px-4 py-6 sm:px-6"
     >
       <div className="flex min-w-0 flex-wrap items-center gap-3">
         <h1 className="text-xl font-semibold tracking-tight">Templates</h1>
         <span className="text-muted-foreground text-sm tabular-nums">
           {templates.length === 1 ? '1 template' : `${templates.length} templates`}
         </span>
-        <div className="ml-auto flex min-w-0 flex-wrap items-center gap-2">
+        {/* Below `sm` this takes the whole second row, so the search field can
+            be as wide as the screen instead of a stub next to empty space. */}
+        <div className="flex min-w-0 flex-wrap items-center gap-2 max-sm:w-full sm:ml-auto">
           <TemplateSearch value={query} onChange={setQuery} />
           <Button size="sm" onClick={() => setCreateOpen(true)}>
             <Plus aria-hidden="true" />

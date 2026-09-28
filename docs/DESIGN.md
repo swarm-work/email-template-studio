@@ -56,7 +56,7 @@ Three more tokens exist only for the sign-in screen (`src/presentation/auth/Auth
 | Diagnostics           | real checks vs collapsed "not connected" placeholders                                                                                                                 |
 | Template card         | kind (Visual/Code), status, category, version chips, Modified badge, "Updated 3 days ago"                                                                             |
 | Template library      | skeleton (3 card outlines) / error Alert + Retry / empty / no search results — see below                                                                              |
-| Global header         | brand, workspace label, env badge, nav with `aria-current`, render pill, Docs, Feedback, avatar                                                                       |
+| Global header         | brand, workspace label, nav with `aria-current`, render pill, theme toggle, avatar                                                                                    |
 | Dialogs               | Send test (explanatory, action disabled), Reset confirmations                                                                                                         |
 | Toasts                | bottom-right, one sentence, past tense                                                                                                                                |
 
@@ -87,9 +87,16 @@ name is empty, and "That name has no letters or numbers in it. Type a slug to us
 One `GlobalHeader` inside one `AppShell`, rendered once by `App.tsx` so it never remounts between
 screens; the first Tab lands on a **Skip to editor** link. Contents left to right: brand, workspace as
 a **static label** (there is one workspace — a dropdown that cannot switch anything is a lie), the
-environment badge, the nav (`Overview & Logs` and `Domains` are `aria-disabled` and say so when
-clicked; `API Keys & Webhooks` and `Template Studio` work, and the current one carries
-`aria-current="page"`), the render pill, Docs, Feedback and an initials avatar.
+nav (`Overview & Logs` is `aria-disabled` and says so when clicked; `API Keys & Webhooks` and `Template Studio` work, and the current one carries
+`aria-current="page"`), the render pill, the theme toggle and an initials avatar. `Domains`, **Docs**
+(which linked to react.email's documentation, not ours) and a planned **Feedback** button were removed
+at the owner's request; nothing replaces them.
+
+There is **no environment badge and no app footer**. Both showed a hard-coded `Local`, in production
+too, and the footer's version number and provider name were never something anyone looked for; on a
+phone the footer cost three lines of screen. When the app can tell environments apart for real
+(docs/PLAN.md), that belongs in the header as a fact, not back as a fixed label. The studio's own
+status bar is the last band on the editor screen.
 
 The render pill reads `Local · render worker 24 ms`, and only says `LIVE` when the send server reports
 itself connected — it is a measurement of this browser, which is what its tooltip says. It falls back to
@@ -99,11 +106,26 @@ Every `aria-disabled` control in the header points at one `sr-only` sentence, "P
 milestone.", so a screen reader is told what is unavailable **and** why — the same disabled-with-reason
 rule the studio's **Save template** and **Convert to code** buttons follow.
 
-Below `xl` the workspace label, the pill and Feedback step aside so the nav fits. The nav itself stays
-down to `md` and becomes a horizontal scroll strip rather than disappearing: it is the only route
-between the two screens, so hiding it would leave the app single-screen on a small laptop. Nothing in
-the header is allowed to push the page into a horizontal scroll, and an e2e sweep at
-1440/1280/1024/768 asserts it.
+Below `xl` the workspace label and the pill step aside so the nav fits. The nav never
+disappears: it is the only route between the screens. From `md` it sits in the header row as a
+horizontal scroll strip; below `md` it drops to a full-width row of its own under the brand
+(`order-last w-full`), still a scroll strip, so a phone reaches every screen too. Nothing in the
+header is allowed to push the page into a horizontal scroll, and an e2e sweep at
+1440/1280/1024/768/390 asserts it.
+
+## Small screens
+
+Every screen is checked at 390×844 (phone), 768×1024 (tablet) and 1440×900. Two rules did most of the
+work there:
+
+- A grid with no column size is `auto`, which is as wide as its widest child's content. The API keys
+  page used one around a deliberately 720 px table and the whole page scrolled sideways on a phone.
+  Single-column grids that hold a wide scroller use `grid-cols-[minmax(0,1fr)]`.
+- A row of actions that "must not shrink" (`shrink-0`) will push its last button off the screen
+  instead. Action rows `flex-wrap` and justify to the end, as the preview toolbar now does.
+
+Page gutters are `px-4` below `sm` and `px-6` from it, the same on the header, the library and the
+API keys page.
 
 ## The studio, band by band
 
@@ -111,8 +133,9 @@ The editor screen is five horizontal bands. Each one answers a different questio
 competes with the editor for attention.
 
 **Sub-header** (`chrome/StudioSubHeader`) — `sticky top-0 z-30 flex min-h-[52px] min-w-0 flex-wrap
-items-center gap-2 border-b bg-card/85 px-4 backdrop-blur-sm`. Left: the breadcrumb
-`Templates / <name>` (the crumb is a button, the name is the page's `h1`, truncated
+items-center gap-2 border-b bg-card/85 px-4 backdrop-blur-sm`. Left: the way back,
+an outline **← Templates** button named `Back to templates` (below `sm` just the arrow), then the
+template's name as the page's `h1` (truncated
 `max-w-[14ch] sm:max-w-[28ch] lg:max-w-none`) and a rename pencil that is disabled with a reason.
 Then the status badge — `<status> · Unsaved changes` / `<status> · Saved`, where the status word is
 the template's own (`Draft`, `Ready`, `Deprecated`), so the badge cannot contradict the status bar —
@@ -120,7 +143,8 @@ and a quiet `aria-live` autosave note, hidden below `lg` with `max-lg:sr-only` r
 because `display: none` would take the live region out of the accessibility tree. Right, inside
 `role="toolbar" aria-label="Template actions"`: the mode group, undo/redo (visual templates only),
 the device toggle, **Send test** as an outline button and **Save template** as the screen's single
-primary. Below `md` the middle cluster steps aside and only Save and **⋯** remain — and the **⋯**
+primary. Below `md` undo/redo, the device toggle and Send test step aside and the mode group, Save and **⋯**
+remain (the mode group is the only way into Code or Preview without a keyboard) — and the **⋯**
 menu grows a `md:hidden` **Send test** item, so the one action that works never disappears.
 
 **Envelope** (`envelope/EnvelopePanel`) — a `Collapsible` headed `Envelope & dispatch`, with
@@ -130,6 +154,18 @@ a `?` tooltip instead: a chip that explains nothing is decoration. The grid is
 `h-9 w-full min-w-0 rounded-md border-0 bg-muted px-2.5 text-sm shadow-none`. Subject, preheader and
 reply-to are edited and go straight into the draft; From identity comes from the send server;
 description and tags are metadata and are read-only until saving exists.
+
+From `lg` up the panel **minimises while the editor is scrolled down** (`useCollapseOnScroll`): past
+48 px of downward scroll it becomes one `h-9` summary row — `Subject … · From … · Reply-to …`,
+truncated, still headed `Envelope & dispatch` and still showing **Modified** — and it opens again at
+the top of the scroller or on a click on the row. It never minimises while focus is inside it, and it
+ignores scroll events for 250 ms after changing shape, because the browser moves `scrollTop` itself
+when the scroller changes height (clamping, and scroll anchoring, which the scroller switches off
+with `overflow-anchor: none`). If minimising made the content fit, there is nothing left to scroll,
+so a wheel turned up at the top opens it as well. Below `lg` the page scrolls rather than the editor, so the envelope
+simply scrolls away and never minimises. The summary row fades in with `motion-safe:`, so reduced
+motion gets the swap without the fade. The envelope has no To field (recipients are chosen in the
+send dialog), so the summary shows Reply-to in its place.
 
 **Code workspace** (`code/CodeWorkspace`) — `CompileInfoStrip`, then the primitives row, then
 `grid xl:grid-cols-[minmax(0,1fr)_300px]` with the editor left and the rail right; below `xl` the rail
@@ -178,7 +214,7 @@ a status bar that speaks every byte count is unusable.
 
 Every strip that can run out of room (primitives, tab bar, status bar) scrolls inside itself with
 `overflow-x-auto [scrollbar-width:none]`; the page itself never scrolls sideways, and the e2e sweep at
-1440/1280/1024/768 asserts it for the sub-header, the envelope panel and the status bar too.
+1440/1280/1024/768/390 asserts it for the sub-header, the envelope panel and the status bar too.
 
 **Visual workspace** (`visual/VisualWorkspace`) — the canvas and its rail, and the only part of the
 studio that is downloaded on demand (ADR-18). `React.lazy` + `Suspense` with `VisualEditorSkeleton` as
@@ -422,6 +458,6 @@ Short, direct, sentence case. Say what happened and what to do next. Examples us
 ## Motion rules
 
 - Durations 150–300 ms. The badge's roll-in is CSS keyframes on the `EASE_OUT` curve; phase 6 removed `motion` entirely (ADR-4 update, TECH_DEBT #30), so nothing in the studio runs spring physics any more.
-- Every transition is a state change: badge status, device width, collapsible chevron, spinner while rendering.
+- Every transition is a state change: badge status, device width, collapsible chevron, spinner while rendering, the envelope's summary row fading in.
 - `prefers-reduced-motion` disables all of it (global CSS rule, plus a `@media` block that switches the badge's `.badge-roll` and `.badge-pulse` animations off).
 - Nothing blocks input; the preview keeps its last good state while updating.

@@ -6,7 +6,6 @@ import { cloudflare } from '@cloudflare/vite-plugin'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { defineConfig, loadEnv, type PluginOption } from 'vite'
-import pkg from './package.json' with { type: 'json' }
 
 /**
  * Which React Email the studio compiles against, read from the installed
@@ -108,7 +107,6 @@ export default defineConfig(({ mode }) => {
     preview: { proxy },
     plugins,
     define: {
-      __APP_VERSION__: JSON.stringify(pkg.version),
       __REACT_EMAIL_VERSION__: JSON.stringify(reactEmailVersion()),
     },
     resolve: {

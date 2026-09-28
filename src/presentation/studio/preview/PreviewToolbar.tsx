@@ -60,7 +60,10 @@ export function PreviewToolbar({
         {label}
       </AnimatedBadge>
 
-      <div className="ml-auto flex min-w-0 shrink-0 items-center gap-1">
+      {/* Wraps instead of refusing to shrink: at phone width the three
+          actions are wider than the card, and `shrink-0` used to push
+          "Download HTML" off the edge where nobody could press it. */}
+      <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-1">
         {renderedAt ? (
           <span className="text-muted-foreground shrink-0 text-[11px]">
             Rendered{' '}

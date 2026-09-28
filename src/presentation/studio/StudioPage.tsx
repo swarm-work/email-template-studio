@@ -59,6 +59,7 @@ import { useSendServerStatus } from '@/presentation/hooks/useSendServerStatus'
 import type { TemplateWrites } from '@/presentation/hooks/useTemplateLibrary'
 import { useTemplateSave } from '@/presentation/hooks/useTemplateSave'
 import { useUnsavedChangesGuard } from '@/presentation/hooks/useUnsavedChangesGuard'
+import { useCollapseOnScroll } from '@/presentation/hooks/useCollapseOnScroll'
 import { useRenderPreview, type RenderPreviewState } from '@/presentation/hooks/useRenderPreview'
 import { SAVED_EXPORT_REASON, useSavedExport } from '@/presentation/hooks/useSavedExport'
 import { useConvertToCode } from '@/presentation/hooks/useConvertToCode'
@@ -656,6 +657,21 @@ export function StudioPage({
     draft.baseRevision > 0 &&
     draft.baseRevision !== template.metadata.revision
 
+  // The envelope shrinks to a summary row while the editor is scrolled down,
+  // and never while focus is inside it: that would hide the field being typed
+  // in. The editor's own caret is untouched either way - the panel above it
+  // changes height, the editor is not remounted or refocused.
+  const editorScrollerRef = useRef<HTMLDivElement>(null)
+  const envelopeRef = useRef<HTMLElement>(null)
+  const holdEnvelope = useCallback(
+    () => envelopeRef.current?.contains(globalThis.document.activeElement) ?? false,
+    [],
+  )
+  const envelopeCollapse = useCollapseOnScroll({
+    scroller: editorScrollerRef,
+    hold: holdEnvelope,
+  })
+
   useStudioShortcuts({
     enabled: true,
     onSave: requestSave,
@@ -702,6 +718,9 @@ export function StudioPage({
       />
 
       <EnvelopePanel
+        ref={envelopeRef}
+        compact={envelopeCollapse.collapsed}
+        onExpand={envelopeCollapse.expand}
         envelope={draft.envelope}
         metadata={template.metadata}
         dirty={envelopeDirty}
@@ -736,8 +755,18 @@ export function StudioPage({
 
       {/* The one scroller in the editor: from `lg` up the shell is exactly one
           viewport tall, so this is what moves. Below `lg` it has no height to
-          fill and the page scrolls instead. */}
-      <div className="min-h-0 flex-1 overflow-y-auto max-lg:min-h-[640px]">
+          fill and the page scrolls instead - which is also why the envelope
+          only minimises from `lg` up: below it this element never scrolls, and
+          the envelope simply scrolls away with the page.
+          `overflow-anchor: none` switches off the browser's scroll anchoring
+          here: when the envelope opens, the visual workspace (which is sized
+          from this box) changes height, and anchoring "kept the content still"
+          by scrolling DOWN - which read as the person scrolling down and shut
+          the envelope they had just opened. */}
+      <div
+        ref={editorScrollerRef}
+        className="min-h-0 flex-1 overflow-y-auto [overflow-anchor:none] max-lg:min-h-[640px]"
+      >
         <div className="mx-auto flex w-full max-w-[1440px] min-w-0 flex-col gap-4 px-4 py-4">
           {/* The rollback flag, said out loud. Without this the Visual button
               would simply be missing and nobody could tell why. */}
