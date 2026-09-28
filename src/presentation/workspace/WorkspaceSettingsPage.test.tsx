@@ -75,6 +75,24 @@ describe('WorkspaceSettingsPage', () => {
     expect(screen.queryByText('Read only')).not.toBeInTheDocument()
   })
 
+  it('gives the General and Members sections distinct React keys', async () => {
+    // Both sections used to share `key={workspace.slug}`, which trips React's
+    // "two children with the same key" console warning. Reverting to that
+    // would still pass every other assertion here, so this test pins the fix
+    // by asserting the warning never fires.
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      renderSettings('admin')
+      await waitFor(() => expect(screen.getByText('admin@acme.test')).toBeInTheDocument())
+      const sameKeyWarning = consoleError.mock.calls.some((args) =>
+        args.some((arg) => typeof arg === 'string' && /same key/.test(arg)),
+      )
+      expect(sameKeyWarning).toBe(false)
+    } finally {
+      consoleError.mockRestore()
+    }
+  })
+
   it('gives an editor a read-only page and never loads or shows the member list', async () => {
     const listMembers = vi.fn()
     renderSettings('editor', fakeRepository({ listMembers }))

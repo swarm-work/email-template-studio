@@ -160,9 +160,19 @@ export class D1WorkspaceStore implements WorkspaceStore {
     // match) actually fires on a second PUT for the same address.
     const normalizedEmail = email.toLowerCase()
     // An upsert on the (workspace_id, email) primary key: a second PUT for the
-    // same person changes their role and re-stamps who did it.
+    // same person changes their role and re-stamps who did it. The primary
+    // key itself is still case-sensitive, so a PUT for 'jane@swarm.work'
+    // would not conflict with an older 'Jane@Swarm.Work' row written before
+    // this normalisation existed - it would insert a second row instead,
+    // leaving two rows for one person. Delete any such row first, in the
+    // same batch, so the upsert that follows always lands on one row.
     try {
       await this.#db.batch([
+        this.#db
+          .prepare(
+            'DELETE FROM workspace_members WHERE workspace_id = ? AND lower(email) = lower(?) AND email <> ?',
+          )
+          .bind(workspaceId, normalizedEmail, normalizedEmail),
         this.#db
           .prepare(
             `INSERT INTO workspace_members (${MEMBER_COLUMNS}) VALUES (?, ?, ?, ?, ?)

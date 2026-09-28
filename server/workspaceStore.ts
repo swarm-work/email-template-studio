@@ -78,15 +78,26 @@ export interface WorkspaceStore {
   update(id: string, patch: WorkspacePatch, ctx: WriteContext): Promise<WorkspaceWriteOutcome>
   /** The named members of one workspace, by email. Organisation members are not rows. */
   listMembers(workspaceId: string): Promise<readonly StoredMember[]>
-  /** Every workspace this address is a named member of. */
+  /**
+   * Every workspace this address is a named member of. Emails are stored
+   * lower-cased and matched case-insensitively, so 'Jane@Swarm.Work' and
+   * 'jane@swarm.work' are the same member everywhere - an adapter must honour
+   * this too, not only the store the contract suite happens to run first.
+   */
   membershipsOf(email: string): Promise<readonly StoredMember[]>
-  /** Adds the person or changes their role. `null` when the workspace does not exist. */
+  /**
+   * Adds the person or changes their role. `null` when the workspace does not
+   * exist. Stores the email lower-cased, and collapses an older mixed-case
+   * row for the same address into the one lower-cased row instead of leaving
+   * both.
+   */
   putMember(
     workspaceId: string,
     email: string,
     role: WorkspaceRole,
     ctx: WriteContext,
   ): Promise<StoredMember | null>
+  /** Matches `email` case-insensitively, the same as `membershipsOf`. */
   removeMember(workspaceId: string, email: string): Promise<'deleted' | 'not-found'>
 }
 

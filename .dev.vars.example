@@ -1,6 +1,11 @@
-# Local Worker variables for `npm run dev` / `npm run preview` (copy to .dev.vars, git-ignored).
+# Local Worker variables for `npm run dev` (copy to .dev.vars, git-ignored).
 # These mirror `vars` and the secrets of a deployed Worker. On Cloudflare the AWS_* values
 # are secrets (`wrangler secret put`), never entries in wrangler.jsonc.
+#
+# `npm run preview` does NOT read this file: `npm run build` deletes the copy the
+# Cloudflare Vite plugin writes into dist/ (scripts/clean-dev-vars.mjs), so a
+# preview of a build runs with only wrangler.jsonc's vars. Use `npm run dev` for
+# anything that needs a value from here, such as signing in as a developer identity.
 
 # Rehearse the send dialog without AWS:
 # STUDIO_SEND_ENABLED=true

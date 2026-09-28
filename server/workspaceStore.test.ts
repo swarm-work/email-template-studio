@@ -46,6 +46,36 @@ describe('the default workspace', () => {
     await database.prepare('DELETE FROM workspaces WHERE id = ?').bind('ws_acme').run()
     expect(await store.membershipsOf('a@x.test')).toEqual([])
   })
+
+  it('putMember collapses a legacy mixed-case row instead of adding a second one', async () => {
+    // Before lower-casing existed, the old PUT route stored whatever case the
+    // caller sent, so a row like 'Jane@Swarm.Work' can already be sitting in
+    // production. The (workspace_id, email) primary key is still
+    // case-sensitive, so putMember('jane@swarm.work', ...) must not just fail
+    // the ON CONFLICT and insert a second row - it has to land on one row.
+    const database = new NodeSqliteDatabase()
+    const store = new D1WorkspaceStore(database)
+    await store.create(newWorkspace('acme'), CTX)
+    await database
+      .prepare(
+        'INSERT INTO workspace_members (workspace_id, email, role, added_by, added_at) VALUES (?, ?, ?, ?, ?)',
+      )
+      .bind('ws_acme', 'Jane@Swarm.Work', 'admin', CTX.by, CTX.at)
+      .run()
+
+    const updated = await store.putMember('ws_acme', 'jane@swarm.work', 'editor', CTX)
+
+    expect(updated).toEqual({
+      workspaceId: 'ws_acme',
+      email: 'jane@swarm.work',
+      role: 'editor',
+      addedBy: CTX.by,
+      addedAt: CTX.at,
+    })
+    expect(await store.listMembers('ws_acme')).toEqual([
+      { workspaceId: 'ws_acme', email: 'jane@swarm.work', role: 'editor', addedBy: CTX.by, addedAt: CTX.at },
+    ])
+  })
 })
 
 describe('isWorkspaceSlugConflict', () => {

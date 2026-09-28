@@ -310,6 +310,28 @@ describe('POST /api/workspaces', () => {
     expect((await errorOf(response)).code).toBe('forbidden')
   })
 
+  // The incident this rule exists for: not OUTSIDER (no organisation at all),
+  // but a stranger who signed in with a Stytch organisation they made
+  // themselves. Stytch lets anyone do this, so holding *an* organisation is
+  // not "belongs to a team" - it must be one that already owns a workspace.
+  it('refuses a directory identity whose own self-made Stytch organisation owns no workspace', async () => {
+    const strangerWithOwnOrg: Identity = {
+      email: 'stranger@example.test',
+      origin: 'directory',
+      roles: [],
+      organization: { id: 'org-x', slug: 'strangers-own-org' },
+    }
+    const { app } = await makeApp(identityAuthenticator(strangerWithOwnOrg))
+    const response = await send(app, 'POST', '/api/workspaces', {
+      name: 'Stranger Co',
+      defaultFrom: 'a@stranger.test',
+    })
+    expect(response.status).toBe(403)
+    const error = await errorOf(response)
+    expect(error.code).toBe('forbidden')
+    expect(error.message).toBe('Only members of an existing team can create a workspace.')
+  })
+
   it('lets a directory identity create a workspace by already being a named admin, even with no organisation', async () => {
     // owner@acme.test (seeded by seededStore) is a named admin of `acme` and
     // has no Stytch organisation at all - the "named admin somewhere" branch.
@@ -385,6 +407,17 @@ describe('PATCH /api/workspaces/:workspace', () => {
       name: 'swarm.camp',
     })
     expect(unchanged.status).toBe(200)
+  })
+
+  it('does not refuse a PATCH that ADDS an organisation where there was none', async () => {
+    // `acme` starts with a null organisation (it relies on its named admin
+    // instead). Giving it one cannot lock anyone out, unlike clearing or
+    // changing one away from it, so the guard must let this through.
+    const { app } = await makeApp()
+    const added = await send(app, 'PATCH', '/api/workspaces/acme', {
+      stytchOrganizationSlug: 'newly-linked-org',
+    })
+    expect(added.status).toBe(200)
   })
 
   it('allows clearing or changing the organisation when a named admin already exists', async () => {

@@ -322,6 +322,7 @@ async function organizationChangeLockoutProblem(
 ): Promise<string | null> {
   if (!('stytchOrganizationSlug' in patch)) return null // not part of this PATCH: nothing changes
   if (patch.stytchOrganizationSlug === workspace.stytchOrganizationSlug) return null // no actual change
+  if (workspace.stytchOrganizationSlug === null) return null // adding an org where there was none cannot lock anyone out
   const members = await store.listMembers(workspace.id)
   if (members.some((member) => member.role === 'admin')) return null
   return 'Clearing or changing the linked organisation would leave this workspace with no admin. Make someone a named admin first.'
