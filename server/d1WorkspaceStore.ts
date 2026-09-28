@@ -137,8 +137,13 @@ export class D1WorkspaceStore implements WorkspaceStore {
   }
 
   async membershipsOf(email: string): Promise<readonly StoredMember[]> {
+    // lower(email) = lower(?), not `email = ?`: new rows are written
+    // lower-cased (see putMember), but this also matches any older
+    // mixed-case row without needing a migration to rewrite it.
     const rows = await this.#db
-      .prepare(`SELECT ${MEMBER_COLUMNS} FROM workspace_members WHERE email = ? ORDER BY workspace_id`)
+      .prepare(
+        `SELECT ${MEMBER_COLUMNS} FROM workspace_members WHERE lower(email) = lower(?) ORDER BY workspace_id`,
+      )
       .bind(email)
       .all()
     return rows.results.map((row) => toMember(memberRowSchema.parse(row)))
@@ -150,6 +155,10 @@ export class D1WorkspaceStore implements WorkspaceStore {
     role: WorkspaceRole,
     ctx: WriteContext,
   ): Promise<StoredMember | null> {
+    // Lower-cased so 'Jane@Swarm.Work' and 'jane@swarm.work' are one member,
+    // and so the ON CONFLICT below (a plain, case-sensitive primary-key
+    // match) actually fires on a second PUT for the same address.
+    const normalizedEmail = email.toLowerCase()
     // An upsert on the (workspace_id, email) primary key: a second PUT for the
     // same person changes their role and re-stamps who did it.
     try {
@@ -160,7 +169,7 @@ export class D1WorkspaceStore implements WorkspaceStore {
              ON CONFLICT (workspace_id, email) DO UPDATE SET role = excluded.role,
                added_by = excluded.added_by, added_at = excluded.added_at`,
           )
-          .bind(workspaceId, email, role, ctx.by, ctx.at),
+          .bind(workspaceId, normalizedEmail, role, ctx.by, ctx.at),
       ])
     } catch (error) {
       // The foreign key: the workspace is not there. Same answer as the
@@ -169,8 +178,10 @@ export class D1WorkspaceStore implements WorkspaceStore {
       throw error
     }
     const row = await this.#db
-      .prepare(`SELECT ${MEMBER_COLUMNS} FROM workspace_members WHERE workspace_id = ? AND email = ?`)
-      .bind(workspaceId, email)
+      .prepare(
+        `SELECT ${MEMBER_COLUMNS} FROM workspace_members WHERE workspace_id = ? AND lower(email) = lower(?)`,
+      )
+      .bind(workspaceId, normalizedEmail)
       .first()
     if (row === null)
       throw new Error(`Member ${email} of ${workspaceId} disappeared immediately after a write`)
@@ -180,7 +191,7 @@ export class D1WorkspaceStore implements WorkspaceStore {
   async removeMember(workspaceId: string, email: string): Promise<'deleted' | 'not-found'> {
     const result = await this.#db.batch([
       this.#db
-        .prepare('DELETE FROM workspace_members WHERE workspace_id = ? AND email = ?')
+        .prepare('DELETE FROM workspace_members WHERE workspace_id = ? AND lower(email) = lower(?)')
         .bind(workspaceId, email),
     ])
     return result[0].meta.changes === 0 ? 'not-found' : 'deleted'

@@ -5,7 +5,7 @@ import { D1WorkspaceStore, isWorkspaceSlugConflict } from './d1WorkspaceStore.ts
 import { InMemoryWorkspaceStore } from './inMemoryWorkspaceStore.ts'
 import { NodeSqliteDatabase } from './testSqlite.ts'
 import { CTX } from './templateStoreContract.ts'
-import { roleAllows, roleFor } from './workspaceAccess.ts'
+import { mayCreateWorkspace, roleAllows, roleFor } from './workspaceAccess.ts'
 import { DEFAULT_WORKSPACE, DEFAULT_WORKSPACE_CTX } from './workspaceStore.ts'
 import type { StoredWorkspace } from './workspaceStore.ts'
 import { describeWorkspaceStore, newWorkspace } from './workspaceStoreContract.ts'
@@ -109,5 +109,58 @@ describe('roleFor', () => {
     expect(roleAllows('admin', 'editor')).toBe(true)
     expect(roleAllows('editor', 'editor')).toBe(true)
     expect(roleAllows('editor', 'admin')).toBe(false)
+  })
+})
+
+describe('mayCreateWorkspace', () => {
+  const person = (overrides: Partial<Identity> = {}): Identity => ({
+    email: 'person@swarm.work',
+    origin: 'directory',
+    roles: [],
+    ...overrides,
+  })
+  const admin = (email = 'person@swarm.work') => ({
+    workspaceId: 'ws_x',
+    email,
+    role: 'admin' as const,
+    addedBy: 'x',
+    addedAt: 'x',
+  })
+  const editor = (email = 'person@swarm.work') => ({
+    workspaceId: 'ws_x',
+    email,
+    role: 'editor' as const,
+    addedBy: 'x',
+    addedAt: 'x',
+  })
+
+  it('lets a server identity create a workspace, whatever else is true', () => {
+    const developer = person({ email: 'developer@localhost', origin: 'server' })
+    expect(mayCreateWorkspace(developer, [], [])).toBe(true)
+  })
+
+  it('lets a directory identity in when its organisation already owns a workspace', () => {
+    const inOrg = person({ organization: { id: 'organization-test-1', slug: 'swarm' } })
+    const workspaces = [
+      { ...DEFAULT_WORKSPACE, createdBy: 'x', createdAt: 'x', updatedBy: 'x', updatedAt: 'x' },
+    ]
+    expect(mayCreateWorkspace(inOrg, workspaces, [])).toBe(true)
+  })
+
+  it('lets a directory identity in when it is already a named admin somewhere, organisation or not', () => {
+    expect(mayCreateWorkspace(person(), [], [admin()])).toBe(true)
+  })
+
+  it('refuses a directory identity that is only a named editor, never an admin', () => {
+    expect(mayCreateWorkspace(person(), [], [editor()])).toBe(false)
+  })
+
+  it('refuses a directory identity whose organisation owns no workspace and who is named nowhere', () => {
+    const otherOrg = person({ organization: { id: 'organization-test-2', slug: 'acme' } })
+    const workspaces = [
+      { ...DEFAULT_WORKSPACE, createdBy: 'x', createdAt: 'x', updatedBy: 'x', updatedAt: 'x' },
+    ]
+    expect(mayCreateWorkspace(otherOrg, workspaces, [])).toBe(false)
+    expect(mayCreateWorkspace(person(), [], [])).toBe(false)
   })
 })

@@ -435,6 +435,20 @@ workspace, and a lockout the moment a table is empty.
 onto `admin` is a one-line change in `roleFor` when the team wants editors by default. The password
 mode's "everyone is an admin" is the same fact it has always been, now written down.
 
+**Update 2026-09-29.** Entering an existing workspace and _creating_ a new one turned out to need
+different rules. The Stytch project behind this app lets anyone create their own organisation during
+sign-in, so a stranger reaching the API has a valid session but belongs to no team the studio
+recognises - "signed in" is not "belongs to a team". Before this update, `POST /api/workspaces`
+let any signed-in caller create a workspace and become its first admin, so that stranger could make
+one for themself. `server/workspaceAccess.ts` now also exports `mayCreateWorkspace(identity,
+existingWorkspaces, ownMemberships)`, used only by that route: a `server` identity may always create
+one; a directory identity may create one when its Stytch organisation already owns at least one
+workspace, or when it is already a named `admin` of at least one workspace - either way, proof it
+already belongs to a team the studio knows about, not a fresh, self-made organisation. Everyone else
+gets `403 forbidden` with "Only members of an existing team can create a workspace." Rule 3 above
+(entering a workspace through its organisation) and the member table itself are unchanged; this only
+narrows who may make a brand-new workspace.
+
 ## ADR-4 Motion: beUI selectively
 
 **Context.** The brief asks for beUI where motion communicates state, and for reduced-motion support.

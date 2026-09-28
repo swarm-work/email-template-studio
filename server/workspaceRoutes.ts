@@ -17,8 +17,14 @@ import type { Context, Hono, MiddlewareHandler } from 'hono'
 import type { Identity } from './auth.ts'
 import { apiError, checkMutationHeaders, issuesOf, readJsonBody } from './http.ts'
 import type { WriteContext } from './templateStore.ts'
-import { roleAllows, roleFor } from './workspaceAccess.ts'
-import type { StoredMember, StoredWorkspace, WorkspaceRole, WorkspaceStore } from './workspaceStore.ts'
+import { mayCreateWorkspace, roleAllows, roleFor } from './workspaceAccess.ts'
+import type {
+  StoredMember,
+  StoredWorkspace,
+  WorkspacePatch,
+  WorkspaceRole,
+  WorkspaceStore,
+} from './workspaceStore.ts'
 import { workspaceIdFor } from './workspaceStore.ts'
 import { slugify } from '../shared/templateContracts.ts'
 import type { MemberDto, WorkspaceDto } from '../shared/workspaceContracts.ts'
@@ -89,11 +95,28 @@ export function registerWorkspaceRoutes(app: StudioApp, deps: WorkspaceRouteDepe
     return c.json({ workspaces: visible })
   })
 
-  /** Anyone signed in may create a workspace; the creator becomes its first admin. */
+  /**
+   * Restricted to callers who already belong to a team (ADR-33, update
+   * 2026-09-29): a 'server' identity, or a directory identity whose
+   * organisation already owns a workspace, or who is already a named admin
+   * of one. Stytch lets a stranger create their own organisation during
+   * sign-in, so "signed in" alone would let anyone become an admin here.
+   * The creator becomes the new workspace's first admin.
+   */
   app.post(WORKSPACES_API_PATH, async (c) => {
     if (!workspaceStore) return storageUnavailable(c)
     const refused = checkMutationHeaders(c)
     if (refused) return refused
+
+    const identity = c.get('identity')
+    const [existingWorkspaces, ownMemberships] = await Promise.all([
+      workspaceStore.list(),
+      workspaceStore.membershipsOf(identity.email),
+    ])
+    if (!mayCreateWorkspace(identity, existingWorkspaces, ownMemberships)) {
+      return apiError(c, 403, 'forbidden', 'Only members of an existing team can create a workspace.')
+    }
+
     const read = await readJsonBody(c)
     if ('response' in read) return read.response
     const parsed = createWorkspaceRequest.safeParse(read.body)
@@ -110,7 +133,6 @@ export function registerWorkspaceRoutes(app: StudioApp, deps: WorkspaceRouteDepe
       return apiError(c, 409, 'slug-taken', 'Another workspace already uses that slug.')
     }
 
-    const identity = c.get('identity')
     const ctx = contextFor(identity.email)
     const outcome = await workspaceStore.create(
       {
@@ -155,12 +177,12 @@ export function registerWorkspaceRoutes(app: StudioApp, deps: WorkspaceRouteDepe
     const parsed = updateWorkspaceRequest.safeParse(read.body)
     if (!parsed.success) return badRequest(c, 'Invalid workspace settings.', parsed.error)
 
+    const workspace = c.get('workspace')
+    const lockoutProblem = await organizationChangeLockoutProblem(workspaceStore, workspace, parsed.data)
+    if (lockoutProblem) return apiError(c, 409, 'last-admin', lockoutProblem)
+
     const identity = c.get('identity')
-    const outcome = await workspaceStore.update(
-      c.get('workspace').id,
-      parsed.data,
-      contextFor(identity.email),
-    )
+    const outcome = await workspaceStore.update(workspace.id, parsed.data, contextFor(identity.email))
     if (outcome.status !== 'saved') return notFound(c)
     console.log(`[workspaces] updated ${outcome.workspace.id} by ${identity.email}`)
     return c.json({ workspace: toWorkspaceDto(outcome.workspace, c.get('role')) })
@@ -237,6 +259,10 @@ export function requireWorkspace(workspaceStore: WorkspaceStore | null): Middlew
     const membership = memberships.find((member) => member.workspaceId === workspace.id) ?? null
     const role = roleFor(workspace, membership, identity)
     // Not 403: someone who may not enter is not told the workspace exists.
+    // Narrower than "a slug can never be confirmed to exist" overall: POST
+    // /api/workspaces answers 409 slug-taken to any caller who may create a
+    // workspace, which does confirm one is taken. Accepted, since workspace
+    // names are not secret (docs/PLATFORM_PLAN.md, docs/LEARNING.md).
     if (!role) return notFound(c)
 
     c.set('workspace', workspace)
@@ -256,6 +282,10 @@ export function requireAdmin(c: RouteContext) {
  * table must always keep one admin, or nobody could ever add another. A
  * workspace with an organisation is exempt: every organisation member is an
  * admin already.
+ *
+ * Emails are compared case-insensitively: the stores normalise what they
+ * store, but `email` here may be whatever case a URL path segment carried in,
+ * so both sides are lower-cased before comparing.
  */
 async function lastAdminProblem(
   store: WorkspaceStore,
@@ -263,12 +293,38 @@ async function lastAdminProblem(
   email: string,
 ): Promise<string | null> {
   if (workspace.stytchOrganizationSlug !== null) return null
+  const target = email.toLowerCase()
   const members = await store.listMembers(workspace.id)
-  const target = members.find((member) => member.email === email)
-  if (!target || target.role !== 'admin') return null
-  const otherAdmins = members.filter((member) => member.role === 'admin' && member.email !== email)
+  const named = members.find((member) => member.email.toLowerCase() === target)
+  if (!named || named.role !== 'admin') return null
+  const otherAdmins = members.filter(
+    (member) => member.role === 'admin' && member.email.toLowerCase() !== target,
+  )
   if (otherAdmins.length > 0) return null
   return `${email} is the only admin of this workspace. Make someone else an admin first.`
+}
+
+/**
+ * The lockout guard for PATCH. Clearing (or changing) the linked Stytch
+ * organisation removes the one thing that grants admin access to everyone in
+ * it, so it is refused unless the workspace already has a named admin who
+ * can carry on administering it afterwards.
+ *
+ * This is a NEW check, not a reuse of `lastAdminProblem`: that function
+ * returns early whenever the workspace still HAS an organisation (line
+ * above), which is exactly the case a PATCH clearing or changing one starts
+ * from - the two guards are complementary, not overlapping.
+ */
+async function organizationChangeLockoutProblem(
+  store: WorkspaceStore,
+  workspace: StoredWorkspace,
+  patch: Pick<WorkspacePatch, 'stytchOrganizationSlug'>,
+): Promise<string | null> {
+  if (!('stytchOrganizationSlug' in patch)) return null // not part of this PATCH: nothing changes
+  if (patch.stytchOrganizationSlug === workspace.stytchOrganizationSlug) return null // no actual change
+  const members = await store.listMembers(workspace.id)
+  if (members.some((member) => member.role === 'admin')) return null
+  return 'Clearing or changing the linked organisation would leave this workspace with no admin. Make someone a named admin first.'
 }
 
 function storageUnavailable(c: Context) {
