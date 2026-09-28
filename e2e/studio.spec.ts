@@ -408,6 +408,18 @@ test('no screen scrolls sideways at any supported width, a phone included', asyn
       expect(box!.x + box!.width, `nav item right edge at ${width}px`).toBeLessThanOrEqual(width + 1)
     }
 
+    // The workspace switcher is the only route to its settings and to "New
+    // workspace", so it has to be reachable at every width. It was once hidden
+    // below 1280px (`hidden … xl:inline-flex`) and nothing noticed.
+    await page.getByRole('button', { name: /^Workspace: / }).click()
+    await expect(
+      page.getByRole('menuitem', { name: 'Workspace settings' }),
+      `settings at ${width}px`,
+    ).toBeVisible()
+    await expect(page.getByRole('menuitem', { name: 'New workspace' }), `new at ${width}px`).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('menu')).toBeHidden()
+
     // The API keys page, reached the way a person would: through the nav,
     // which has to exist at this width for the click to work at all.
     await page.getByRole('link', { name: 'API Keys & Webhooks' }).click()
@@ -416,6 +428,53 @@ test('no screen scrolls sideways at any supported width, a phone included', asyn
     expect(apiKeys.scrollWidth, `API keys at ${width}px`).toBeLessThanOrEqual(apiKeys.clientWidth)
     // `exact`: the brand link's name, "Swarm Email Template Studio", contains this one.
     await page.getByRole('link', { name: 'Template Studio', exact: true }).click()
+  }
+})
+
+test('a long workspace name truncates inside the header at every width', async ({ page }) => {
+  // The list is renamed on the way back from the API; the slug, and so every
+  // URL, stays the same. shadcn's Button is `shrink-0`, so a width cap on a
+  // WRAPPER let a long name spill over the nav and the avatar.
+  const LONG_NAME = 'Meridian Platform Customer Lifecycle and Transactional Messaging Team'
+  await page.route('**/api/workspaces', async (route) => {
+    if (route.request().method() !== 'GET') return route.fallback()
+    const response = await route.fetch()
+    const body = (await response.json()) as { workspaces: { name: string }[] }
+    await route.fulfill({
+      response,
+      json: { ...body, workspaces: body.workspaces.map((workspace) => ({ ...workspace, name: LONG_NAME })) },
+    })
+  })
+  await page.reload()
+  await expect(libraryHeading(page)).toBeVisible()
+
+  type Box = { x: number; y: number; width: number; height: number }
+  const overlaps = (a: Box, b: Box) =>
+    a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height
+
+  for (const width of [1440, 1280, 1024, 768, 390]) {
+    await page.setViewportSize({ width, height: 900 })
+    const switcher = page.getByRole('button', { name: `Workspace: ${LONG_NAME}` })
+    await expect(switcher).toBeVisible()
+    const box = (await switcher.boundingBox())!
+    expect(box.x, `switcher left edge at ${width}px`).toBeGreaterThanOrEqual(0)
+    expect(box.x + box.width, `switcher right edge at ${width}px`).toBeLessThanOrEqual(width + 1)
+
+    const firstNavItem = page.getByRole('navigation', { name: 'Product' }).locator('a, button').first()
+    const avatar = page.getByRole('button', { name: /^Signed in/ })
+    for (const [label, other] of [
+      ['first nav item', firstNavItem],
+      ['avatar', avatar],
+    ] as const) {
+      const otherBox = (await other.boundingBox())!
+      expect(overlaps(box, otherBox), `switcher overlaps the ${label} at ${width}px`).toBe(false)
+    }
+
+    // Truncated with an ellipsis, not clipped: the text is wider than its box.
+    const truncated = await switcher
+      .locator('span.truncate')
+      .evaluate((span) => span.scrollWidth > span.clientWidth && getComputedStyle(span).textOverflow)
+    expect(truncated, `name truncated at ${width}px`).toBe('ellipsis')
   }
 })
 

@@ -16,8 +16,12 @@ const OTHER = { ...MEMORY_WORKSPACE, id: 'ws_swarm-work', slug: 'swarm-work', na
 
 // The real sign-out loads the Stytch SDK and reloads the page; here it only
 // has to be called.
-const { signOutOfStytch } = vi.hoisted(() => ({ signOutOfStytch: vi.fn(async () => null) }))
+const { signOutOfStytch, toastError } = vi.hoisted(() => ({
+  signOutOfStytch: vi.fn<() => Promise<string | null>>(async () => null),
+  toastError: vi.fn(),
+}))
 vi.mock('@/presentation/auth/stytchSignOut', () => ({ signOutOfStytch }))
+vi.mock('sonner', () => ({ toast: { error: toastError } }))
 
 /** What `/api/send-test/status` answers: who is signed in, and how. */
 function stubStatus(body: { user?: string; authMode?: string } | null) {
@@ -31,6 +35,7 @@ function stubStatus(body: { user?: string; authMode?: string } | null) {
 
 beforeEach(() => {
   signOutOfStytch.mockClear()
+  toastError.mockClear()
   // Nobody named unless a test says so, so the older tests see what they always did.
   stubStatus(null)
 })
@@ -155,6 +160,9 @@ describe('the screens outside the header', () => {
       renderAt(path, repository())
 
       await waitFor(() => expect(screen.getByText('wrong.account@example.com')).toBeInTheDocument())
+      // One status request per mount: a fetch loop in the hook would pass
+      // every other assertion here (an earlier bug sent 3,767 of them).
+      expect(fetch).toHaveBeenCalledTimes(1)
       expect(screen.getByText(/Signed in as/)).toBeInTheDocument()
       await userEvent.click(screen.getByRole('button', { name: 'Sign out' }))
       await waitFor(() => expect(signOutOfStytch).toHaveBeenCalledTimes(1))
@@ -166,9 +174,25 @@ describe('the screens outside the header', () => {
       renderAt(path, repository())
 
       await waitFor(() => expect(screen.getByText('developer@example.com')).toBeInTheDocument())
+      expect(fetch).toHaveBeenCalledTimes(1)
       expect(screen.queryByRole('button', { name: 'Sign out' })).not.toBeInTheDocument()
     })
   }
+
+  it('says why when signing out could not finish, instead of doing nothing', async () => {
+    // On these screens Sign out is the only way out, so a failure must be seen.
+    window.localStorage.clear()
+    signOutOfStytch.mockResolvedValueOnce('This studio is not using Stytch, so there is no session to end.')
+    stubStatus({ user: 'wrong.account@example.com', authMode: 'stytch' })
+    renderAt('/', createInMemoryWorkspaceRepository([]))
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Sign out' }))
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith(
+        'This studio is not using Stytch, so there is no session to end.',
+      ),
+    )
+  })
 
   it('shows no account line when the API names nobody', async () => {
     window.localStorage.clear()

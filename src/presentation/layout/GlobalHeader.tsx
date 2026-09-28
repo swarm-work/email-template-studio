@@ -110,10 +110,14 @@ export function GlobalHeader({
         {/* The workspace picker (ADR-32), at every width: it is the only route
             to "Workspace settings" and "New workspace". It used to wait for xl
             to leave the nav room; the account menu freed that room, and below
-            xl a long name is truncated rather than the picker hidden. */}
-        <span className="inline-flex max-w-40 min-w-0 xl:max-w-none">
+            xl a long name is truncated rather than the picker hidden. The width
+            cap sits on the control itself, not on this wrapper: shadcn's Button
+            is `shrink-0` and would spill out of a capped wrapper. */}
+        <span className="inline-flex min-w-0">
           {workspaceSwitcher ?? (
-            <span className="text-muted-foreground truncate font-mono text-xs">{workspace.name}</span>
+            <span className="text-muted-foreground max-w-40 truncate font-mono text-xs xl:max-w-56">
+              {workspace.name}
+            </span>
           )}
         </span>
 

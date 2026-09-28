@@ -178,6 +178,8 @@ test.describe('under a dark operating system', () => {
     // to follow it without a reload, which is what the matchMedia subscription is for.
     await page.emulateMedia({ colorScheme: 'light' })
     await expect(page.locator('html')).not.toHaveClass(/dark/)
+    // Following the OS stores nothing: only flipping the switch writes a choice.
+    expect(await page.evaluate(() => localStorage.getItem('email-template-studio:theme'))).toBeNull()
     const toggle = await darkModeSwitch(page)
     await expect(toggle).toHaveAttribute('aria-checked', 'false')
 

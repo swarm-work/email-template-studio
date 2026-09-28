@@ -13,6 +13,7 @@
  * (ADR-31).
  */
 import { useEffect, useState } from 'react'
+import { toast } from 'sonner'
 
 export interface SignedInIdentity {
   /** The email the API names, or undefined before it answers (or if it fails). */
@@ -25,9 +26,19 @@ export interface SignedInIdentity {
  * Imported on click, not at the top of the file: the header is on every screen,
  * and a static import would pull the Stytch chunk into the first download of
  * every build (see src/presentation/auth/stytchSignOut.ts).
+ *
+ * Never fails silently. On a header-less gate screen this button is the only
+ * way out, so a sentence from `signOutOfStytch` is shown as a toast, and a
+ * chunk that will not load (a deploy replaced it) reloads the page, which
+ * fetches the new one.
  */
 function signOut(): void {
-  void import('./stytchSignOut').then(({ signOutOfStytch }) => signOutOfStytch())
+  void import('./stytchSignOut')
+    .then(({ signOutOfStytch }) => signOutOfStytch())
+    .then((problem) => {
+      if (problem) toast.error(problem)
+    })
+    .catch(() => window.location.reload())
 }
 
 export function useSignedInIdentity(): SignedInIdentity {

@@ -95,7 +95,10 @@ export function AccountMenu({ signedInAs, workspaceName, onSignOut }: AccountMen
             data-state={dark ? 'checked' : 'unchecked'}
             className={cn(
               'inline-flex h-4 w-7 shrink-0 items-center rounded-full p-0.5 transition-colors',
-              dark ? 'bg-primary' : 'bg-input',
+              // The off track needs 3:1 against the popover and the highlight
+              // (WCAG 1.4.11): `bg-input` was about 1.4:1 and a 50% muted fill
+              // about 2:1; the solid token is at least 5.3:1 in both themes.
+              dark ? 'bg-primary' : 'bg-muted-foreground',
             )}
           >
             <span

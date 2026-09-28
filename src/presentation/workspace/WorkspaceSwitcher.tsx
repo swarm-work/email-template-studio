@@ -38,7 +38,10 @@ export function WorkspaceSwitcher() {
           <Button
             variant="ghost"
             size="sm"
-            className="text-muted-foreground max-w-56 min-w-0 gap-1 px-2 font-mono text-xs"
+            // `shrink` overrides the Button's base `shrink-0`, and the cap is here
+            // rather than on a wrapper for the same reason: a long name has to
+            // truncate inside the header, not spill over the nav or the avatar.
+            className="text-muted-foreground max-w-40 min-w-0 shrink gap-1 px-2 font-mono text-xs xl:max-w-56"
             aria-label={`Workspace: ${workspace.name}`}
           >
             <span className="truncate">{workspace.name}</span>
