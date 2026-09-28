@@ -16,10 +16,28 @@
  *
  * Chained into `npm run build`.
  */
-import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
 const BUNDLE = new URL('../dist/email_template_studio/index.js', import.meta.url)
+const DEV_VARS = new URL('../dist/email_template_studio/.dev.vars', import.meta.url)
+
+/*
+ * `.dev.vars` (local secrets: AWS keys, send-toggle overrides) must never
+ * ride along in the build folder. `npm run build` already deletes it right
+ * after `vite build` (scripts/clean-dev-vars.mjs); this is the safety net
+ * that fails the build loudly if that step is ever skipped or reordered.
+ */
+if (existsSync(DEV_VARS)) {
+  console.error(
+    `\n${DEV_VARS.pathname} exists.\n` +
+      'A local secrets file must never sit inside a build folder that could be inspected, zipped up ' +
+      'or published. `npm run build` deletes it right after `vite build` - if this check still finds ' +
+      'it, that step did not run, or ran after this one (check the order in package.json\'s "build" script).\n',
+  )
+  process.exit(1)
+}
+console.log(`.dev.vars check: not present at ${DEV_VARS.pathname}.`)
 
 /** Each entry: the text that must not appear, and what its presence would mean. */
 const FORBIDDEN = [

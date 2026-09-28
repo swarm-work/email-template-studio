@@ -93,8 +93,11 @@
     "STUDIO_SEND_ENABLED": "true",
     "STUDIO_SEND_DRY_RUN": "false",
     // The rollback switch for the visual editor (docs/DEPLOYMENT.md). Set it to
-    // the literal "false" and redeploy - no rebuild - and every visual template
-    // opens read-only in Preview mode. Anything else, including absent, is "on".
+    // the literal "false" in the matching env block and run `npm run deploy:<env>`
+    // - a plain `wrangler deploy` now follows whichever environment's build
+    // config ran last, so it is not a safe substitute - and every visual
+    // template opens read-only in Preview mode. Anything else, including
+    // absent, is "on".
     "STUDIO_VISUAL_EDITOR": "true",
     "AWS_REGION": "ap-southeast-2",
     "SES_FROM_ADDRESS": "testing@swarm.camp",

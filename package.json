@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "dev:node": "STUDIO_RUNTIME=node vite",
-    "build": "npm run cf:types && tsc -b && vite build && node scripts/check-worker-bundle.mjs",
+    "build": "npm run cf:types && tsc -b && vite build && node scripts/clean-dev-vars.mjs && node scripts/check-worker-bundle.mjs",
     "preview": "vite preview",
     "preview:node": "STUDIO_RUNTIME=node vite preview",
     "test": "vitest run",
@@ -29,7 +29,7 @@
     "db:migrate:dev": "wrangler d1 migrations apply STUDIO_DB --remote --env dev --config wrangler.jsonc",
     "db:migrate:staging": "wrangler d1 migrations apply STUDIO_DB --remote --env staging --config wrangler.jsonc",
     "db:migrate:production": "wrangler d1 migrations apply STUDIO_DB --remote --env production --config wrangler.jsonc",
-    "db:console": "wrangler d1 execute STUDIO_DB --local --command",
+    "db:console": "wrangler d1 execute STUDIO_DB --local --config wrangler.jsonc --command",
     "seed:generate": "node scripts/generate-seed-migration.mjs"
   },
   "dependencies": {
