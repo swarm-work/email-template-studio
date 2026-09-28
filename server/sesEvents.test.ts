@@ -89,6 +89,11 @@ describe('parseSesEvent', () => {
     if (result.kind !== 'parsed') return
     expect(result.event.type).toBe('email.opened')
     expect(result.event.occurredAt).toBe('2026-09-20T12:05:19.652Z')
+    expect(result.event.detail).toEqual({
+      kind: 'open',
+      ipAddress: '203.0.113.2',
+      userAgent: 'Mozilla/5.0',
+    })
   })
 
   it('translates Click', () => {
@@ -133,6 +138,25 @@ describe('parseSesEvent', () => {
     expect(result).toEqual({ kind: 'ignored', eventType: 'Subscription' })
   })
 
+  it('rejects "RenderingFailure" (no space) - only the real AWS spelling, with the space, is accepted', () => {
+    const result = parseSesEvent({ ...renderingFailureFixture, eventType: 'RenderingFailure' })
+    expect(result.kind).toBe('invalid')
+  })
+
+  it('reports an unrecognised eventType with a reason that names it, not a generic parse failure', () => {
+    const result = parseSesEvent({ ...sendFixture, eventType: 'SomethingNew' })
+    expect(result.kind).toBe('invalid')
+    if (result.kind !== 'invalid') return
+    expect(result.reason).toMatch(/^Unrecognised SES eventType "SomethingNew"/)
+  })
+
+  it('accepts the raw JSON string an SNS Notification.Message actually is, not just a parsed object', () => {
+    const result = parseSesEvent(JSON.stringify(sendFixture))
+    expect(result.kind).toBe('parsed')
+    if (result.kind !== 'parsed') return
+    expect(result.event.type).toBe('email.sent')
+  })
+
   it('reports malformed input without throwing', () => {
     expect(() => parseSesEvent({ not: 'an SES event' })).not.toThrow()
     const result = parseSesEvent({ not: 'an SES event' })
@@ -144,8 +168,18 @@ describe('parseSesEvent', () => {
     expect(() => parseSesEvent('just a string')).not.toThrow()
     expect(parseSesEvent('just a string').kind).toBe('invalid')
 
+    expect(() => parseSesEvent('{not valid json')).not.toThrow()
+    expect(parseSesEvent('{not valid json').kind).toBe('invalid')
+
     // A known eventType with garbage detail still fails cleanly, not with a throw.
     const badBounce = parseSesEvent({ eventType: 'Bounce', mail: sendFixture.mail, bounce: { oops: true } })
     expect(badBounce.kind).toBe('invalid')
+
+    // A real ISO timestamp is required, not just any non-empty string.
+    const badTimestamp = parseSesEvent({
+      ...sendFixture,
+      mail: { ...sendFixture.mail, timestamp: 'not-a-date' },
+    })
+    expect(badTimestamp.kind).toBe('invalid')
   })
 })

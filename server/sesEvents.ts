@@ -47,7 +47,7 @@ export type SesEventType = z.infer<typeof sesEventTypeSchema>
  */
 const mailSchema = z.object({
   messageId: z.string().min(1),
-  timestamp: z.string().min(1),
+  timestamp: z.iso.datetime(),
   tags: z.record(z.string(), z.array(z.string())).optional(),
 })
 
@@ -61,17 +61,17 @@ const bounceDetailSchema = z.object({
   bounceType: z.enum(['Permanent', 'Transient', 'Undetermined']),
   bounceSubType: z.string(),
   bouncedRecipients: z.array(bouncedRecipientSchema),
-  timestamp: z.string(),
+  timestamp: z.iso.datetime(),
 })
 
 const complaintDetailSchema = z.object({
   complainedRecipients: z.array(z.object({ emailAddress: z.string() })),
-  timestamp: z.string(),
+  timestamp: z.iso.datetime(),
   complaintFeedbackType: z.string().optional(),
 })
 
 const deliveryDetailSchema = z.object({
-  timestamp: z.string(),
+  timestamp: z.iso.datetime(),
   recipients: z.array(z.string()),
   smtpResponse: z.string().optional(),
 })
@@ -84,13 +84,13 @@ const rejectDetailSchema = z.object({
 })
 
 const openDetailSchema = z.object({
-  timestamp: z.string(),
+  timestamp: z.iso.datetime(),
   ipAddress: z.string().optional(),
   userAgent: z.string().optional(),
 })
 
 const clickDetailSchema = z.object({
-  timestamp: z.string(),
+  timestamp: z.iso.datetime(),
   ipAddress: z.string().optional(),
   link: z.string(),
   userAgent: z.string().optional(),
@@ -109,7 +109,7 @@ const delayedRecipientSchema = z.object({
 
 /** DeliveryDelay's detail key is `deliveryDelay`, camelCase like the event name. */
 const deliveryDelayDetailSchema = z.object({
-  timestamp: z.string(),
+  timestamp: z.iso.datetime(),
   delayType: z.string(),
   delayedRecipients: z.array(delayedRecipientSchema),
 })
@@ -227,15 +227,28 @@ function tagsOf(mail: z.infer<typeof mailSchema>): Readonly<Record<string, reado
 }
 
 /**
- * Parses one SES event (the JSON already extracted from an SNS `Notification`'s
- * `Message` string). Never throws: a malformed payload comes back as
+ * Parses one SES event. `input` is either the already-parsed object, or the
+ * raw JSON string exactly as it sits in an SNS `Notification`'s `Message`
+ * field - SNS delivers that field as a JSON *string*, not a parsed object, so
+ * a caller reading straight off the wire can hand this function either shape
+ * without doing its own `JSON.parse` (a throw site) first. Never throws: a
+ * malformed payload, or a string that isn't even valid JSON, comes back as
  * `{ kind: 'invalid', reason }`.
  */
-export function parseSesEvent(json: unknown): ParseSesEventResult {
-  const envelope = z.object({ eventType: sesEventTypeSchema, mail: mailSchema }).safeParse(json)
+export function parseSesEvent(input: unknown): ParseSesEventResult {
+  let payload: unknown = input
+  if (typeof input === 'string') {
+    try {
+      payload = JSON.parse(input)
+    } catch (error) {
+      return { kind: 'invalid', reason: `Not valid JSON: ${String(error)}` }
+    }
+  }
+
+  const envelope = z.object({ eventType: sesEventTypeSchema, mail: mailSchema }).safeParse(payload)
   if (!envelope.success) {
-    // json might not even have a recognisable eventType at all (garbage input).
-    const eventType = z.object({ eventType: z.string() }).safeParse(json)
+    // payload might not even have a recognisable eventType at all (garbage input).
+    const eventType = z.object({ eventType: z.string() }).safeParse(payload)
     return {
       kind: 'invalid',
       reason: eventType.success
@@ -252,7 +265,7 @@ export function parseSesEvent(json: unknown): ParseSesEventResult {
       return { kind: 'ignored', eventType }
 
     case 'Bounce': {
-      const detail = bounceDetailSchema.safeParse((json as { bounce?: unknown }).bounce)
+      const detail = bounceDetailSchema.safeParse((payload as { bounce?: unknown }).bounce)
       if (!detail.success) return { kind: 'invalid', reason: `Bad bounce detail: ${detail.error.message}` }
       return {
         kind: 'parsed',
@@ -272,7 +285,7 @@ export function parseSesEvent(json: unknown): ParseSesEventResult {
     }
 
     case 'Complaint': {
-      const detail = complaintDetailSchema.safeParse((json as { complaint?: unknown }).complaint)
+      const detail = complaintDetailSchema.safeParse((payload as { complaint?: unknown }).complaint)
       if (!detail.success) return { kind: 'invalid', reason: `Bad complaint detail: ${detail.error.message}` }
       return {
         kind: 'parsed',
@@ -291,7 +304,7 @@ export function parseSesEvent(json: unknown): ParseSesEventResult {
     }
 
     case 'Delivery': {
-      const detail = deliveryDetailSchema.safeParse((json as { delivery?: unknown }).delivery)
+      const detail = deliveryDetailSchema.safeParse((payload as { delivery?: unknown }).delivery)
       if (!detail.success) return { kind: 'invalid', reason: `Bad delivery detail: ${detail.error.message}` }
       return {
         kind: 'parsed',
@@ -310,7 +323,7 @@ export function parseSesEvent(json: unknown): ParseSesEventResult {
     }
 
     case 'Send': {
-      const detail = sendDetailSchema.safeParse((json as { send?: unknown }).send)
+      const detail = sendDetailSchema.safeParse((payload as { send?: unknown }).send)
       if (!detail.success) return { kind: 'invalid', reason: `Bad send detail: ${detail.error.message}` }
       return {
         kind: 'parsed',
@@ -325,7 +338,7 @@ export function parseSesEvent(json: unknown): ParseSesEventResult {
     }
 
     case 'Reject': {
-      const detail = rejectDetailSchema.safeParse((json as { reject?: unknown }).reject)
+      const detail = rejectDetailSchema.safeParse((payload as { reject?: unknown }).reject)
       if (!detail.success) return { kind: 'invalid', reason: `Bad reject detail: ${detail.error.message}` }
       return {
         kind: 'parsed',
@@ -340,7 +353,7 @@ export function parseSesEvent(json: unknown): ParseSesEventResult {
     }
 
     case 'Open': {
-      const detail = openDetailSchema.safeParse((json as { open?: unknown }).open)
+      const detail = openDetailSchema.safeParse((payload as { open?: unknown }).open)
       if (!detail.success) return { kind: 'invalid', reason: `Bad open detail: ${detail.error.message}` }
       return {
         kind: 'parsed',
@@ -355,7 +368,7 @@ export function parseSesEvent(json: unknown): ParseSesEventResult {
     }
 
     case 'Click': {
-      const detail = clickDetailSchema.safeParse((json as { click?: unknown }).click)
+      const detail = clickDetailSchema.safeParse((payload as { click?: unknown }).click)
       if (!detail.success) return { kind: 'invalid', reason: `Bad click detail: ${detail.error.message}` }
       return {
         kind: 'parsed',
@@ -375,7 +388,7 @@ export function parseSesEvent(json: unknown): ParseSesEventResult {
     }
 
     case 'Rendering Failure': {
-      const detail = failureDetailSchema.safeParse((json as { failure?: unknown }).failure)
+      const detail = failureDetailSchema.safeParse((payload as { failure?: unknown }).failure)
       if (!detail.success) return { kind: 'invalid', reason: `Bad failure detail: ${detail.error.message}` }
       return {
         kind: 'parsed',
@@ -394,7 +407,9 @@ export function parseSesEvent(json: unknown): ParseSesEventResult {
     }
 
     case 'DeliveryDelay': {
-      const detail = deliveryDelayDetailSchema.safeParse((json as { deliveryDelay?: unknown }).deliveryDelay)
+      const detail = deliveryDelayDetailSchema.safeParse(
+        (payload as { deliveryDelay?: unknown }).deliveryDelay,
+      )
       if (!detail.success)
         return { kind: 'invalid', reason: `Bad deliveryDelay detail: ${detail.error.message}` }
       return {
