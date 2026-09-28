@@ -32,7 +32,13 @@ import { toTemplateRecord, toVersionBody } from './templateMapper'
 const DEFAULT_BASE_URL = '/api/templates'
 
 export interface HttpTemplateRepositoryOptions {
-  /** Overridable so tests can point at a stub; production never sets it. */
+  /**
+   * Overridable so tests can point at a stub. `createTemplateRepository.ts`
+   * always passes one explicitly in the running app - a workspace-scoped
+   * path, since templates belong to a workspace (ADR-32) - so
+   * `DEFAULT_BASE_URL` below is a fallback only a test that builds this
+   * adapter directly ever relies on.
+   */
   readonly baseUrl?: string
   /** Injectable `fetch`, which is how every test drives this adapter. */
   readonly fetchImpl?: typeof fetch
