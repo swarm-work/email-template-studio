@@ -331,7 +331,9 @@ test('drafts survive switching templates and reloading the page', async ({ page 
   await openTemplate(page, PASSWORD_RESET)
   await waitForRender(page)
 
-  await page.reload()
+  // A full document load, like a reload - but to `/`, because the editor is
+  // a URL now (ADR-32) and a plain reload would reopen Password reset.
+  await page.goto('/')
   await openTemplate(page, WELCOME)
   await openEditorTab(page, 'preview-props.json')
   await expect(page.getByLabel(PAYLOAD_LABEL)).toContainText('Draft Person')
@@ -398,7 +400,8 @@ test('no screen scrolls sideways at any supported width, a phone included', asyn
 
     // Every nav item is whole on screen: a scroll strip once left "Overview
     // & Logs" cut in half at a phone's left edge, with no visible way to it.
-    for (const item of await page.getByRole('navigation', { name: 'Product' }).getByRole('button').all()) {
+    // Two of the items are links (real screens) and one is a button (planned).
+    for (const item of await page.getByRole('navigation', { name: 'Product' }).locator('a, button').all()) {
       const box = await item.boundingBox()
       expect(box, `nav item at ${width}px`).not.toBeNull()
       expect(box!.x, `nav item left edge at ${width}px`).toBeGreaterThanOrEqual(0)
@@ -407,11 +410,12 @@ test('no screen scrolls sideways at any supported width, a phone included', asyn
 
     // The API keys page, reached the way a person would: through the nav,
     // which has to exist at this width for the click to work at all.
-    await page.getByRole('button', { name: 'API Keys & Webhooks' }).click()
+    await page.getByRole('link', { name: 'API Keys & Webhooks' }).click()
     await expect(page.getByRole('heading', { level: 1, name: 'API Keys & Integration' })).toBeVisible()
     const apiKeys = await overflow()
     expect(apiKeys.scrollWidth, `API keys at ${width}px`).toBeLessThanOrEqual(apiKeys.clientWidth)
-    await page.getByRole('button', { name: 'Template Studio' }).click()
+    // `exact`: the brand link's name, "Swarm Email Template Studio", contains this one.
+    await page.getByRole('link', { name: 'Template Studio', exact: true }).click()
   }
 })
 
@@ -735,7 +739,7 @@ test('the preview downloads the rendered HTML and the plain text', async ({ page
 })
 
 test('API keys page generates a mock key and adds a webhook endpoint', async ({ page }) => {
-  await page.getByRole('button', { name: 'API Keys & Webhooks' }).click()
+  await page.getByRole('link', { name: 'API Keys & Webhooks' }).click()
   await expect(page.getByRole('heading', { level: 1, name: 'API Keys & Integration' })).toBeVisible()
   await expect(page.getByText('Welcome emails sandbox')).toBeVisible()
 

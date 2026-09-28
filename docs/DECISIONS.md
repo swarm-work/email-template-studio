@@ -36,8 +36,10 @@ Each record: context, decision, alternatives, consequences. Versions are those i
 | 30  | Sample data         | Up to three presets DERIVED from the template's stored sample payload **and its props schema** (`Default`, `Long values`, `Missing optional fields`); a preset that would be invalid, or identical to another, is not offered; the choice is not persisted and picking one is an ordinary draft edit | The mock's `Randomize Values`; storing a `samplePayloads[]` per template (FEATURE_PLAN phase 1); ignoring the schema and offering presets that fail it |
 
 | 31 | Human sign-in | **Stytch B2B**, session JWT verified in the Worker against Stytch's public JWKS; the shared password stays as the rollback lever for a week | Cloudflare Access (recommended by two earlier reviews), Stytch Consumer, the `stytch` Node SDK in the Worker, a second sign-in allow-list |
+| 32 | Workspaces | **One flat `workspaces` table** is the unit of isolation: every template (and later every key, endpoint and message) carries a `workspace_id`, every store method takes the workspace first, and the API and the URL are addressed by its slug (`/api/workspaces/:slug/...`, `/w/:slug/...`) | The organisation / project / environment hierarchy of FEATURE_PLAN decisions 18 to 20; a `workspace` header instead of a URL segment; scoping in the routes instead of the store |
+| 33 | Workspace access | **Stytch is the directory, D1 is the mapping.** A named member row wins; a `server` identity (developer mode, the shared password) is an admin everywhere; a member of the workspace's Stytch organisation (matched by slug) is an admin; anyone else gets a 404, not a 403 | Stytch RBAC roles as the only source of truth; one Stytch organisation per workspace; a members table with no organisation rule (a bootstrap step for every workspace) |
 
-Decisions 32 onwards (Rate Limiting binding, Worker Loaders) are proposed in `docs/PLAN.md` section 1 and get a numbered record here when the phase that uses them lands. The JSON Schema props contract is part of ADR-19.
+Decisions 34 onwards (key storage, the SES event transport, the outbox dispatcher, the signature scheme) are proposed in `docs/PLATFORM_PLAN.md` section 3 and get a numbered record here when the slice that uses them lands. The JSON Schema props contract is part of ADR-19.
 
 ## ADR-1 Framework: Vite SPA
 
@@ -355,6 +357,83 @@ browser refresh — widening `CLOCK_SKEW_SECONDS` to hide that would be a mistak
 a fifth of this token's life. And the issuer literal is accepted in both its scheme-less and `https`
 spellings, both derived from the project id, because a wrong literal there is a total lockout whose
 error message reads like a broken signature.
+
+## ADR-32 Workspaces: one flat table, and the store scopes every read and write by it
+
+**Context.** Until 2026-09-25 the studio was single-tenant: one library, one `templates.slug`
+unique across everything, a header showing the literal `meridian-platform`. The next slices
+(`docs/PLATFORM_PLAN.md`) add API keys, webhook endpoints and a message log, and every one of them
+needs an owner, a sending domain and a place for reputation to live. swarm.camp (transactional) and
+swarm.work (marketing) must never share any of those (`docs/SENDING.md`). FEATURE_PLAN had sketched
+an organisation / project / environment hierarchy for this.
+
+**Decision.** A **workspace** is one row in `workspaces` (migration 0004) and the unit of isolation.
+It owns a slug (the URL: `/w/<slug>/...` in the browser, `/api/workspaces/<slug>/...` in the API),
+a name, a default sender, a sending domain, an optional SES configuration set and the rule for who
+may enter (ADR-33). `templates` gained `workspace_id`; the slug index became `(workspace_id, slug)`.
+
+- **The store enforces it, not the routes.** Every `TemplateStore` method takes the workspace
+  first, and every SQL statement that names a template also says `AND workspace_id = ?`. From
+  another workspace a template is not "forbidden", it does not exist: reads answer `null`, writes
+  answer `not-found`. The contract suite has cases for this, so both adapters prove it.
+- **One level.** No organisations, no projects, no environment rows. dev / staging / production stay
+  separate Workers with separate databases, as `wrangler.jsonc` already has them. "Test mode" for
+  integrators will be a property of an API key (slice 3), not a row.
+- **The URL is the state.** React Router (`react-router` 8, library mode) reads `:slug` and
+  `:templateId`; the header's links and the workspace switcher only build URLs. The one screen that
+  used to hold a `view` state (`TemplatesRoute`) now reads `useParams()`.
+- **Migration 0004 gives every existing row a home** through `DEFAULT 'ws_swarm-camp'`. The column
+  carries no `REFERENCES`, because SQLite only allows a foreign key on `ADD COLUMN` when the default
+  is NULL, and rebuilding `templates` would cascade-delete every version. The store is the guard.
+
+**Alternatives.** _The FEATURE_PLAN hierarchy_ — three tables and a switcher for a team that has one
+organisation; the "change this if" in `docs/PLATFORM_PLAN.md` names when to add a level above.
+_A `workspace` request header_ — invisible in links and logs, and easy to forget. _Scoping in the
+routes_ — one forgotten predicate is a cross-tenant read; a store method that cannot be called
+without a workspace cannot forget.
+
+**Consequences.** Every template URL and API path changed at once (one pull request, nothing else
+in it). The browser builds its template repository per workspace and rebuilds it on a switch; the
+screens under `/w/:slug` are keyed by the slug, so an editor never survives into another workspace.
+`templates.workspace_id` has no foreign key (TECH_DEBT #45) and workspaces carry no `revision`
+counter yet (#46).
+
+## ADR-33 Workspace access: Stytch is the directory, D1 is the mapping
+
+**Context.** Who may enter a workspace, and as what? Stytch B2B (ADR-31) already knows the team:
+sign-in lands in the organisation `swarm`, restricted to swarm.work addresses, and the session token
+names that organisation (`https://stytch.com/organization`, verified on a real token). Two more modes
+exist with no directory at all: the developer identity (`npm run dev`, Playwright) and the shared
+password. And a workspace made for one client may one day need a person from outside the team.
+
+**Decision.** `Identity` now carries `origin` (`directory` for Stytch and Access, `server` for the
+developer identity and the password), the Stytch `organization` when there is one, and the token's
+roles. `server/workspaceAccess.ts` decides, in this order, with no I/O:
+
+1. A **named member row** (`workspace_members`, roles `admin` and `editor`) wins. It is how someone
+   outside the organisation gets in, and how someone inside it is held to `editor`.
+2. A **`server` identity is an admin everywhere.** Those modes already mean "whoever reached this
+   server is trusted", so this is exactly the access they had before workspaces existed - and it is
+   why `npm run dev` and the e2e suite need no bootstrap step.
+3. A member of the workspace's **Stytch organisation**, matched by slug, is an admin. The slug, not
+   the id: the id differs between Stytch's Test and Live environments, the slug is what the team
+   chose. The default workspace ships with `swarm`, so nobody has to be added by hand.
+4. Otherwise **404, not 403**, byte for byte the same body as a slug that does not exist.
+
+Admins may change settings and members; editors may read and write templates. A members-only
+workspace (no organisation) refuses to remove or demote its last admin (`409 last-admin`). Creating a
+workspace inherits the creator's organisation and names the creator an explicit admin.
+
+**Alternatives.** _Stytch RBAC as the only source of truth_ — needs a dashboard change per workspace
+and cannot name someone outside the organisation. _One Stytch organisation per workspace_ — the
+discovery flow already built becomes the switcher, but every switch is a new session and every staff
+member must be a member of every client organisation; the "change this if" in the plan names this
+as the move if clients ever sign in themselves. _A members table only_ — a bootstrap step for every
+workspace, and a lockout the moment a table is empty.
+
+**Consequences.** The Stytch roles are read and kept but not yet acted on; mapping `stytch_admin`
+onto `admin` is a one-line change in `roleFor` when the team wants editors by default. The password
+mode's "everyone is an admin" is the same fact it has always been, now written down.
 
 ## ADR-4 Motion: beUI selectively
 

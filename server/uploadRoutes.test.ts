@@ -2,8 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, UPLOADS_PER_MINUTE } from './app.ts'
 import { createDeveloperAuthenticator, createDisabledAuthenticator } from './auth.ts'
 import type { SendServerConfig } from './config.ts'
+import { InMemoryWorkspaceStore } from './inMemoryWorkspaceStore.ts'
 import { InMemoryObjectStore } from './objectStore.ts'
 import { sniffContentType } from './uploadRoutes.ts'
+import { DEFAULT_WORKSPACE, DEFAULT_WORKSPACE_CTX } from './workspaceStore.ts'
 import {
   apiErrorSchema,
   MAX_UPLOAD_BYTES,
@@ -38,6 +40,7 @@ function makeApp(objectStore: InMemoryObjectStore | null = new InMemoryObjectSto
     sender: null,
     authenticator: createDeveloperAuthenticator('tester@example.test'),
     objectStore,
+    workspaceStore: new InMemoryWorkspaceStore([{ input: DEFAULT_WORKSPACE, ctx: DEFAULT_WORKSPACE_CTX }]),
     // Fixed clock: nothing here depends on the time, but a wandering one has no
     // place in a test either.
     now: () => Date.UTC(2026, 8, 18),
@@ -58,9 +61,12 @@ async function upload(
 ) {
   const form = new FormData()
   form.set(fieldName, file)
-  const encoded = new Request('http://localhost/api/uploads', { method: 'POST', body: form })
+  const encoded = new Request('http://localhost/api/workspaces/swarm-camp/uploads', {
+    method: 'POST',
+    body: form,
+  })
   const body = await encoded.arrayBuffer()
-  return app.request('/api/uploads', {
+  return app.request('/api/workspaces/swarm-camp/uploads', {
     method: 'POST',
     // The caller's own headers win, so the guard tests can still leave one out.
     headers: {
@@ -183,7 +189,11 @@ describe('POST /api/uploads', () => {
     const form = new FormData()
     form.set(UPLOAD_FIELD_NAME, new File([imageBytes('image/png')], 'logo.png', { type: 'image/png' }))
 
-    const response = await app.request('/api/uploads', { method: 'POST', headers: FORM_HEADERS, body: form })
+    const response = await app.request('/api/workspaces/swarm-camp/uploads', {
+      method: 'POST',
+      headers: FORM_HEADERS,
+      body: form,
+    })
 
     expect(response.status).toBe(413)
   })
@@ -225,7 +235,7 @@ describe('POST /api/uploads', () => {
 
   it('refuses a JSON body with 415', async () => {
     const { app } = makeApp()
-    const response = await app.request('/api/uploads', {
+    const response = await app.request('/api/workspaces/swarm-camp/uploads', {
       method: 'POST',
       headers: { host: HOST, 'content-type': 'application/json', [STUDIO_API_HEADER]: '1' },
       body: '{}',

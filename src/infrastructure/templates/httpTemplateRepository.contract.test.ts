@@ -16,7 +16,10 @@
 import { createApp } from '../../../server/app.ts'
 import { createDeveloperAuthenticator } from '../../../server/auth.ts'
 import { InMemoryTemplateStore } from '../../../server/inMemoryTemplateStore.ts'
+import { InMemoryWorkspaceStore } from '../../../server/inMemoryWorkspaceStore.ts'
 import type { SendServerConfig } from '../../../server/config.ts'
+import { DEFAULT_WORKSPACE, DEFAULT_WORKSPACE_CTX } from '../../../server/workspaceStore.ts'
+import { workspaceApiPath } from '@shared/workspaceContracts'
 import { createHttpTemplateRepository } from './httpTemplateRepository'
 import { describeTemplateRepository } from './templateRepositoryContract'
 
@@ -32,6 +35,9 @@ describeTemplateRepository('HttpTemplateRepository', () => {
     sender: null,
     authenticator: createDeveloperAuthenticator('tester@example.test'),
     templateStore: new InMemoryTemplateStore(),
+    // Templates live under a workspace (ADR-32); the developer identity is an
+    // admin of the default one, so the middleware lets every request through.
+    workspaceStore: new InMemoryWorkspaceStore([{ input: DEFAULT_WORKSPACE, ctx: DEFAULT_WORKSPACE_CTX }]),
   })
 
   const fetchImpl: typeof fetch = async (input, init) =>
@@ -40,5 +46,8 @@ describeTemplateRepository('HttpTemplateRepository', () => {
       headers: { ...(init?.headers as Record<string, string> | undefined), host: HOST },
     })
 
-  return createHttpTemplateRepository({ fetchImpl })
+  return createHttpTemplateRepository({
+    fetchImpl,
+    baseUrl: workspaceApiPath(DEFAULT_WORKSPACE.slug, '/templates'),
+  })
 })

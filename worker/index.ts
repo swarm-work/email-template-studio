@@ -24,6 +24,7 @@ import { ConfigError, loadConfig, loadFeatures } from '../server/config.ts'
 import { createSender } from '../server/createSender.ts'
 import type { EmailSender } from '../server/emailSender.ts'
 import { D1TemplateStore } from '../server/d1TemplateStore.ts'
+import { D1WorkspaceStore } from '../server/d1WorkspaceStore.ts'
 
 type App = ReturnType<typeof createApp>
 
@@ -67,6 +68,7 @@ function buildApp(env: Env): App {
     // template routes answer 503 and uploads answer 503, rather than the
     // Worker refusing to boot: sending must keep working either way.
     templateStore: env.STUDIO_DB ? new D1TemplateStore(env.STUDIO_DB) : null,
+    workspaceStore: env.STUDIO_DB ? new D1WorkspaceStore(env.STUDIO_DB) : null,
     objectStore: env.STUDIO_ASSETS ?? null,
     // The rollback switch: STUDIO_VISUAL_EDITOR="false" in wrangler.jsonc turns
     // the visual canvas off for everyone without rebuilding the app.

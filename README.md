@@ -113,20 +113,22 @@ uploads cannot work until it is. See `docs/DEPLOYMENT.md`.
 ```
 src/
   domain/          Plain types: TemplateRecord (code | visual), EmailDocument, TemplateEnvelope,
-                   PreviewPayload, ValidationResult, RenderResult, StudioMode, DiagnosticItem
+                   Workspace, PreviewPayload, ValidationResult, RenderResult, StudioMode, DiagnosticItem
   application/     Use cases, all pure: studio state reducer, payload parsing, merge fields, props
                    presets, diagnostics, template filtering, visual -> TSX conversion, the
-                   TemplateRepository port
-  infrastructure/  The outside world: HTTP and in-memory template repositories, the render worker
-                   pipeline, the visual editor's renderer and merge-field node, the starters and the
-                   seed input for migration 0002, browser session storage, the email provider
-  presentation/    React: the shell, the library screen, the studio (chrome, envelope, visual, code,
-                   preview, dialogs), hooks and shared components
+                   TemplateRepository and WorkspaceRepository ports
+  infrastructure/  The outside world: HTTP and in-memory template and workspace repositories, the
+                   render worker pipeline, the visual editor's renderer and merge-field node, the
+                   starters and the seed input for migration 0002, browser session storage, the
+                   email provider
+  presentation/    React: the route table (App.tsx, URLs under /w/<workspace>/), the shell, the
+                   workspace switcher and settings, the library screen, the studio (chrome, envelope,
+                   visual, code, preview, dialogs), hooks and shared components
   components/ui    shadcn/ui components (generated, editable)
   components/motion beUI animated badge (vendored, editable; on CSS keyframes since ADR-4's update)
-shared/            Zod contracts for the template API, shared by the browser and the server
-server/            Runtime-neutral Hono API (config, auth, sender contract, template and upload
-                   routes, the D1 and in-memory stores), Node adapter, SES sender
+shared/            Zod contracts for the template and workspace APIs, shared by the browser and the server
+server/            Runtime-neutral Hono API (config, auth, sender contract, workspace, template and
+                   upload routes, the D1 and in-memory stores), Node adapter, SES sender
 worker/            Cloudflare Worker entry: hosts the same API and binds D1 and R2; wrangler.jsonc
                    describes the deployment
 migrations/        Numbered SQL applied with `wrangler d1 migrations apply` (schema + starter seeds)

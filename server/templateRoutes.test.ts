@@ -9,7 +9,9 @@ import {
 } from './auth.ts'
 import type { SendServerConfig } from './config.ts'
 import { InMemoryTemplateStore } from './inMemoryTemplateStore.ts'
+import { InMemoryWorkspaceStore } from './inMemoryWorkspaceStore.ts'
 import type { TemplateStore } from './templateStore.ts'
+import { DEFAULT_WORKSPACE, DEFAULT_WORKSPACE_CTX } from './workspaceStore.ts'
 import {
   apiErrorSchema,
   MAX_HTML_BYTES,
@@ -50,6 +52,9 @@ function makeApp(
     sender: null,
     authenticator: options.authenticator ?? createDeveloperAuthenticator(options.identity ?? IDENTITY),
     templateStore: store,
+    // Every route here lives under /api/workspaces/swarm-camp; the developer
+    // identity is an admin of it, so the tests only see the template rules.
+    workspaceStore: new InMemoryWorkspaceStore([{ input: DEFAULT_WORKSPACE, ctx: DEFAULT_WORKSPACE_CTX }]),
     now: () => NOW,
   })
   return { app, store }
@@ -115,7 +120,7 @@ async function detailOf(response: Response) {
 
 /** Creates one template and returns the detail body the API answered with. */
 async function createTemplate(app: App, overrides: Record<string, unknown> = {}) {
-  const response = await send(app, 'POST', '/api/templates', createBody(overrides))
+  const response = await send(app, 'POST', '/api/workspaces/swarm-camp/templates', createBody(overrides))
   expect(response.status).toBe(201)
   const body = (await response.json()) as { template: { id: string; revision: number } }
   return body.template
@@ -130,7 +135,7 @@ describe('template routes', () => {
   describe('GET /api/templates', () => {
     it('lists nothing when the database is empty', async () => {
       const { app } = makeApp()
-      const response = await app.request('/api/templates', { headers: PLAIN_HEADERS })
+      const response = await app.request('/api/workspaces/swarm-camp/templates', { headers: PLAIN_HEADERS })
 
       expect(response.status).toBe(200)
       expect(templateListResponse.parse(await response.json()).templates).toEqual([])
@@ -141,6 +146,7 @@ describe('template routes', () => {
       await store!.create(
         {
           id: 'tpl_old',
+          workspaceId: DEFAULT_WORKSPACE.id,
           slug: 'old',
           name: 'Old',
           description: '',
@@ -165,7 +171,7 @@ describe('template routes', () => {
       )
       await createTemplate(app)
 
-      const response = await app.request('/api/templates', { headers: PLAIN_HEADERS })
+      const response = await app.request('/api/workspaces/swarm-camp/templates', { headers: PLAIN_HEADERS })
       const { templates } = templateListResponse.parse(await response.json())
       expect(templates.map((template) => template.slug)).toEqual(['welcome-verification', 'old'])
       expect(templates[0]).not.toHaveProperty('version')
@@ -177,7 +183,9 @@ describe('template routes', () => {
       const { app } = makeApp()
       const created = await createTemplate(app)
 
-      const response = await app.request(`/api/templates/${created.id}`, { headers: PLAIN_HEADERS })
+      const response = await app.request(`/api/workspaces/swarm-camp/templates/${created.id}`, {
+        headers: PLAIN_HEADERS,
+      })
       expect(response.status).toBe(200)
       expect(response.headers.get('etag')).toBe('W/"1"')
 
@@ -189,7 +197,9 @@ describe('template routes', () => {
 
     it('answers 404 for an unknown id', async () => {
       const { app } = makeApp()
-      const response = await app.request('/api/templates/tpl_missing', { headers: PLAIN_HEADERS })
+      const response = await app.request('/api/workspaces/swarm-camp/templates/tpl_missing', {
+        headers: PLAIN_HEADERS,
+      })
 
       expect(response.status).toBe(404)
       expect(apiErrorSchema.parse(await response.json()).code).toBe('not-found')
@@ -202,7 +212,9 @@ describe('template routes', () => {
         initialVersion: visualVersionBody(),
       })
 
-      const response = await app.request(`/api/templates/${created.id}`, { headers: PLAIN_HEADERS })
+      const response = await app.request(`/api/workspaces/swarm-camp/templates/${created.id}`, {
+        headers: PLAIN_HEADERS,
+      })
       const parsed = await detailOf(response)
       expect(parsed.version.kind).toBe('visual')
       if (parsed.version.kind !== 'visual') throw new Error('unreachable')
@@ -214,7 +226,7 @@ describe('template routes', () => {
   describe('POST /api/templates', () => {
     it('creates version 1 and stamps the caller on it', async () => {
       const { app } = makeApp()
-      const response = await send(app, 'POST', '/api/templates', createBody())
+      const response = await send(app, 'POST', '/api/workspaces/swarm-camp/templates', createBody())
 
       expect(response.status).toBe(201)
       const parsed = await detailOf(response)
@@ -240,14 +252,19 @@ describe('template routes', () => {
       const { app } = makeApp()
       await createTemplate(app)
 
-      const response = await send(app, 'POST', '/api/templates', createBody())
+      const response = await send(app, 'POST', '/api/workspaces/swarm-camp/templates', createBody())
       expect(response.status).toBe(409)
       expect(apiErrorSchema.parse(await response.json()).code).toBe('slug-taken')
     })
 
     it('refuses a name that produces no usable slug', async () => {
       const { app } = makeApp()
-      const response = await send(app, 'POST', '/api/templates', createBody({ name: '///' }))
+      const response = await send(
+        app,
+        'POST',
+        '/api/workspaces/swarm-camp/templates',
+        createBody({ name: '///' }),
+      )
 
       expect(response.status).toBe(400)
       expect(apiErrorSchema.parse(await response.json()).code).toBe('bad-request')
@@ -255,7 +272,12 @@ describe('template routes', () => {
 
     it('reports which field failed validation', async () => {
       const { app } = makeApp()
-      const response = await send(app, 'POST', '/api/templates', createBody({ category: 'nonsense' }))
+      const response = await send(
+        app,
+        'POST',
+        '/api/workspaces/swarm-camp/templates',
+        createBody({ category: 'nonsense' }),
+      )
 
       expect(response.status).toBe(400)
       const error = apiErrorSchema.parse(await response.json())
@@ -268,10 +290,15 @@ describe('template routes', () => {
       const { app } = makeApp()
       const created = await createTemplate(app)
 
-      const response = await send(app, 'POST', `/api/templates/${created.id}/versions`, {
-        expectedRevision: created.revision,
-        version: versionBody({ note: 'tweaked the copy' }),
-      })
+      const response = await send(
+        app,
+        'POST',
+        `/api/workspaces/swarm-camp/templates/${created.id}/versions`,
+        {
+          expectedRevision: created.revision,
+          version: versionBody({ note: 'tweaked the copy' }),
+        },
+      )
 
       expect(response.status).toBe(201)
       const parsed = await detailOf(response)
@@ -283,15 +310,20 @@ describe('template routes', () => {
     it('answers 409 with the server copy when the revision is stale', async () => {
       const { app } = makeApp()
       const created = await createTemplate(app)
-      await send(app, 'POST', `/api/templates/${created.id}/versions`, {
+      await send(app, 'POST', `/api/workspaces/swarm-camp/templates/${created.id}/versions`, {
         expectedRevision: 1,
         version: versionBody({ note: 'first save' }),
       })
 
-      const response = await send(app, 'POST', `/api/templates/${created.id}/versions`, {
-        expectedRevision: 1,
-        version: versionBody({ note: 'stale save' }),
-      })
+      const response = await send(
+        app,
+        'POST',
+        `/api/workspaces/swarm-camp/templates/${created.id}/versions`,
+        {
+          expectedRevision: 1,
+          version: versionBody({ note: 'stale save' }),
+        },
+      )
 
       expect(response.status).toBe(409)
       const error = apiErrorSchema.parse(await response.json())
@@ -304,7 +336,7 @@ describe('template routes', () => {
 
     it('answers 404 for an unknown template', async () => {
       const { app } = makeApp()
-      const response = await send(app, 'POST', '/api/templates/tpl_missing/versions', {
+      const response = await send(app, 'POST', '/api/workspaces/swarm-camp/templates/tpl_missing/versions', {
         expectedRevision: 1,
         version: versionBody(),
       })
@@ -316,15 +348,22 @@ describe('template routes', () => {
       const { app } = makeApp()
       const created = await createTemplate(app)
 
-      const response = await send(app, 'POST', `/api/templates/${created.id}/versions`, {
-        expectedRevision: created.revision,
-        version: visualVersionBody(),
-      })
+      const response = await send(
+        app,
+        'POST',
+        `/api/workspaces/swarm-camp/templates/${created.id}/versions`,
+        {
+          expectedRevision: created.revision,
+          version: visualVersionBody(),
+        },
+      )
 
       expect(response.status).toBe(422)
       expect(apiErrorSchema.parse(await response.json()).code).toBe('not-visual')
       // Nothing was written: the template is still the code template it was.
-      const after = await app.request(`/api/templates/${created.id}`, { headers: PLAIN_HEADERS })
+      const after = await app.request(`/api/workspaces/swarm-camp/templates/${created.id}`, {
+        headers: PLAIN_HEADERS,
+      })
       expect((await detailOf(after)).versionNumber).toBe(1)
     })
 
@@ -332,10 +371,15 @@ describe('template routes', () => {
       const { app } = makeApp()
       const created = await createTemplate(app, { initialVersion: visualVersionBody() })
 
-      const response = await send(app, 'POST', `/api/templates/${created.id}/versions`, {
-        expectedRevision: created.revision,
-        version: visualVersionBody({ note: 'second draft' }),
-      })
+      const response = await send(
+        app,
+        'POST',
+        `/api/workspaces/swarm-camp/templates/${created.id}/versions`,
+        {
+          expectedRevision: created.revision,
+          version: visualVersionBody({ note: 'second draft' }),
+        },
+      )
 
       expect(response.status).toBe(201)
       expect((await detailOf(response)).version.kind).toBe('visual')
@@ -347,7 +391,7 @@ describe('template routes', () => {
       const { app } = makeApp()
       const created = await createTemplate(app)
 
-      const response = await send(app, 'PATCH', `/api/templates/${created.id}`, {
+      const response = await send(app, 'PATCH', `/api/workspaces/swarm-camp/templates/${created.id}`, {
         expectedRevision: created.revision,
         status: 'ready',
         tags: ['sign-up', 'verification'],
@@ -364,9 +408,12 @@ describe('template routes', () => {
     it('answers 409 conflict for a stale revision', async () => {
       const { app } = makeApp()
       const created = await createTemplate(app)
-      await send(app, 'PATCH', `/api/templates/${created.id}`, { expectedRevision: 1, status: 'ready' })
+      await send(app, 'PATCH', `/api/workspaces/swarm-camp/templates/${created.id}`, {
+        expectedRevision: 1,
+        status: 'ready',
+      })
 
-      const response = await send(app, 'PATCH', `/api/templates/${created.id}`, {
+      const response = await send(app, 'PATCH', `/api/workspaces/swarm-camp/templates/${created.id}`, {
         expectedRevision: 1,
         status: 'deprecated',
       })
@@ -379,7 +426,7 @@ describe('template routes', () => {
       await createTemplate(app)
       const second = await createTemplate(app, { name: 'Password reset' })
 
-      const response = await send(app, 'PATCH', `/api/templates/${second.id}`, {
+      const response = await send(app, 'PATCH', `/api/workspaces/swarm-camp/templates/${second.id}`, {
         expectedRevision: second.revision,
         slug: 'welcome-verification',
       })
@@ -389,7 +436,7 @@ describe('template routes', () => {
 
     it('answers 404 for an unknown template', async () => {
       const { app } = makeApp()
-      const response = await send(app, 'PATCH', '/api/templates/tpl_missing', {
+      const response = await send(app, 'PATCH', '/api/workspaces/swarm-camp/templates/tpl_missing', {
         expectedRevision: 1,
         status: 'ready',
       })
@@ -402,17 +449,31 @@ describe('template routes', () => {
       const { app } = makeApp()
       const created = await createTemplate(app)
 
-      const response = await send(app, 'DELETE', `/api/templates/${created.id}`, undefined, PLAIN_HEADERS)
+      const response = await send(
+        app,
+        'DELETE',
+        `/api/workspaces/swarm-camp/templates/${created.id}`,
+        undefined,
+        PLAIN_HEADERS,
+      )
       expect(response.status).toBe(200)
       expect(await response.json()).toEqual({ status: 'deleted', id: created.id })
 
-      const after = await app.request(`/api/templates/${created.id}`, { headers: PLAIN_HEADERS })
+      const after = await app.request(`/api/workspaces/swarm-camp/templates/${created.id}`, {
+        headers: PLAIN_HEADERS,
+      })
       expect(after.status).toBe(404)
     })
 
     it('answers 404 for an unknown template', async () => {
       const { app } = makeApp()
-      const response = await send(app, 'DELETE', '/api/templates/tpl_missing', undefined, PLAIN_HEADERS)
+      const response = await send(
+        app,
+        'DELETE',
+        '/api/workspaces/swarm-camp/templates/tpl_missing',
+        undefined,
+        PLAIN_HEADERS,
+      )
       expect(response.status).toBe(404)
     })
   })
@@ -421,12 +482,14 @@ describe('template routes', () => {
     it('lists the history newest first', async () => {
       const { app } = makeApp()
       const created = await createTemplate(app)
-      await send(app, 'POST', `/api/templates/${created.id}/versions`, {
+      await send(app, 'POST', `/api/workspaces/swarm-camp/templates/${created.id}/versions`, {
         expectedRevision: 1,
         version: versionBody({ note: 'second' }),
       })
 
-      const response = await app.request(`/api/templates/${created.id}/versions`, { headers: PLAIN_HEADERS })
+      const response = await app.request(`/api/workspaces/swarm-camp/templates/${created.id}/versions`, {
+        headers: PLAIN_HEADERS,
+      })
       expect(response.status).toBe(200)
       const { versions } = versionListResponse.parse(await response.json())
       expect(versions.map((version) => version.versionNumber)).toEqual([2, 1])
@@ -435,7 +498,9 @@ describe('template routes', () => {
 
     it('answers 404 for an unknown template', async () => {
       const { app } = makeApp()
-      const response = await app.request('/api/templates/tpl_missing/versions', { headers: PLAIN_HEADERS })
+      const response = await app.request('/api/workspaces/swarm-camp/templates/tpl_missing/versions', {
+        headers: PLAIN_HEADERS,
+      })
       expect(response.status).toBe(404)
     })
   })
@@ -463,7 +528,7 @@ describe('template routes', () => {
       const response = await send(
         app,
         'POST',
-        `/api/templates/${created.id}/convert`,
+        `/api/workspaces/swarm-camp/templates/${created.id}/convert`,
         convertBody(created.revision),
       )
 
@@ -481,7 +546,7 @@ describe('template routes', () => {
       const response = await send(
         app,
         'POST',
-        `/api/templates/${created.id}/convert`,
+        `/api/workspaces/swarm-camp/templates/${created.id}/convert`,
         convertBody(created.revision),
       )
       expect(response.status).toBe(422)
@@ -490,7 +555,12 @@ describe('template routes', () => {
 
     it('answers 404 for an unknown template', async () => {
       const { app } = makeApp()
-      const response = await send(app, 'POST', '/api/templates/tpl_missing/convert', convertBody(1))
+      const response = await send(
+        app,
+        'POST',
+        '/api/workspaces/swarm-camp/templates/tpl_missing/convert',
+        convertBody(1),
+      )
       expect(response.status).toBe(404)
     })
 
@@ -500,12 +570,17 @@ describe('template routes', () => {
         name: 'Newsletter',
         initialVersion: visualVersionBody(),
       })
-      await send(app, 'POST', `/api/templates/${created.id}/versions`, {
+      await send(app, 'POST', `/api/workspaces/swarm-camp/templates/${created.id}/versions`, {
         expectedRevision: 1,
         version: visualVersionBody(),
       })
 
-      const response = await send(app, 'POST', `/api/templates/${created.id}/convert`, convertBody(1))
+      const response = await send(
+        app,
+        'POST',
+        `/api/workspaces/swarm-camp/templates/${created.id}/convert`,
+        convertBody(1),
+      )
       expect(response.status).toBe(409)
     })
   })
@@ -516,15 +591,15 @@ describe('template routes', () => {
         authenticator: createDisabledAuthenticator('No authenticator is configured.'),
       })
 
-      const list = await app.request('/api/templates', { headers: PLAIN_HEADERS })
+      const list = await app.request('/api/workspaces/swarm-camp/templates', { headers: PLAIN_HEADERS })
       expect(list.status).toBe(401)
-      const create = await send(app, 'POST', '/api/templates', createBody())
+      const create = await send(app, 'POST', '/api/workspaces/swarm-camp/templates', createBody())
       expect(create.status).toBe(401)
     })
 
     it('refuses a cross-site Origin with 403 before anything else', async () => {
       const { app } = makeApp()
-      const response = await send(app, 'POST', '/api/templates', createBody(), {
+      const response = await send(app, 'POST', '/api/workspaces/swarm-camp/templates', createBody(), {
         ...JSON_HEADERS,
         origin: 'https://evil.example',
       })
@@ -536,7 +611,7 @@ describe('template routes', () => {
 
     it('refuses a mutation without the JSON content type (415)', async () => {
       const { app } = makeApp()
-      const response = await send(app, 'POST', '/api/templates', createBody(), {
+      const response = await send(app, 'POST', '/api/workspaces/swarm-camp/templates', createBody(), {
         host: '127.0.0.1:8787',
         'content-type': 'text/plain',
         [STUDIO_API_HEADER]: '1',
@@ -548,7 +623,7 @@ describe('template routes', () => {
 
     it(`refuses a mutation without the ${STUDIO_API_HEADER} header (400)`, async () => {
       const { app } = makeApp()
-      const response = await send(app, 'POST', '/api/templates', createBody(), {
+      const response = await send(app, 'POST', '/api/workspaces/swarm-camp/templates', createBody(), {
         host: '127.0.0.1:8787',
         'content-type': 'application/json',
       })
@@ -559,7 +634,7 @@ describe('template routes', () => {
 
     it('refuses a body that is not JSON at all (400)', async () => {
       const { app } = makeApp()
-      const response = await send(app, 'POST', '/api/templates', 'not json')
+      const response = await send(app, 'POST', '/api/workspaces/swarm-camp/templates', 'not json')
 
       expect(response.status).toBe(400)
     })
@@ -569,7 +644,7 @@ describe('template routes', () => {
       const created = await createTemplate(app)
 
       // A typo must not "succeed", change nothing and still bump the revision.
-      const response = await send(app, 'PATCH', `/api/templates/${created.id}`, {
+      const response = await send(app, 'PATCH', `/api/workspaces/swarm-camp/templates/${created.id}`, {
         expectedRevision: created.revision,
         tittle: 'Renamed',
       })
@@ -579,7 +654,9 @@ describe('template routes', () => {
       // Zod reports an unrecognised key on the object itself, so the key is in
       // the message rather than in the path.
       expect(error.issues?.some((issue) => issue.message.includes('tittle'))).toBe(true)
-      const after = await app.request(`/api/templates/${created.id}`, { headers: PLAIN_HEADERS })
+      const after = await app.request(`/api/workspaces/swarm-camp/templates/${created.id}`, {
+        headers: PLAIN_HEADERS,
+      })
       expect((await detailOf(after)).revision).toBe(1)
     })
 
@@ -588,7 +665,7 @@ describe('template routes', () => {
       const response = await send(
         app,
         'POST',
-        '/api/templates',
+        '/api/workspaces/swarm-camp/templates',
         createBody({ initialVersion: versionBody({ [field]: 'not json' }) }),
       )
 
@@ -606,7 +683,7 @@ describe('template routes', () => {
       } as unknown as TemplateStore
       const { app } = makeApp({ store: failing })
 
-      const response = await app.request('/api/templates', { headers: PLAIN_HEADERS })
+      const response = await app.request('/api/workspaces/swarm-camp/templates', { headers: PLAIN_HEADERS })
 
       expect(response.status).toBe(500)
       const error = apiErrorSchema.parse(await response.json())
@@ -618,23 +695,42 @@ describe('template routes', () => {
     it('answers 503 on every template route when no store is bound', async () => {
       const { app } = makeApp({ store: null })
 
-      expect((await app.request('/api/templates', { headers: PLAIN_HEADERS })).status).toBe(503)
-      expect((await app.request('/api/templates/tpl_x', { headers: PLAIN_HEADERS })).status).toBe(503)
-      expect((await app.request('/api/templates/tpl_x/versions', { headers: PLAIN_HEADERS })).status).toBe(
-        503,
-      )
-      expect((await send(app, 'POST', '/api/templates', createBody())).status).toBe(503)
-      expect((await send(app, 'POST', '/api/templates/tpl_x/versions', { expectedRevision: 1 })).status).toBe(
-        503,
-      )
-      expect((await send(app, 'PATCH', '/api/templates/tpl_x', { expectedRevision: 1 })).status).toBe(503)
-      expect((await send(app, 'DELETE', '/api/templates/tpl_x', undefined, PLAIN_HEADERS)).status).toBe(503)
-      expect((await send(app, 'POST', '/api/templates/tpl_x/convert', { expectedRevision: 1 })).status).toBe(
-        503,
-      )
+      expect(
+        (await app.request('/api/workspaces/swarm-camp/templates', { headers: PLAIN_HEADERS })).status,
+      ).toBe(503)
+      expect(
+        (await app.request('/api/workspaces/swarm-camp/templates/tpl_x', { headers: PLAIN_HEADERS })).status,
+      ).toBe(503)
+      expect(
+        (await app.request('/api/workspaces/swarm-camp/templates/tpl_x/versions', { headers: PLAIN_HEADERS }))
+          .status,
+      ).toBe(503)
+      expect((await send(app, 'POST', '/api/workspaces/swarm-camp/templates', createBody())).status).toBe(503)
+      expect(
+        (
+          await send(app, 'POST', '/api/workspaces/swarm-camp/templates/tpl_x/versions', {
+            expectedRevision: 1,
+          })
+        ).status,
+      ).toBe(503)
+      expect(
+        (await send(app, 'PATCH', '/api/workspaces/swarm-camp/templates/tpl_x', { expectedRevision: 1 }))
+          .status,
+      ).toBe(503)
+      expect(
+        (await send(app, 'DELETE', '/api/workspaces/swarm-camp/templates/tpl_x', undefined, PLAIN_HEADERS))
+          .status,
+      ).toBe(503)
+      expect(
+        (
+          await send(app, 'POST', '/api/workspaces/swarm-camp/templates/tpl_x/convert', {
+            expectedRevision: 1,
+          })
+        ).status,
+      ).toBe(503)
 
       const body = apiErrorSchema.parse(
-        await (await app.request('/api/templates', { headers: PLAIN_HEADERS })).json(),
+        await (await app.request('/api/workspaces/swarm-camp/templates', { headers: PLAIN_HEADERS })).json(),
       )
       expect(body.code).toBe('storage-unavailable')
     })
@@ -649,11 +745,15 @@ describe('template routes', () => {
         authenticator: createPasswordAuthenticator(password, { now }),
         passwordGate: { password },
         templateStore: store,
+        // The shared-password identity is a 'server' one: an admin everywhere.
+        workspaceStore: new InMemoryWorkspaceStore([
+          { input: DEFAULT_WORKSPACE, ctx: DEFAULT_WORKSPACE_CTX },
+        ]),
         now,
       })
       const token = await createSessionToken(password, Math.floor(NOW / 1000))
 
-      const response = await app.request('/api/templates', {
+      const response = await app.request('/api/workspaces/swarm-camp/templates', {
         method: 'POST',
         headers: { ...JSON_HEADERS, cookie: `${SESSION_COOKIE}=${token}` },
         body: JSON.stringify(createBody()),
@@ -681,7 +781,7 @@ describe('template routes', () => {
       const response = await send(
         app,
         'POST',
-        '/api/templates',
+        '/api/workspaces/swarm-camp/templates',
         createBody({ initialVersion: versionBody({ [field]: filler(limit + 1) }) }),
       )
 
@@ -696,7 +796,7 @@ describe('template routes', () => {
       const response = await send(
         app,
         'POST',
-        '/api/templates',
+        '/api/workspaces/swarm-camp/templates',
         createBody({
           initialVersion: visualVersionBody({
             document: { type: 'doc', padding: filler(300_000) },
@@ -712,10 +812,15 @@ describe('template routes', () => {
       const { app } = makeApp()
       const created = await createTemplate(app)
 
-      const response = await send(app, 'POST', `/api/templates/${created.id}/versions`, {
-        expectedRevision: created.revision,
-        version: versionBody({ html: filler(MAX_HTML_BYTES + 1) }),
-      })
+      const response = await send(
+        app,
+        'POST',
+        `/api/workspaces/swarm-camp/templates/${created.id}/versions`,
+        {
+          expectedRevision: created.revision,
+          version: versionBody({ html: filler(MAX_HTML_BYTES + 1) }),
+        },
+      )
       expect(response.status).toBe(413)
     })
 
@@ -726,7 +831,7 @@ describe('template routes', () => {
         initialVersion: visualVersionBody(),
       })
 
-      const response = await send(app, 'POST', `/api/templates/${created.id}/convert`, {
+      const response = await send(app, 'POST', `/api/workspaces/swarm-camp/templates/${created.id}/convert`, {
         expectedRevision: created.revision,
         source: filler(MAX_SOURCE_BYTES + 1),
         html: '<p>x</p>',

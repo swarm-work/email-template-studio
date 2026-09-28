@@ -22,6 +22,12 @@ export default defineConfig({
   // A test may wait out a cold worker boot (FIRST_RENDER_TIMEOUT) and still do
   // a few UI steps around it, so the per-test budget has to be comfortably larger.
   timeout: 75_000,
+  // The default 5 s was enough while the library was one request away. Since
+  // workspaces (ADR-32) the first paint of `/` is three round trips - the
+  // status probe, the workspace list, then the templates - and on a loaded
+  // machine a cold workerd pushed the shared `beforeEach` over 5 s in a
+  // handful of specs. Ten is still tight enough to catch a hang.
+  expect: { timeout: 10_000 },
   use: {
     baseURL: 'http://localhost:4173',
     trace: 'retain-on-failure',

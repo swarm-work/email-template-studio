@@ -1,16 +1,18 @@
 /**
- * The eight template routes, registered by `createApp` AFTER the auth
- * middleware so every one of them already has a named caller.
+ * The eight template routes, registered by `createApp` AFTER the auth and
+ * workspace middlewares, so every one of them already has a named caller AND
+ * a workspace that caller may edit (`server/workspaceRoutes.ts`).
  *
  * Server layer: Hono + Zod + the TemplateStore port. It must not import D1, R2,
  * Node APIs or anything under `src/`. The wire shapes all come from
  * `shared/templateContracts.ts`; this file only maps them to and from the store.
  *
- * Concurrency rule, in one sentence: every write carries the `revision` the
- * caller last read, and the store refuses it if the row has moved on (409).
+ * Two rules, one sentence each. Concurrency: every write carries the
+ * `revision` the caller last read, and the store refuses it if the row has
+ * moved on (409). Isolation: every store call names the workspace from the
+ * URL, so a template in another workspace is a 404 here, never a leak.
  */
 import type { Context, Hono } from 'hono'
-import type { Identity } from './auth.ts'
 import { apiError, byteLength, checkMutationHeaders, issuesOf, readJsonBody } from './http.ts'
 import type {
   MetadataPatch,
@@ -41,11 +43,14 @@ import {
   slugify,
   updateMetadataRequest,
 } from '../shared/templateContracts.ts'
+import type { StudioEnv } from './workspaceRoutes.ts'
+import { WORKSPACE_ROUTE } from './workspaceRoutes.ts'
 
-/** The Hono app shape these routes need: an `identity` set by the auth middleware. */
-type StudioEnv = { Variables: { identity: Identity } }
 type TemplateApp = Hono<StudioEnv>
 type RouteContext = Context<StudioEnv>
+
+/** Where the routes live: `/api/workspaces/:workspace/templates`. */
+const TEMPLATES = `${WORKSPACE_ROUTE}/templates`
 
 export interface TemplateRouteDependencies {
   /** `null` (or absent) means "no database is bound", and every route answers 503. */
@@ -75,15 +80,15 @@ export function registerTemplateRoutes(app: TemplateApp, deps: TemplateRouteDepe
   /** The audit stamp for one write: who asked, and when the server handled it. */
   const contextFor = (email: string): WriteContext => ({ by: email, at: new Date(now()).toISOString() })
 
-  app.get('/api/templates', async (c) => {
+  app.get(TEMPLATES, async (c) => {
     if (!templateStore) return storageUnavailable(c)
-    const templates = await templateStore.list()
+    const templates = await templateStore.list(c.get('workspace').id)
     return c.json({ templates: templates.map(toSummaryDto) })
   })
 
-  app.get('/api/templates/:id', async (c) => {
+  app.get(`${TEMPLATES}/:id`, async (c) => {
     if (!templateStore) return storageUnavailable(c)
-    const template = await templateStore.get(c.req.param('id'))
+    const template = await templateStore.get(c.get('workspace').id, c.req.param('id'))
     if (!template) return notFound(c)
     // Weak, because the body is re-serialised on every request; the revision is
     // still an exact answer to "is this the copy I already have?".
@@ -91,14 +96,14 @@ export function registerTemplateRoutes(app: TemplateApp, deps: TemplateRouteDepe
     return c.json({ template: toDetailDto(template) })
   })
 
-  app.get('/api/templates/:id/versions', async (c) => {
+  app.get(`${TEMPLATES}/:id/versions`, async (c) => {
     if (!templateStore) return storageUnavailable(c)
-    const versions = await templateStore.listVersions(c.req.param('id'))
+    const versions = await templateStore.listVersions(c.get('workspace').id, c.req.param('id'))
     if (!versions) return notFound(c)
     return c.json({ versions: versions.map(toVersionSummaryDto) })
   })
 
-  app.post('/api/templates', async (c) => {
+  app.post(TEMPLATES, async (c) => {
     if (!templateStore) return storageUnavailable(c)
     const guard = checkMutationHeaders(c)
     if (guard) return guard
@@ -123,6 +128,7 @@ export function registerTemplateRoutes(app: TemplateApp, deps: TemplateRouteDepe
     const outcome = await templateStore.create(
       {
         id: newTemplateId(),
+        workspaceId: c.get('workspace').id,
         slug,
         name: request.name,
         description: request.description,
@@ -137,7 +143,7 @@ export function registerTemplateRoutes(app: TemplateApp, deps: TemplateRouteDepe
     return respondToWrite(c, outcome, 201, 'created', email)
   })
 
-  app.post('/api/templates/:id/versions', async (c) => {
+  app.post(`${TEMPLATES}/:id/versions`, async (c) => {
     if (!templateStore) return storageUnavailable(c)
     const guard = checkMutationHeaders(c)
     if (guard) return guard
@@ -154,19 +160,20 @@ export function registerTemplateRoutes(app: TemplateApp, deps: TemplateRouteDepe
     // save must not be the back door that turns a code template visual again.
     // The library card, the 422 below and the convert dialog all read the kind
     // off the CURRENT version, so they would all quietly disagree with the data.
-    const existing = await templateStore.get(c.req.param('id'))
+    const existing = await templateStore.get(c.get('workspace').id, c.req.param('id'))
     if (!existing) return notFound(c)
     if (existing.version.kind !== parsed.data.version.kind) {
       return apiError(
         c,
         422,
         'not-visual',
-        'Use POST /api/templates/:id/convert to change how a template is authored.',
+        'Use POST .../templates/:id/convert to change how a template is authored.',
       )
     }
 
     const email = c.get('identity').email
     const outcome = await templateStore.addVersion(
+      c.get('workspace').id,
       c.req.param('id'),
       parsed.data.expectedRevision,
       versionInputFrom(parsed.data.version),
@@ -175,7 +182,7 @@ export function registerTemplateRoutes(app: TemplateApp, deps: TemplateRouteDepe
     return respondToWrite(c, outcome, 201, 'saved', email)
   })
 
-  app.patch('/api/templates/:id', async (c) => {
+  app.patch(`${TEMPLATES}/:id`, async (c) => {
     if (!templateStore) return storageUnavailable(c)
     const guard = checkMutationHeaders(c)
     if (guard) return guard
@@ -188,6 +195,7 @@ export function registerTemplateRoutes(app: TemplateApp, deps: TemplateRouteDepe
     const { expectedRevision, ...patch } = parsed.data
     const email = c.get('identity').email
     const outcome = await templateStore.updateMetadata(
+      c.get('workspace').id,
       c.req.param('id'),
       expectedRevision,
       patch satisfies MetadataPatch,
@@ -196,12 +204,12 @@ export function registerTemplateRoutes(app: TemplateApp, deps: TemplateRouteDepe
     return respondToWrite(c, outcome, 200, 'updated', email)
   })
 
-  app.delete('/api/templates/:id', async (c) => {
+  app.delete(`${TEMPLATES}/:id`, async (c) => {
     if (!templateStore) return storageUnavailable(c)
     const guard = checkMutationHeaders(c, null)
     if (guard) return guard
     const id = c.req.param('id')
-    const result = await templateStore.remove(id)
+    const result = await templateStore.remove(c.get('workspace').id, id)
     if (result === 'not-found') return notFound(c)
     // No version number here: the template and all its versions are gone, so
     // there is no "v<n>" left to name.
@@ -209,7 +217,7 @@ export function registerTemplateRoutes(app: TemplateApp, deps: TemplateRouteDepe
     return c.json({ status: 'deleted' as const, id })
   })
 
-  app.post('/api/templates/:id/convert', async (c) => {
+  app.post(`${TEMPLATES}/:id/convert`, async (c) => {
     if (!templateStore) return storageUnavailable(c)
     const guard = checkMutationHeaders(c)
     if (guard) return guard
@@ -223,7 +231,8 @@ export function registerTemplateRoutes(app: TemplateApp, deps: TemplateRouteDepe
     if (!parsed.success) return badRequest(c, 'Invalid conversion.', parsed.error)
 
     const id = c.req.param('id')
-    const existing = await templateStore.get(id)
+    const workspaceId = c.get('workspace').id
+    const existing = await templateStore.get(workspaceId, id)
     if (!existing) return notFound(c)
     // One way, and only from visual: converting an already-code template would
     // silently throw away nothing, but it would also hide a client-side bug.
@@ -234,6 +243,7 @@ export function registerTemplateRoutes(app: TemplateApp, deps: TemplateRouteDepe
     const request = parsed.data
     const email = c.get('identity').email
     const outcome = await templateStore.addVersion(
+      workspaceId,
       id,
       request.expectedRevision,
       {

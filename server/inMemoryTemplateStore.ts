@@ -7,6 +7,10 @@
  *
  * Everything that goes in or comes out is deep-copied, so a caller holding a
  * returned object can never reach in and mutate the store behind its back.
+ *
+ * Isolation (ADR-32) is one private helper, `#rowIn`: a template is only
+ * found when both its id AND its workspace match, which is what the D1 store's
+ * `AND workspace_id = ?` does.
  */
 import type {
   MetadataPatch,
@@ -48,22 +52,24 @@ export class InMemoryTemplateStore implements TemplateStore {
     }
   }
 
-  async list(): Promise<readonly StoredTemplateSummary[]> {
-    const summaries = [...this.#templates.keys()].map((id) => this.#summary(id))
+  async list(workspaceId: string): Promise<readonly StoredTemplateSummary[]> {
+    const summaries = [...this.#templates.values()]
+      .filter((row) => row.workspaceId === workspaceId)
+      .map((row) => this.#summary(row.id))
     // Newest-edited first, with the id as a tie-break so the order is stable
     // when two rows share a timestamp (the seed writes them in one batch).
     summaries.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || b.id.localeCompare(a.id))
     return summaries
   }
 
-  async get(id: string): Promise<StoredTemplate | null> {
-    if (!this.#templates.has(id)) return null
+  async get(workspaceId: string, id: string): Promise<StoredTemplate | null> {
+    if (!this.#rowIn(workspaceId, id)) return null
     return this.#detail(id)
   }
 
-  async listVersions(id: string): Promise<readonly StoredVersionSummary[] | null> {
-    const versions = this.#versions.get(id)
-    if (!versions) return null
+  async listVersions(workspaceId: string, id: string): Promise<readonly StoredVersionSummary[] | null> {
+    if (!this.#rowIn(workspaceId, id)) return null
+    const versions = this.#versions.get(id) ?? []
     return versions
       .map(({ versionNumber, kind, note, createdBy, createdAt }) => ({
         versionNumber,
@@ -87,9 +93,10 @@ export class InMemoryTemplateStore implements TemplateStore {
    */
   #insert(input: NewTemplateInput, ctx: WriteContext): WriteOutcome {
     if (this.#templates.has(input.id)) throw new Error(`Template ${input.id} already exists`)
-    if (this.#slugOwner(input.slug) !== undefined) return { status: 'slug-taken' }
+    if (this.#slugOwner(input.workspaceId, input.slug) !== undefined) return { status: 'slug-taken' }
     this.#templates.set(input.id, {
       id: input.id,
+      workspaceId: input.workspaceId,
       slug: input.slug,
       name: input.name,
       description: input.description,
@@ -109,12 +116,13 @@ export class InMemoryTemplateStore implements TemplateStore {
   }
 
   async addVersion(
+    workspaceId: string,
     id: string,
     expectedRevision: number,
     input: NewVersionInput,
     ctx: WriteContext,
   ): Promise<WriteOutcome> {
-    const row = this.#templates.get(id)
+    const row = this.#rowIn(workspaceId, id)
     if (!row) return { status: 'not-found' }
     if (row.revision !== expectedRevision) return { status: 'conflict', template: this.#detail(id) }
 
@@ -131,15 +139,16 @@ export class InMemoryTemplateStore implements TemplateStore {
   }
 
   async updateMetadata(
+    workspaceId: string,
     id: string,
     expectedRevision: number,
     patch: MetadataPatch,
     ctx: WriteContext,
   ): Promise<WriteOutcome> {
-    const row = this.#templates.get(id)
+    const row = this.#rowIn(workspaceId, id)
     if (!row) return { status: 'not-found' }
     if (row.revision !== expectedRevision) return { status: 'conflict', template: this.#detail(id) }
-    const owner = patch.slug === undefined ? undefined : this.#slugOwner(patch.slug)
+    const owner = patch.slug === undefined ? undefined : this.#slugOwner(workspaceId, patch.slug)
     if (owner !== undefined && owner !== id) return { status: 'slug-taken' }
 
     this.#templates.set(id, {
@@ -157,17 +166,25 @@ export class InMemoryTemplateStore implements TemplateStore {
     return { status: 'saved', template: this.#detail(id) }
   }
 
-  async remove(id: string): Promise<'deleted' | 'not-found'> {
-    if (!this.#templates.has(id)) return 'not-found'
+  async remove(workspaceId: string, id: string): Promise<'deleted' | 'not-found'> {
+    if (!this.#rowIn(workspaceId, id)) return 'not-found'
     this.#templates.delete(id)
     // The SQL schema does this with ON DELETE CASCADE; here it is one more line.
     this.#versions.delete(id)
     return 'deleted'
   }
 
-  /** The id that already holds this slug, or undefined when it is free. */
-  #slugOwner(slug: string): string | undefined {
-    for (const row of this.#templates.values()) if (row.slug === slug) return row.id
+  /** The row, but only if it lives in this workspace. Otherwise it "does not exist". */
+  #rowIn(workspaceId: string, id: string): TemplateRow | undefined {
+    const row = this.#templates.get(id)
+    return row && row.workspaceId === workspaceId ? row : undefined
+  }
+
+  /** The id that already holds this slug IN THIS WORKSPACE, or undefined when it is free. */
+  #slugOwner(workspaceId: string, slug: string): string | undefined {
+    for (const row of this.#templates.values()) {
+      if (row.workspaceId === workspaceId && row.slug === slug) return row.id
+    }
     return undefined
   }
 

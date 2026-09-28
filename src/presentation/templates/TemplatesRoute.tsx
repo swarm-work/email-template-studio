@@ -1,16 +1,17 @@
 /**
  * The templates screen: library or editor, and everything the two share.
  *
- * Presentation layer. It owns `StudioView`, which is this app's stand-in for a
- * router: `{kind:'library'}` mirrors the future `/templates` and
- * `{kind:'editor'}` mirrors `/templates/:id`. Nothing else reads that value —
- * children are handed `onOpenTemplate` / `onBackToLibrary` callbacks — so
- * swapping in a real router later touches only this file.
+ * Presentation layer. Which of the two is showing is the URL:
+ * `/w/:slug/templates` is the library and `/w/:slug/templates/:templateId` is
+ * the editor. Nothing below reads the router — children are handed
+ * `onOpenTemplate` / `onBackToLibrary` callbacks — so this file is the one
+ * place that turns a click into a navigation and a URL into a selection.
  *
  * It is also where the repository's writes are turned into screen behaviour:
  * the dialogs collect the input, this file sends it and says what happened.
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect } from 'react'
+import { Navigate, useNavigate, useParams } from 'react-router'
 import { toast } from 'sonner'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -33,10 +34,9 @@ import { StudioPage } from '@/presentation/studio/StudioPage'
 import { TEMPLATE_DELETED_MESSAGE } from './DeleteTemplateDialog'
 import { TemplateLibraryPage } from './TemplateLibraryPage'
 
-/** Which of the two templates screens is showing. Deliberately not persisted. */
-type StudioView = { readonly kind: 'library' } | { readonly kind: 'editor'; readonly templateId: TemplateId }
-
 export interface TemplatesRouteProps {
+  /** The workspace slug, for building the two URLs this screen navigates between. */
+  workspaceSlug: string
   repository: TemplateRepository
   renderer: TemplateRenderer
   store: StudioSessionStore
@@ -48,6 +48,7 @@ export interface TemplatesRouteProps {
 }
 
 export function TemplatesRoute({
+  workspaceSlug,
   repository,
   renderer,
   store,
@@ -56,10 +57,15 @@ export function TemplatesRoute({
   onEditorOpenChange,
 }: TemplatesRouteProps) {
   const library = useTemplateLibrary(repository)
-  // The app always lands on the library; the view is state, not a saved setting.
-  const [view, setView] = useState<StudioView>({ kind: 'library' })
+  // The URL is the view: `templateId` present means the editor, absent the library.
+  const { templateId } = useParams()
+  const navigate = useNavigate()
+  const libraryUrl = `/w/${encodeURIComponent(workspaceSlug)}/templates`
 
-  const openTemplate = useCallback((id: TemplateId) => setView({ kind: 'editor', templateId: id }), [])
+  const openTemplate = useCallback(
+    (id: TemplateId) => void navigate(`${libraryUrl}/${encodeURIComponent(id)}`),
+    [navigate, libraryUrl],
+  )
   /**
    * The one repository READ the studio needs beyond the library list: the
    * version-history dialog asks for it when it opens. It is passed as a
@@ -67,7 +73,7 @@ export function TemplatesRoute({
    * cannot reach anything else (ADR-20).
    */
   const listVersions = useCallback((id: TemplateId) => repository.listVersions(id), [repository])
-  const backToLibrary = useCallback(() => setView({ kind: 'library' }), [])
+  const backToLibrary = useCallback(() => void navigate(libraryUrl), [navigate, libraryUrl])
 
   const { create, remove } = library
   /**
@@ -83,10 +89,10 @@ export function TemplatesRoute({
     async (input: NewTemplateInput & { readonly initialVersion: VersionInput }) => {
       const result = await create(input)
       if (!result.ok) return result.failure
-      setView({ kind: 'editor', templateId: result.value.metadata.id })
+      openTemplate(result.value.metadata.id)
       return null
     },
-    [create],
+    [create, openTemplate],
   )
 
   const deleteTemplate = useCallback(
@@ -98,14 +104,14 @@ export function TemplatesRoute({
       }
       toast.success(TEMPLATE_DELETED_MESSAGE)
       // The card is gone, so anything looking at it has to come back here.
-      setView({ kind: 'library' })
+      backToLibrary()
     },
-    [remove],
+    [remove, backToLibrary],
   )
 
   // The shell owns the page shape (`density`), so the view has to report it.
   // The cleanup matters: navigating to another screen closes the editor too.
-  const editorOpen = view.kind === 'editor'
+  const editorOpen = templateId !== undefined
   useEffect(() => {
     onEditorOpenChange(editorOpen)
     return () => onEditorOpenChange(false)
@@ -116,7 +122,9 @@ export function TemplatesRoute({
     return <LibraryError failure={library.state.failure} onRetry={library.reload} />
   }
   if (library.state.kind === 'empty') {
-    // Nothing to edit, so the studio (which needs a template) is not mounted.
+    // Nothing to edit, so the studio (which needs a template) is not mounted -
+    // and a URL that still names one goes back to the (empty) library.
+    if (templateId !== undefined) return <Navigate to={libraryUrl} replace />
     return (
       <TemplateLibraryPage
         templates={[]}
@@ -128,10 +136,17 @@ export function TemplatesRoute({
     )
   }
 
+  // A deep link to a template that is not in this library (deleted, or in
+  // another workspace) lands on the library rather than on an empty editor.
+  const templates = library.state.templates
+  if (templateId !== undefined && !templates.some((template) => template.metadata.id === templateId)) {
+    return <Navigate to={libraryUrl} replace />
+  }
+
   return (
     <TemplatesWorkspace
-      templates={library.state.templates}
-      selectedId={view.kind === 'editor' ? view.templateId : null}
+      templates={templates}
+      selectedId={templateId === undefined ? null : (templateId as TemplateId)}
       onOpenTemplate={openTemplate}
       onBackToLibrary={backToLibrary}
       onCreateTemplate={createTemplate}

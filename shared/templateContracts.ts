@@ -295,6 +295,9 @@ export const apiErrorCode = z.enum([
   // request was legitimate and waiting will fix it, which is what a client
   // needs to know to decide between retrying and giving up.
   'rate-limited',
+  // Removing or demoting this member would leave a members-only workspace
+  // with no admin at all, and therefore nobody who could ever fix that.
+  'last-admin',
   'unexpected',
 ])
 

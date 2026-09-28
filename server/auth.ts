@@ -28,9 +28,34 @@
  */
 type VerifyKey = Awaited<ReturnType<typeof crypto.subtle.importKey>>
 
-/** Who the request is from, once proven. Only the email is used today. */
+/**
+ * The Stytch organisation a session belongs to. Carried on the identity so a
+ * workspace can admit "everyone in this organisation" without a members list
+ * (ADR-33). The slug is what workspaces compare against: it is what the team
+ * chose and it survives the Test-to-Live project switch, which the id does not.
+ */
+export interface IdentityOrganization {
+  readonly id: string
+  readonly slug: string
+}
+
+/** Who the request is from, once proven. */
 export interface Identity {
   readonly email: string
+  /**
+   * Where the identity came from, which decides how workspaces treat it:
+   * - 'directory': a person named by an identity provider (Stytch, Access).
+   *   Each workspace admits them through its organisation or its members list.
+   * - 'server': the server's own configuration named them (a developer
+   *   identity, the shared password). Those modes already mean "whoever reached
+   *   this server is trusted", so they are admins of every workspace - exactly
+   *   the access they had before workspaces existed.
+   */
+  readonly origin: 'directory' | 'server'
+  /** Set only by Stytch; absent for every other mode. */
+  readonly organization?: IdentityOrganization
+  /** Roles the identity provider asserts (Stytch RBAC names). Empty elsewhere. */
+  readonly roles: readonly string[]
 }
 
 /**
@@ -248,7 +273,7 @@ export function createPasswordAuthenticator(
       }
       // There is no person behind a shared password, and the log should not
       // imply otherwise.
-      return { ok: true, identity: { email: 'shared-password' } }
+      return { ok: true, identity: { email: 'shared-password', origin: 'server', roles: [] } }
     },
   }
 }
@@ -338,7 +363,7 @@ export function createDeveloperAuthenticator(email: string): Authenticator {
   return {
     mode: 'developer',
     async authenticate() {
-      return { ok: true, identity: { email } }
+      return { ok: true, identity: { email, origin: 'server', roles: [] } }
     },
   }
 }
@@ -438,7 +463,7 @@ export function createAccessAuthenticator(
       if (!email) {
         return { ok: false, reason: 'Access token carries no email claim.' }
       }
-      return { ok: true, identity: { email } }
+      return { ok: true, identity: { email, origin: 'directory', roles: [] } }
     },
   }
 }
@@ -648,7 +673,16 @@ export function createStytchAuthenticator(
             'No email-based authentication factor either (a Google-only sign-in). Add a top-level email claim via the project’s custom claim template, or extend STYTCH_EMAIL_CLAIM_PATHS.',
         }
       }
-      return { ok: true, identity: { email } }
+      const organization = organizationFromStytchClaims(claims)
+      return {
+        ok: true,
+        identity: {
+          email,
+          origin: 'directory',
+          ...(organization ? { organization } : {}),
+          roles: rolesFromStytchClaims(claims),
+        },
+      }
     },
   }
 }
@@ -781,6 +815,36 @@ function emailFromStytchClaims(claims: StytchClaims): string | undefined {
     if (trimmed.includes('@')) return trimmed
   }
   return emailFromAuthenticationFactors(claims)
+}
+
+/**
+ * The organisation claim of a B2B session token: `{ organization_id, slug }`
+ * under this key, top level. Seen on the real token decoded on 2026-09-24
+ * (docs/STYTCH_LOG.md issue 7 lists it among the claims present).
+ */
+const STYTCH_ORGANIZATION_CLAIM = 'https://stytch.com/organization'
+
+/** Both fields, or nothing: a half-present organisation is not one a workspace can match. */
+function organizationFromStytchClaims(claims: StytchClaims): IdentityOrganization | undefined {
+  const value = claims[STYTCH_ORGANIZATION_CLAIM]
+  if (typeof value !== 'object' || value === null) return undefined
+  const { organization_id: id, slug } = value as Record<string, unknown>
+  if (typeof id !== 'string' || typeof slug !== 'string') return undefined
+  if (id.trim() === '' || slug.trim() === '') return undefined
+  return { id: id.trim(), slug: slug.trim() }
+}
+
+/**
+ * The RBAC roles Stytch puts on the session (`stytch_member`, `stytch_admin`
+ * and any custom ones). Read, kept, and not yet acted on: workspaces decide
+ * roles from their own tables today (ADR-33). Anything that is not a list of
+ * strings degrades to no roles rather than refusing the sign-in.
+ */
+function rolesFromStytchClaims(claims: StytchClaims): readonly string[] {
+  const session = claims[STYTCH_SESSION_CLAIM]
+  if (typeof session !== 'object' || session === null) return []
+  const roles = (session as Record<string, unknown>).roles
+  return Array.isArray(roles) ? roles.filter((role): role is string => typeof role === 'string') : []
 }
 
 // ---------------------------------------------------------------------------

@@ -10,13 +10,14 @@
  */
 import { z } from 'zod'
 import { STUDIO_API_HEADER, UPLOAD_FIELD_NAME } from '@shared/templateContracts'
+import { workspaceApiPath } from '@shared/workspaceContracts'
 
 /** What `EmailEditor`'s `onUploadImage` prop must resolve to. */
 export interface UploadedImage {
   readonly url: string
 }
 
-/** `POST /api/uploads` answers `201 { url }`; anything else is a failure. */
+/** `POST /api/workspaces/:workspace/uploads` answers `201 { url }`; anything else is a failure. */
 export const uploadResponseSchema = z.object({ url: z.url() })
 
 /** The shape of every failure here: one sentence the toast can show. */
@@ -26,7 +27,9 @@ const UNREACHABLE_MESSAGE = 'The studio could not reach the upload server.'
 const UNEXPECTED_MESSAGE = 'The upload server answered with something unexpected.'
 
 /**
- * Sends `file` to the studio API as multipart form data.
+ * Sends `file` to the studio API as multipart form data, into the workspace
+ * named by `workspaceSlug` (uploads sit under a workspace so only its editors
+ * can write to the bucket).
  *
  * Rejects (rather than returning a result type) on purpose: the editor's image
  * plugin inserts a temporary node the moment a file is chosen and removes it
@@ -35,6 +38,7 @@ const UNEXPECTED_MESSAGE = 'The upload server answered with something unexpected
  */
 export async function uploadImage(
   file: File,
+  workspaceSlug: string,
   fetchImpl: typeof fetch = (...args) => fetch(...args),
 ): Promise<UploadedImage> {
   const body = new FormData()
@@ -42,7 +46,7 @@ export async function uploadImage(
 
   let response: Response
   try {
-    response = await fetchImpl('/api/uploads', {
+    response = await fetchImpl(workspaceApiPath(workspaceSlug, '/uploads'), {
       method: 'POST',
       // No content-type header: the browser has to set the multipart boundary.
       // The studio header is what a cross-site form cannot send (see uploadRoutes.ts).

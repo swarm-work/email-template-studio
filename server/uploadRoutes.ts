@@ -1,17 +1,19 @@
 /**
- * Image uploads for visual templates: `POST /api/uploads` and `GET /media/:key`.
+ * Image uploads for visual templates: `POST /api/workspaces/:workspace/uploads`
+ * and `GET /media/:key`.
  *
  * Server layer: Hono + the ObjectStore port, no R2 and no Node APIs. The editor
  * only offers its image node when an upload handler exists, and an email client
  * cannot render a `data:` URL, so images have to become real hosted files.
  *
+ * The upload sits under a workspace so that only someone who may edit there
+ * can write to the bucket; the stored object itself is not scoped, because
  * `GET /media/:key` is registered OUTSIDE the `/api/*` auth middleware on
  * purpose: an image in a sent email is fetched by a stranger's mail client,
  * which has no session. The key is an unguessable uuid, and nothing secret is
  * ever uploaded here.
  */
 import type { Context, Hono } from 'hono'
-import type { Identity } from './auth.ts'
 import { apiError } from './http.ts'
 import type { ObjectStore } from './objectStore.ts'
 import { STUDIO_API_HEADER } from '../shared/templateContracts.ts'
@@ -22,8 +24,9 @@ import {
   UPLOAD_FIELD_NAME,
   UPLOAD_KEY_PATTERN,
 } from '../shared/templateContracts.ts'
+import type { StudioEnv } from './workspaceRoutes.ts'
+import { WORKSPACE_ROUTE } from './workspaceRoutes.ts'
 
-type StudioEnv = { Variables: { identity: Identity } }
 type UploadApp = Hono<StudioEnv>
 type RouteContext = Context<StudioEnv>
 
@@ -63,7 +66,7 @@ const MAGIC_BYTES: readonly { readonly contentType: string; readonly bytes: read
 export function registerUploadRoutes(app: UploadApp, deps: UploadRouteDependencies): void {
   const { objectStore = null, newAssetId = () => crypto.randomUUID(), limiter } = deps
 
-  app.post('/api/uploads', async (c) => {
+  app.post(`${WORKSPACE_ROUTE}/uploads`, async (c) => {
     if (!objectStore) return storageUnavailable(c)
     // A multipart POST is the one shape a cross-site form CAN send, so the
     // studio header does all the CSRF work here.

@@ -22,10 +22,12 @@ describe('uploadImage', () => {
       })
     }) as unknown as typeof fetch
 
-    expect(await uploadImage(PNG, fetchImpl)).toEqual({ url: 'https://studio.test/media/img_abc.png' })
+    expect(await uploadImage(PNG, 'swarm-camp', fetchImpl)).toEqual({
+      url: 'https://studio.test/media/img_abc.png',
+    })
 
     const [call] = calls
-    expect(call.url).toBe('/api/uploads')
+    expect(call.url).toBe('/api/workspaces/swarm-camp/uploads')
     expect(call.init.method).toBe('POST')
     // The browser has to set the multipart boundary itself, so there must be no
     // content-type header of ours.
@@ -42,19 +44,25 @@ describe('uploadImage', () => {
     })
     // Rejecting, not returning a result: the editor removes its temporary image
     // node only when this promise rejects.
-    await expect(uploadImage(PNG, tooLarge)).rejects.toThrow(ImageUploadError)
-    await expect(uploadImage(PNG, tooLarge)).rejects.toThrow('Images must be 2097152 bytes or smaller.')
+    await expect(uploadImage(PNG, 'swarm-camp', tooLarge)).rejects.toThrow(ImageUploadError)
+    await expect(uploadImage(PNG, 'swarm-camp', tooLarge)).rejects.toThrow(
+      'Images must be 2097152 bytes or smaller.',
+    )
   })
 
   it('rejects when the server cannot be reached at all', async () => {
     const offline = vi.fn(async () => {
       throw new TypeError('Failed to fetch')
     }) as unknown as typeof fetch
-    await expect(uploadImage(PNG, offline)).rejects.toThrow(/could not reach the upload server/)
+    await expect(uploadImage(PNG, 'swarm-camp', offline)).rejects.toThrow(/could not reach the upload server/)
   })
 
   it('rejects an answer that does not carry a URL, rather than trusting it', async () => {
-    await expect(uploadImage(PNG, fetchReturning(201, { ok: true }))).rejects.toThrow(/unexpected/)
-    await expect(uploadImage(PNG, fetchReturning(201, { url: 'not a url' }))).rejects.toThrow(/unexpected/)
+    await expect(uploadImage(PNG, 'swarm-camp', fetchReturning(201, { ok: true }))).rejects.toThrow(
+      /unexpected/,
+    )
+    await expect(uploadImage(PNG, 'swarm-camp', fetchReturning(201, { url: 'not a url' }))).rejects.toThrow(
+      /unexpected/,
+    )
   })
 })

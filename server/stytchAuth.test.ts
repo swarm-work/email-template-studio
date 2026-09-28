@@ -149,7 +149,7 @@ describe('loadAuthConfig with Stytch', () => {
 describe('createStytchAuthenticator', () => {
   it('accepts a correctly signed token and returns the email', async () => {
     const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(await makeToken()))
-    expect(result).toEqual({ ok: true, identity: { email: EMAIL } })
+    expect(result).toEqual({ ok: true, identity: { email: EMAIL, origin: 'directory', roles: [] } })
   })
 
   it('refuses a request with no Stytch cookie', async () => {
@@ -310,7 +310,7 @@ describe('createStytchAuthenticator', () => {
     it('reads a top-level email_address claim', async () => {
       const token = await makeToken({ email: undefined, email_address: EMAIL })
       const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-      expect(result).toEqual({ ok: true, identity: { email: EMAIL } })
+      expect(result).toEqual({ ok: true, identity: { email: EMAIL, origin: 'directory', roles: [] } })
     })
 
     it('reads a namespaced member claim', async () => {
@@ -319,13 +319,13 @@ describe('createStytchAuthenticator', () => {
         'https://stytch.com/member': { email_address: EMAIL },
       })
       const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-      expect(result).toEqual({ ok: true, identity: { email: EMAIL } })
+      expect(result).toEqual({ ok: true, identity: { email: EMAIL, origin: 'directory', roles: [] } })
     })
 
     it('trims surrounding whitespace', async () => {
       const token = await makeToken({ email: `  ${EMAIL}  ` })
       const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-      expect(result).toEqual({ ok: true, identity: { email: EMAIL } })
+      expect(result).toEqual({ ok: true, identity: { email: EMAIL, origin: 'directory', roles: [] } })
     })
 
     it('ignores a non-string value rather than writing "[object Object]" into the log', async () => {
@@ -363,7 +363,10 @@ describe('createStytchAuthenticator', () => {
     it('falls back to the email authentication factor inside the session claim', async () => {
       const token = await makeToken({ email: undefined, 'https://stytch.com/session': emailFactorSession })
       const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-      expect(result).toEqual({ ok: true, identity: { email: EMAIL } })
+      expect(result).toEqual({
+        ok: true,
+        identity: { email: EMAIL, origin: 'directory', roles: ['stytch_member'] },
+      })
     })
 
     it('prefers a top-level email claim over the authentication factor', async () => {
@@ -372,7 +375,38 @@ describe('createStytchAuthenticator', () => {
         'https://stytch.com/session': emailFactorSession,
       })
       const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-      expect(result).toEqual({ ok: true, identity: { email: 'template@swarm.work' } })
+      expect(result).toEqual({
+        ok: true,
+        identity: { email: 'template@swarm.work', origin: 'directory', roles: ['stytch_member'] },
+      })
+    })
+
+    it('carries the organisation claim onto the identity, so workspaces can admit the whole team', async () => {
+      const token = await makeToken({
+        'https://stytch.com/organization': {
+          organization_id: 'organization-test-3c48ecc8-0000-4000-8000-000000000000',
+          slug: 'swarm',
+        },
+        'https://stytch.com/session': { ...emailFactorSession, roles: ['stytch_member', 'stytch_admin'] },
+      })
+      const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
+      expect(result).toEqual({
+        ok: true,
+        identity: {
+          email: EMAIL,
+          origin: 'directory',
+          organization: { id: 'organization-test-3c48ecc8-0000-4000-8000-000000000000', slug: 'swarm' },
+          roles: ['stytch_member', 'stytch_admin'],
+        },
+      })
+    })
+
+    it('drops a half-present organisation rather than matching a workspace on a blank slug', async () => {
+      const token = await makeToken({
+        'https://stytch.com/organization': { organization_id: 'organization-test-1', slug: '' },
+      })
+      const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
+      expect(result.ok && result.identity.organization).toBeUndefined()
     })
 
     it('still refuses a Google-only sign-in, whose factor carries no address', async () => {
