@@ -449,6 +449,16 @@ gets `403 forbidden` with "Only members of an existing team can create a workspa
 (entering a workspace through its organisation) and the member table itself are unchanged; this only
 narrows who may make a brand-new workspace.
 
+Calling an organisation owning a workspace "proof" of belonging to a team assumes every workspace's
+`stytchOrganizationSlug` is already a real, claimed slug in that environment's Stytch project - rule 3
+and `mayCreateWorkspace` both match on slug, not id (see the decision above), and nothing stops a
+brand-new, unclaimed slug in one environment (say, Test) from colliding with a slug that is claimed
+and meaningful in another (Live). This was true before this update too; it is only more load-bearing
+now that slug ownership also gates workspace creation. One more consequence worth naming: an
+Access-mode identity (`origin: 'directory'`, no Stytch organisation at all) can no longer create a
+workspace unless it is already a named `admin` somewhere - Access has no organisation to check against
+rule 2 of `mayCreateWorkspace`.
+
 ## ADR-4 Motion: beUI selectively
 
 **Context.** The brief asks for beUI where motion communicates state, and for reduced-motion support.
