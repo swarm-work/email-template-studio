@@ -3,7 +3,7 @@
 # check:  every push and pull request; typecheck, lint, format check, unit tests, production build, Playwright E2E.
 # deploy: pushes to main only, after check, and only when the CLOUDFLARE_API_TOKEN secret exists.
 #         Applies D1 migrations first, then deploys. Without the secret the job is skipped and
-#         releases happen by hand: `npm run db:migrate:prod && npm run deploy`.
+#         releases happen by hand: `npm run db:migrate:production && npm run deploy:production`.
 #         The token needs D1 Edit and R2 Edit as well as Workers Scripts Edit (docs/DEPLOYMENT.md).
 name: CI
 
@@ -64,20 +64,25 @@ jobs:
       # and the sign-in screen silently fails to initialise (ADR-31). Set it as
       # a repository VARIABLE (not a secret - it ships in the bundle either way).
       # Leaving it unset is correct while Stytch is not in use.
+      # The build is for the PRODUCTION environment: the Cloudflare Vite plugin
+      # resolves `env.production` at build time and leaves a deploy redirect
+      # (.wrangler/deploy/config.json) that the plain `deploy` below follows.
       - run: npm run build
         if: env.HAS_TOKEN == 'true'
         env:
+          CLOUDFLARE_ENV: production
           VITE_STYTCH_PUBLIC_TOKEN: ${{ vars.VITE_STYTCH_PUBLIC_TOKEN }}
       # Migrations run BEFORE the deploy, and must stay backward compatible with
-      # the Worker version still serving traffic while this step runs.
-      - name: Apply D1 migrations
+      # the Worker version still serving traffic while this step runs. The
+      # explicit --config sidesteps the deploy redirect the build just wrote.
+      - name: Apply D1 migrations (production)
         if: env.HAS_TOKEN == 'true'
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-          command: d1 migrations apply STUDIO_DB --remote
-      - name: Deploy to Cloudflare
+          command: d1 migrations apply STUDIO_DB --remote --env production --config wrangler.jsonc
+      - name: Deploy to Cloudflare (production)
         if: env.HAS_TOKEN == 'true'
         uses: cloudflare/wrangler-action@v3
         with:

@@ -286,7 +286,10 @@ slice 1 carries `workspace_id`, and slices 4 and 5 attach to rows slice 2 create
 Blocks slices 2 and 4. All of it is PRIORITIES 3.3 and 3.6 restated; do it in one AWS session.
 
 1. Settle **which Worker is production** (PRIORITIES decision 1). SNS needs one stable HTTPS URL
-   and it must be the Worker that sends. Today that is the unnamed top-level Worker.
+   and it must be the Worker that sends. **Settled 2026-09-28, option A:** `env.production`
+   (`email-template-studio-production.swarm-work-emailer.workers.dev`) is production; the
+   unnamed top-level Worker is frozen and awaits retirement. The SNS subscription URL in slice 4
+   is therefore `https://email-template-studio-production.swarm-work-emailer.workers.dev/api/webhooks/ses`.
 2. `aws sesv2 put-account-suppression-attributes --suppressed-reasons BOUNCE COMPLAINT`.
 3. Create configuration set `studio-swarm-camp` (and `studio-swarm-camp-staging`) with reputation
    metrics on. Create SNS topic `studio-ses-events` (SignatureVersion 2, so the Worker verifies with

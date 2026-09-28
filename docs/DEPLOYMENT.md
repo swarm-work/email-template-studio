@@ -34,29 +34,29 @@ flowchart LR
 
 ## Day-to-day commands
 
-| Task                                  | Command                                      | Notes                                                                                |
-| ------------------------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------ |
-| Check which account you are on        | `npx wrangler whoami`                        | Do this before every manual deploy: it must say `swarm-work-emailer`                 |
-| Log in / switch account               | `npx wrangler login` / `npx wrangler logout` | Opens a browser; the token is stored under `~/.config/.wrangler`                     |
-| Deploy                                | `npm run deploy`                             | Build then deploy; prints the URL and version id                                     |
-| Roll back                             | `npx wrangler rollback`                      | Interactive; picks a previous version                                                |
-| List versions                         | `npx wrangler versions list`                 |                                                                                      |
-| Live logs                             | `npx wrangler tail`                          | Observability is enabled in `wrangler.jsonc`; logs also appear in the dashboard      |
-| Run locally in the Cloudflare runtime | `npm run dev`                                | workerd next to Vite; variables from `.dev.vars` (see `.dev.vars.example`)           |
-| Run locally with real SES sending     | `npm run dev` with keys in `.dev.vars`       | Same code path as production. `npm run dev:node` + `npm run server` is the Node path |
-| Regenerate binding types              | `npm run cf:types`                           | After every change to `wrangler.jsonc`; `build` and `typecheck` do it anyway         |
-| Apply migrations locally              | `npm run db:migrate`                         | Do this once before the first `npm run dev`; see "Persistence (D1) and assets (R2)"  |
-| Apply migrations to the real database | `npm run db:migrate:prod`                    | Always before `npm run deploy`, never after                                          |
-| Query the local database              | `npm run db:console -- "SELECT 1"`           | Local SQLite under `.wrangler/state/v3`                                              |
+| Task                                  | Command                                                                   | Notes                                                                                                                                                                                 |
+| ------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Check which account you are on        | `npx wrangler whoami`                                                     | Do this before every manual deploy: it must say `swarm-work-emailer`                                                                                                                  |
+| Log in / switch account               | `npx wrangler login` / `npx wrangler logout`                              | Opens a browser; the token is stored under `~/.config/.wrangler`                                                                                                                      |
+| Deploy one environment                | `npm run deploy:dev` / `deploy:staging` / `deploy:production`             | Builds FOR that environment (`CLOUDFLARE_ENV`), then deploys it; prints the URL and version id. `npm run deploy` alone now refuses, so a habit cannot hit the frozen top-level Worker |
+| Apply migrations to one environment   | `npm run db:migrate:dev` / `db:migrate:staging` / `db:migrate:production` | Always BEFORE the matching deploy, never after                                                                                                                                        |
+| Roll back                             | `npx wrangler rollback`                                                   | Interactive; picks a previous version                                                                                                                                                 |
+| List versions                         | `npx wrangler versions list`                                              |                                                                                                                                                                                       |
+| Live logs                             | `npx wrangler tail`                                                       | Observability is enabled in `wrangler.jsonc`; logs also appear in the dashboard                                                                                                       |
+| Run locally in the Cloudflare runtime | `npm run dev`                                                             | workerd next to Vite; variables from `.dev.vars` (see `.dev.vars.example`)                                                                                                            |
+| Run locally with real SES sending     | `npm run dev` with keys in `.dev.vars`                                    | Same code path as production. `npm run dev:node` + `npm run server` is the Node path                                                                                                  |
+| Regenerate binding types              | `npm run cf:types`                                                        | After every change to `wrangler.jsonc`; `build` and `typecheck` do it anyway                                                                                                          |
+| Apply migrations locally              | `npm run db:migrate`                                                      | Do this once before the first `npm run dev`; see "Persistence (D1) and assets (R2)"                                                                                                   |
+| Query the local database              | `npm run db:console -- "SELECT 1"`                                        | Local SQLite under `.wrangler/state/v3`                                                                                                                                               |
 
 ## Environments
 
-| Name                           | Where it is defined                                           | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| ------------------------------ | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| local                          | `.dev.vars` (git-ignored)                                     | `npm run dev` and `npm run preview`; sending disabled or dry-run                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `e2e`                          | `wrangler.jsonc` → `env.e2e`                                  | Playwright only: dry-run sending with fake addresses, plus its own local D1 and R2; never deployed. Its `webServer` deletes every template and replays `0002` **and** `0003` before each run, so a run always starts from exactly the four starters at v1                                                                                                                                                                                                                                  |
-| top level                      | `wrangler.jsonc` top-level keys                               | What `npm run deploy` deploys today, with no `--env`: the Worker `email-template-studio` on `swarm-work-emailer`. **This is the real production**: password gate, live SES sending                                                                                                                                                                                                                                                                                                         |
-| `dev`, `staging`, `production` | `wrangler.jsonc` → `env.dev`, `env.staging`, `env.production` | Three separate Worker scripts, each with its own D1 and R2 binding (added in #13; every `database_id` there is still a placeholder). All three are deployed and empty: no secrets, so auth mode `disabled`, and no live sending. Deploy one with `npx wrangler deploy --env staging`. `vars`, `d1_databases` and `r2_buckets` are **not** inherited by a named environment — repeat all three in each. Making `env.production` the real production Worker is `docs/PRIORITIES.md` item 3.3 |
+| Name                           | Where it is defined                                           | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ------------------------------ | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| local                          | `.dev.vars` (git-ignored)                                     | `npm run dev` and `npm run preview`; sending disabled or dry-run                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `e2e`                          | `wrangler.jsonc` → `env.e2e`                                  | Playwright only: dry-run sending with fake addresses, plus its own local D1 and R2; never deployed. Its `webServer` deletes every template and replays `0002` **and** `0003` before each run, so a run always starts from exactly the four starters at v1                                                                                                                                                                                                                                                                                                                                                    |
+| top level                      | `wrangler.jsonc` top-level keys                               | The **legacy** Worker `email-template-studio`, frozen on its 2026-09-18 build (password gate, live SES sending to one allow-listed address, an empty database). Not deployed to any more: `npm run deploy` refuses on purpose. Retiring it is `docs/PRIORITIES.md` item 3.3. The block stays because `wrangler types` and `npm run dev` read it                                                                                                                                                                                                                                                              |
+| `dev`, `staging`, `production` | `wrangler.jsonc` → `env.dev`, `env.staging`, `env.production` | **The real deployments since 2026-09-28** (PRIORITIES decision 1, option A). Three separate Worker scripts, each with its own D1 database (real ids), Stytch sign-in via the `STYTCH_PROJECT_ID` var, and **no R2 binding yet** (TECH_DEBT #48: R2 is not enabled on the account, and a bound bucket that does not exist blocks the deploy; uploads answer 503 until it is). `production` is `email-template-studio-production.swarm-work-emailer.workers.dev`, in dry-run until the AWS secrets are set on it. `vars` and `d1_databases` are **not** inherited by a named environment — repeat both in each |
 
 Rule: `vars` in `wrangler.jsonc` are for non-secret settings and are committed. Secrets go through `wrangler secret put` (or `.dev.vars` locally) and never into the file.
 
@@ -173,7 +173,7 @@ allows the addresses or email domain that should get in.
 **5. Deploy and check.** A request with no token must be refused:
 
 ```bash
-npm run deploy
+npm run deploy:production
 curl -s https://studio.swarm.work/api/send-test/status   # through Access: 200 once signed in
 curl -s https://email-template-studio.<subdomain>.workers.dev/api/send-test/status
 # expect {"status":"error","code":"unauthenticated",...}
@@ -251,7 +251,7 @@ npx wrangler secret put AWS_SECRET_ACCESS_KEY
 **4. Deploy and check the preflight**, which asks SES directly and needs no send:
 
 ```bash
-npm run deploy
+npm run deploy:production
 curl -s https://<hostname>/api/send-test/status
 ```
 
@@ -263,7 +263,7 @@ Expect `"mode":"live"` and a `preflight.ok` of `true`. If `identityVerified` is 
 
 Opening sending up is one variable, and so is closing it again. In increasing severity:
 
-1. Set `SES_ALLOWED_RECIPIENTS` back to a comma-separated list in `wrangler.jsonc` and `npm run deploy`. Anything off the list is refused again with `recipient-not-allowed`, and open tabs pick it up on their next status check.
+1. Set `SES_ALLOWED_RECIPIENTS` back to a comma-separated list in `wrangler.jsonc` and `npm run deploy:production`. Anything off the list is refused again with `recipient-not-allowed`, and open tabs pick it up on their next status check.
 2. `npx wrangler rollback <deployment-id>` to go back to the previous Worker version entirely.
 3. `STUDIO_SEND_ENABLED: "false"` and deploy: the API answers `sending-disabled` and the dialog says so.
 4. On the AWS side, `aws iam delete-access-key` for the Worker's key. Nothing can send until a new key is put in as a secret.
@@ -282,19 +282,30 @@ Templates live in a Cloudflare D1 database (`STUDIO_DB`); images uploaded into a
 
 ```bash
 npx wrangler whoami                                            # confirm the account FIRST: swarm-work-emailer
-npx wrangler d1 list                                           # the top-level database exists since 2026-09-22
-# npx wrangler d1 create email-template-studio                 # DONE - id is in wrangler.jsonc
-npx wrangler d1 create email-template-studio-dev               # one per env.* environment
-npx wrangler d1 create email-template-studio-staging
-npx wrangler d1 create email-template-studio-production
-npx wrangler r2 bucket create email-template-studio-assets
+npx wrangler d1 list                                           # four databases since 2026-09-28 (see below)
+# DONE 2026-09-22 / 2026-09-28 - every id is in wrangler.jsonc:
+#   email-template-studio            f270cbc3-...  (legacy top-level Worker, empty, frozen)
+#   email-template-studio-dev        ee106ea3-...
+#   email-template-studio-staging    3a8403ac-...
+#   email-template-studio-production 496ceadb-...
+# NOT DONE - R2 is not enabled on the account (dashboard: R2 Object Storage, enable; free tier).
+# Until it is, the three environments carry no r2_buckets binding (TECH_DEBT #48). Once enabled:
 npx wrangler r2 bucket create email-template-studio-assets-dev
 npx wrangler r2 bucket create email-template-studio-assets-staging
 npx wrangler r2 bucket create email-template-studio-assets-production
-npx wrangler r2 bucket create email-template-studio-assets-e2e # Playwright's bucket
+# then restore the binding in each env block of wrangler.jsonc and redeploy.
 ```
 
-Paste each printed `database_id` over the matching placeholder in `wrangler.jsonc`. The top-level one is **done** (`f270cbc3-4b5e-457b-af43-ea3130904e2b`); what is left is `…d2` in `env.dev`, `…d3` in `env.staging` and `…d4` in `env.production` — then `npm run cf:types`. The `env.e2e` database id (`…0000000000e2`) is a local-only fixture and stays as it is — the e2e database is never created remotely.
+When wrangler can see more than one account it refuses non-interactive commands with "More than one
+account available"; prefix them with `CLOUDFLARE_ACCOUNT_ID=d0fa6b3d72170539438800a907ec5323`. The
+`env.e2e` database id (`…0000000000e2`) is a local-only fixture and stays as it is — the e2e database
+is never created remotely.
+
+**A build leaves a deploy redirect.** `npm run build` (and every `deploy:<env>`) writes
+`.wrangler/deploy/config.json`, pointing wrangler at the resolved config of the environment that was
+built. That is what lets a plain `wrangler deploy` target the right Worker — and it is also why the
+`db:migrate:<env>` scripts pass `--config wrangler.jsonc --env <env>` explicitly: without that, a
+migration command run after a build would read whichever environment was built last.
 
 `preview_database_id` is deliberately **never** set. Local dev, `npm run preview`, `vite preview` and `wrangler d1 … --local` then all share one SQLite file under `.wrangler/state/v3`, keyed by `database_id`, so what you migrate on the command line is what the Worker sees. `.wrangler/` is git-ignored.
 
@@ -304,7 +315,7 @@ Paste each printed `database_id` over the matching placeholder in `wrangler.json
 | ---------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
 | Apply locally                | `npm run db:migrate`                              | `.wrangler/state/v3`; run this before `npm run dev`                                                           |
 | Apply to the e2e database    | `npm run db:migrate:e2e`                          | Playwright's `webServer` does it for you                                                                      |
-| Apply to the remote database | `npm run db:migrate:prod`                         | `--remote`. Needs D1 Edit on the token — and a remote database, which does not exist yet, so this fails today |
+| Apply to the remote database | `npm run db:migrate:production`                   | `--remote`. Needs D1 Edit on the token — and a remote database, which does not exist yet, so this fails today |
 | Ad-hoc query (local)         | `npm run db:console -- "SELECT * FROM templates"` | Read-only by convention, not by enforcement                                                                   |
 | Regenerate the seed          | `npm run seed:generate`                           | After editing a starter; the drift test fails if you forget                                                   |
 
@@ -314,14 +325,14 @@ Migration files are numbered and applied in order; wrangler records which have r
 `/api/workspaces/<slug>/templates` and the studio under `/w/<slug>/templates`; every template that
 existed before lands in the default workspace `swarm-camp` through the column's default, and anyone
 signed in through the Stytch organisation `swarm` (or the developer identity, or the password gate)
-is an admin of it. Apply it with the same `npm run db:migrate:prod` before deploying the Worker that
+is an admin of it. Apply it with the same `npm run db:migrate:production` before deploying the Worker that
 expects it: a Worker from before 0004 answers `/api/templates`, a Worker from after answers only the
 workspace paths, so the migrate-then-deploy order matters here more than usual, and a rollback of
 the Worker alone (`wrangler rollback`) brings the old paths back without touching the data.
 
 **`npm run db:migrate` is now a prerequisite for `npm run dev`.** Since phase 7b the browser reads and writes templates through the API (`VITE_DATA_MODE` defaults to `http`, ADR-27), so a studio started against an unmigrated database shows "Templates could not be loaded" instead of a library — the first query hits tables that are not there, which the API answers as a 500. ("Template storage is unavailable" is the other failure: a server with no D1 binding at all, which answers 503.) The escape hatch is `VITE_DATA_MODE=memory npm run dev`: the studio then runs entirely in the browser with the starters loaded from `registry.ts`, saves nothing, and needs no database at all. It is meant for a quick look at the UI, not for work you want to keep.
 
-**Migrate before you deploy.** CI _would_ do this — the `Apply D1 migrations` step runs before `Deploy to Cloudflare`, gated on the same `CLOUDFLARE_API_TOKEN` — but that secret is not set (`HAS_TOKEN: false`), so the deploy job skips every step and neither has ever run. Today the release is by hand, once a remote database exists: `npm run db:migrate:prod && npm run deploy`.
+**Migrate before you deploy.** CI _would_ do this — the `Apply D1 migrations` step runs before `Deploy to Cloudflare`, gated on the same `CLOUDFLARE_API_TOKEN` — but that secret is not set (`HAS_TOKEN: false`), so the deploy job skips every step and neither has ever run. Today the release is by hand, once a remote database exists: `npm run db:migrate:production && npm run deploy`.
 
 **Migrations must stay backward compatible with the deployed Worker**, because for the seconds between the two steps the old Worker is talking to the new schema. Adding a table, an index or a nullable column is safe. Renaming or dropping a column is a two-release change: add the new one and write to both, deploy, backfill, then drop the old one in a later release.
 
@@ -402,7 +413,7 @@ redeploying restores the canvas exactly as it was. A rollback of the whole Worke
 (`npx wrangler rollback`) does the same thing more bluntly; prefer the flag when only the editor is
 the problem.
 
-Pre-deploy checklist: `npm run check` green → `npm run build` green (the Worker-bundle guard runs here) → `npx wrangler whoami` shows the right account → `wrangler d1 export --remote` taken → `npm run db:migrate:prod` → `npm run deploy` → the post-deploy checks below.
+Pre-deploy checklist: `npm run check` green → `npm run build` green (the Worker-bundle guard runs here) → `npx wrangler whoami` shows the right account → `wrangler d1 export --remote` taken → `npm run db:migrate:production` → `npm run deploy:production` → the post-deploy checks below.
 
 ## Continuous integration
 
@@ -417,7 +428,7 @@ The `deploy` job runs on pushes to `main` only when the `CLOUDFLARE_API_TOKEN` r
 
 The deploy job applies D1 migrations (`d1 migrations apply STUDIO_DB --remote`) before deploying, gated on the same secret.
 
-Until the secret exists, releases are manual: `npm run db:migrate:prod && npm run deploy`.
+Until the secret exists, releases are manual: `npm run db:migrate:production && npm run deploy`.
 
 ## Moving to the production account
 
@@ -425,14 +436,14 @@ Until the secret exists, releases are manual: `npm run db:migrate:prod && npm ru
 
 The short version, and where it stands: the GitHub repository is transferred (`swarm-work/email-template-studio`) ✓; wrangler points at the company account and pins `account_id` ✓; `dev`, `staging` and `production` environments exist in `wrangler.jsonc` ✓, but with no custom-domain routes, no databases and no secrets. What is left: create the D1 databases and R2 buckets, deploy staging in dry run, put Cloudflare Access or Stytch in front, move the SES key and `STUDIO_PASSWORD` onto `env.production` and make it the live sender (`docs/PRIORITIES.md` item 3.3), and delete the stale personal Worker.
 
-The production database now exists on the pinned account, but it is **empty** — created 2026-09-22, no migrations applied, `num_tables` 0 — so there is still nothing to export and nothing to freeze. That stops being true the moment `npm run db:migrate:prod` runs and the studio writes its first row. The path below is what to run from then on:
+The production database now exists on the pinned account, but it is **empty** — created 2026-09-22, no migrations applied, `num_tables` 0 — so there is still nothing to export and nothing to freeze. That stops being true the moment `npm run db:migrate:production` runs and the studio writes its first row. The path below is what to run from then on:
 
 ```bash
 npx wrangler d1 export STUDIO_DB --remote --output move.sql     # old account
 npx wrangler login                                              # new account
 npx wrangler d1 create email-template-studio                    # paste the new id into wrangler.jsonc
 npx wrangler r2 bucket create email-template-studio-assets
-npm run db:migrate:prod                                         # schema first
+npm run db:migrate:production                                         # schema first
 npx wrangler d1 execute STUDIO_DB --remote --file move.sql      # then the data
 ```
 
@@ -443,10 +454,11 @@ Copy the R2 objects across with `npx wrangler r2 object get/put` or `rclone` (th
 Run after every deploy (CI will automate these later):
 
 ```bash
-U=https://email-template-studio.swarm-work-emailer.workers.dev    # production: the top-level Worker
+U=https://email-template-studio-production.swarm-work-emailer.workers.dev   # or -dev / -staging
 curl -s -o /dev/null -w "%{http_code}\n" $U/                        # 200
-curl -s -o /dev/null -w "%{http_code}\n" $U/some/deep/path          # 200 (SPA fallback)
-curl -s $U/api/send-test/status                                     # 401 {"code":"unauthenticated","mode":"password"} until you sign in
+curl -s -o /dev/null -w "%{http_code}\n" $U/w/swarm-camp/templates  # 200 (SPA fallback)
+curl -s $U/api/send-test/status                                     # 401 {"code":"unauthenticated","mode":"stytch"} until you sign in
+curl -s $U/api/workspaces                                           # 401 too: the new routes exist and are guarded
 curl -s -o /dev/null -w "%{http_code}\n" -X POST \
   -H "origin: https://attacker.example" -H "content-type: application/json" \
   -d '{}' $U/api/send-test                                          # 403 (cross-site refused)

@@ -77,36 +77,36 @@ send dialog says so, while templates, uploads and previews keep working; **with*
 `npm run dev` is a live sender. `STUDIO_SEND_DRY_RUN=true` in `.dev.vars` is the setting for day-to-day
 work (`docs/SENDING.md`, and `docs/PRIORITIES.md` §3.5–3.6 for why this is the way it is).
 
-Deploy: `npm run deploy` (needs `npx wrangler login`). With no `--env` it deploys the top-level
-Worker, which is production: `email-template-studio` on the `swarm-work-emailer` account.
-Run `npm run db:migrate:prod` before the first deploy: the production database exists (created
-2026-09-22) but is empty, and a deploy without migrations leaves every template route answering
+Deploy: `npm run deploy:dev`, `deploy:staging` or `deploy:production` (needs `npx wrangler login`).
+Each builds for that environment and deploys its own Worker on the `swarm-work-emailer` account;
+production is `email-template-studio-production`. Run the matching `npm run db:migrate:<env>`
+before the deploy, never after: a deploy without migrations leaves every template route answering
 "no such table: templates". R2 is a separate matter — it is not enabled on the account, so image
 uploads cannot work until it is. See `docs/DEPLOYMENT.md`.
 
 ## Scripts
 
-| Command                   | What it does                                                                                                                 |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `npm run dev`             | Start the Vite dev server with hot reload; `/api` runs in workerd via the Cloudflare plugin.                                 |
-| `npm run dev:node`        | Same, but `/api` is proxied to the Node send server (`npm run server`).                                                      |
-| `npm run build`           | Generate Worker types, type-check (`tsc -b`) and build the client and the Worker into `dist/`.                               |
-| `npm run preview`         | Serve the production build locally (workerd for `/api`). `preview:node` proxies to the Node server.                          |
-| `npm run server`          | Start the Node send server. `server:dry-run` logs instead of sending. The deployed Worker sends live as well.                |
-| `npm run deploy`          | Build and deploy the Worker with wrangler.                                                                                   |
-| `npm test`                | Run unit and component tests once (Vitest).                                                                                  |
-| `npm run test:watch`      | Run tests in watch mode.                                                                                                     |
-| `npm run test:e2e`        | Run Playwright browser tests against the production build (needs `npx playwright install chromium` once).                    |
-| `npm run typecheck`       | Type-check without emitting files.                                                                                           |
-| `npm run lint`            | Lint with oxlint (the linter the Vite template ships with).                                                                  |
-| `npm run format`          | Format with Prettier. `format:check` only reports, which is what CI and `npm run check` run.                                 |
-| `npm run cf:types`        | Regenerate `worker-configuration.d.ts` from `wrangler.jsonc` (run after changing bindings or vars).                          |
-| `npm run check`           | Typecheck, lint, format check and unit tests in one go (the same gate CI runs).                                              |
-| `npm run db:migrate`      | Apply the SQL migrations to the **local** template database (`.wrangler/state/v3`).                                          |
-| `npm run db:migrate:e2e`  | The same, for the separate database the Playwright suite uses (`--env e2e`).                                                 |
-| `npm run db:migrate:prod` | Apply them to the remote Cloudflare D1 database — which does not exist yet; create it first. Always before `npm run deploy`. |
-| `npm run db:console`      | Run one SQL statement against the local database: `npm run db:console -- "SELECT * FROM templates"`.                         |
-| `npm run seed:generate`   | Regenerate the starter-template seed migration after editing a starter.                                                      |
+| Command                    | What it does                                                                                                               |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `npm run dev`              | Start the Vite dev server with hot reload; `/api` runs in workerd via the Cloudflare plugin.                               |
+| `npm run dev:node`         | Same, but `/api` is proxied to the Node send server (`npm run server`).                                                    |
+| `npm run build`            | Generate Worker types, type-check (`tsc -b`) and build the client and the Worker into `dist/`.                             |
+| `npm run preview`          | Serve the production build locally (workerd for `/api`). `preview:node` proxies to the Node server.                        |
+| `npm run server`           | Start the Node send server. `server:dry-run` logs instead of sending. The deployed Worker sends live as well.              |
+| `npm run deploy:<env>`     | Build for `dev`, `staging` or `production` and deploy that Worker with wrangler. Bare `npm run deploy` refuses on purpose. |
+| `npm test`                 | Run unit and component tests once (Vitest).                                                                                |
+| `npm run test:watch`       | Run tests in watch mode.                                                                                                   |
+| `npm run test:e2e`         | Run Playwright browser tests against the production build (needs `npx playwright install chromium` once).                  |
+| `npm run typecheck`        | Type-check without emitting files.                                                                                         |
+| `npm run lint`             | Lint with oxlint (the linter the Vite template ships with).                                                                |
+| `npm run format`           | Format with Prettier. `format:check` only reports, which is what CI and `npm run check` run.                               |
+| `npm run cf:types`         | Regenerate `worker-configuration.d.ts` from `wrangler.jsonc` (run after changing bindings or vars).                        |
+| `npm run check`            | Typecheck, lint, format check and unit tests in one go (the same gate CI runs).                                            |
+| `npm run db:migrate`       | Apply the SQL migrations to the **local** template database (`.wrangler/state/v3`).                                        |
+| `npm run db:migrate:e2e`   | The same, for the separate database the Playwright suite uses (`--env e2e`).                                               |
+| `npm run db:migrate:<env>` | Apply them to that environment's remote Cloudflare D1 database. Always before the matching `npm run deploy:<env>`.         |
+| `npm run db:console`       | Run one SQL statement against the local database: `npm run db:console -- "SELECT * FROM templates"`.                       |
+| `npm run seed:generate`    | Regenerate the starter-template seed migration after editing a starter.                                                    |
 
 ## How it is put together
 
