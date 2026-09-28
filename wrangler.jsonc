@@ -2,11 +2,17 @@
  * Cloudflare Worker configuration. One Worker serves the built studio as static
  * assets and runs the Hono API for /api/*. See docs/DEPLOYMENT.md.
  *
- * The top-level settings are the deploy target used today: the Cloudflare account
- * swarm-work-emailer, pinned below and confirmed with `npx wrangler whoami`. It is
- * the REAL production Worker (email-template-studio.swarm-work-emailer.workers.dev),
- * with live SES sending on - see docs/DEPLOYMENT.md. `env.e2e` is only used by the
- * Playwright suite.
+ * Since 2026-09-28 the deploy targets are the three NAMED environments below
+ * (`env.dev`, `env.staging`, `env.production`), each its own Worker script with
+ * its own D1 database: `npm run deploy:<env>`. `env.production` is production
+ * (email-template-studio-production.swarm-work-emailer.workers.dev).
+ *
+ * The TOP-LEVEL block is the legacy Worker `email-template-studio`. It is frozen
+ * on its 2026-09-18 build (password gate, live SES sending to one allow-listed
+ * address, no D1 tables) and is not deployed to any more; retiring it is
+ * docs/PRIORITIES.md item 3.3. Its block stays because `wrangler types`
+ * derives `Env` from it and because `.dev.vars` + `npm run dev` run against it
+ * locally. `env.e2e` is only used by the Playwright suite.
  */
 {
   "$schema": "node_modules/wrangler/config-schema.json",
@@ -96,33 +102,46 @@
   },
   "env": {
     // The three deployed environment Workers. They are separate Worker scripts,
-    // each with its own D1 database and R2 bucket.
+    // each with its own D1 database (created 2026-09-28; the ids below are real).
     //
     // `vars`, `d1_databases` and `r2_buckets` are NON-INHERITABLE keys: a named
     // environment that omits one gets NOTHING, not the top-level value. An
     // environment missing its `d1_databases` block still boots and still serves
     // the studio, and then answers 503 storage-unavailable on every template
     // route - which reads like a code bug rather than a configuration one. That
-    // is why each block below repeats all three in full even where the values
-    // are identical to the top level.
+    // is why each block below repeats `vars` and `d1_databases` in full even
+    // where the values are identical to the top level.
     //
     // `main`, `assets`, `compatibility_*` and `observability` ARE inherited, so
     // they are not repeated. The evidence is `env.e2e` below: it omits all four
     // and its Playwright suite drives the full studio UI, which is served from
     // the inherited `assets` block.
     //
-    // Every `database_id` here is a PLACEHOLDER. No remote database exists yet
-    // (docs/PRIORITIES.md section 1). Create each one with
-    //   npx wrangler d1 create email-template-studio-<env>
-    // and paste the id it prints over the placeholder. Same for the buckets:
+    // NO `r2_buckets` on these three, deliberately (TECH_DEBT #48). R2 is not
+    // enabled on the account, and a Worker that binds a bucket that does not
+    // exist cannot be deployed at all - which is why nothing could be deployed
+    // between 2026-09-19 (the binding arrived) and 2026-09-28. Without the
+    // binding the Worker boots with `objectStore: null`: image upload in the
+    // visual editor answers 503 and everything else works. When R2 is enabled:
     //   npx wrangler r2 bucket create email-template-studio-assets-<env>
-    // `preview_database_id` is deliberately absent throughout, for the reason
-    // given on the top-level block.
+    // then add `"r2_buckets": [{ "binding": "STUDIO_ASSETS", "bucket_name": "..." }]`
+    // to each block and redeploy.
+    //
+    // STYTCH_PROJECT_ID is a plain var, not a secret: it is public and appears
+    // in the JWKS URL (docs/STYTCH_PLAN.md section 4). This is the TEST project
+    // that sign-in was proven on; moving production to the Live project is a
+    // later change. The browser half, VITE_STYTCH_PUBLIC_TOKEN, is baked in at
+    // BUILD time from `.env.local` (locally) or a repository variable (CI). Each
+    // Worker's hostname must also be an authorised domain and a redirect URL
+    // (`https://<host>/authenticate`) in the Stytch project, or sign-in fails
+    // with bad_domain_for_stytch_sdk.
     //
     // Send posture is deliberately conservative: none of these three sends live
-    // mail. Turning `production` into the real live sender is PRIORITIES item
-    // 3.2 (Option A) and is a separate change - it also moves the AWS keys and
-    // STUDIO_PASSWORD secrets onto it and flips the top level to dry run.
+    // mail yet. `production` goes live in a separate change that sets the AWS
+    // key secrets on it and flips its two STUDIO_SEND_* vars (docs/DEPLOYMENT.md).
+    //
+    // `preview_database_id` is deliberately absent throughout, for the reason
+    // given on the top-level block.
     "dev": {
       "name": "email-template-studio-dev",
       "vars": {
@@ -133,20 +152,14 @@
         "AWS_REGION": "ap-southeast-2",
         "SES_FROM_ADDRESS": "testing@swarm.camp",
         "SES_ALLOWED_RECIPIENTS": "echo@swarm.work",
+        "STYTCH_PROJECT_ID": "project-test-33c9013d-46a4-4fd3-bff3-cbeabe44ee87",
       },
       "d1_databases": [
         {
           "binding": "STUDIO_DB",
           "database_name": "email-template-studio-dev",
-          // REPLACE ME with the id from `npx wrangler d1 create email-template-studio-dev`.
-          "database_id": "00000000-0000-4000-8000-0000000000d2",
+          "database_id": "ee106ea3-f1d4-49ef-b95f-6cd5021875de",
           "migrations_dir": "migrations",
-        },
-      ],
-      "r2_buckets": [
-        {
-          "binding": "STUDIO_ASSETS",
-          "bucket_name": "email-template-studio-assets-dev",
         },
       ],
     },
@@ -160,20 +173,14 @@
         "AWS_REGION": "ap-southeast-2",
         "SES_FROM_ADDRESS": "testing@swarm.camp",
         "SES_ALLOWED_RECIPIENTS": "echo@swarm.work",
+        "STYTCH_PROJECT_ID": "project-test-33c9013d-46a4-4fd3-bff3-cbeabe44ee87",
       },
       "d1_databases": [
         {
           "binding": "STUDIO_DB",
           "database_name": "email-template-studio-staging",
-          // REPLACE ME with the id from `npx wrangler d1 create email-template-studio-staging`.
-          "database_id": "00000000-0000-4000-8000-0000000000d3",
+          "database_id": "3a8403ac-6d9d-4704-81cc-211fd5d88465",
           "migrations_dir": "migrations",
-        },
-      ],
-      "r2_buckets": [
-        {
-          "binding": "STUDIO_ASSETS",
-          "bucket_name": "email-template-studio-assets-staging",
         },
       ],
     },
@@ -181,26 +188,22 @@
       "name": "email-template-studio-production",
       "vars": {
         "STUDIO_ENVIRONMENT": "production",
+        // Dry-run first: flipping these two to true/false, together with the
+        // AWS key secrets, is what makes this Worker send real mail.
         "STUDIO_SEND_ENABLED": "false",
         "STUDIO_SEND_DRY_RUN": "true",
         "STUDIO_VISUAL_EDITOR": "true",
         "AWS_REGION": "ap-southeast-2",
         "SES_FROM_ADDRESS": "testing@swarm.camp",
         "SES_ALLOWED_RECIPIENTS": "echo@swarm.work",
+        "STYTCH_PROJECT_ID": "project-test-33c9013d-46a4-4fd3-bff3-cbeabe44ee87",
       },
       "d1_databases": [
         {
           "binding": "STUDIO_DB",
           "database_name": "email-template-studio-production",
-          // REPLACE ME with the id from `npx wrangler d1 create email-template-studio-production`.
-          "database_id": "00000000-0000-4000-8000-0000000000d4",
+          "database_id": "496ceadb-e389-4101-9e74-0408201c9a2a",
           "migrations_dir": "migrations",
-        },
-      ],
-      "r2_buckets": [
-        {
-          "binding": "STUDIO_ASSETS",
-          "bucket_name": "email-template-studio-assets-production",
         },
       ],
     },

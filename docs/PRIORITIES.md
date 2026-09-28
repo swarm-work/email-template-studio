@@ -17,6 +17,14 @@ Read section 1 (state), then section 2 (decisions only you can make), then work 
 
 ## 1. Where things stand
 
+> **2026-09-28.** Decision 1 is taken: **option A**, `env.production` is production. The three
+> named environments each got a real D1 database and Stytch sign-in, lost their R2 binding for now
+> (TECH_DEBT #48: R2 is not enabled on the account and a missing bucket blocks every deploy), and
+> are deployed from `npm run deploy:<env>`; `npm run deploy` alone refuses. The top-level Worker is
+> frozen on its 2026-09-18 build until item 3.3 retires it. Items 3.2 and 3.4 are done; 3.3 and
+> 3.5 are half done (the Workers are named right and the migrations have run remotely; the legacy
+> Worker still exists). See `docs/DEPLOYMENT.md`.
+
 The application is in better shape than the documentation says, and the operational setup is in worse shape. That gap got wider on 2026-09-19: the application grew a great deal and the operational setup did not move at all.
 
 The code is real, tested and deployed. Cloudflare Access JWT verification plus a shared-password gate enforce on every `/api/*` route, the SES sender was rewritten with `aws4fetch` so the Worker signs AWS requests at the edge, and the live Worker enforces this: `https://email-template-studio.swarm-work-emailer.workers.dev/api/send-test/status` answered `401 {"mode":"password"}` to an anonymous caller on 2026-09-15. On 2026-09-19 the branch runs **755 unit and component tests and 58 Playwright tests, all green**, and `npm run check` passes.
