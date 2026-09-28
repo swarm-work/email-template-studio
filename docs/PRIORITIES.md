@@ -173,6 +173,11 @@ Notes that change how you do them:
 
 ## 5. Later: when the above is done or there is slack
 
+> **2026-09-25.** Items 3.6, 4.9, 4.10 and 4.11 above, and the rows below for `POST /api/webhooks/ses`,
+> the real transactional send path and the header's `WORKSPACE` / `ENVIRONMENT` constants, are now
+> planned as slices 0, 2 and 4 of `docs/PLATFORM_PLAN.md` (workspaces, API keys, webhooks). Do them
+> from there; the rows stay here only so the history reads straight.
+
 Four rows were removed on 2026-09-19 because the work is done: template search and download-HTML, the
 studio copy claiming everything is local (`PageHeader.tsx` no longer exists and the footer reads the
 send server's status), updating the technical-debt register, and recording the deferral of
