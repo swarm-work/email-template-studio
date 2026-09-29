@@ -38,26 +38,7 @@ import {
   type Theme,
 } from '@stytch/react/b2b'
 import { AUTHENTICATE_PATH } from './authenticatePath'
-import { stytchClient as client } from './stytchClient'
-
-/**
- * One hour, for now - and an open decision (docs/STYTCH_LOG.md, decision 1).
- *
- * It was twelve hours, to match the shared-password session it replaces. On
- * 2026-09-24 the first sign-in that ever completed did so with this lowered to
- * 60, in the same change that fixed the double Stytch client; twelve has not
- * been re-tried since. Stytch sends this value on the discovery exchange, and
- * the project has a maximum session duration in its dashboard. Whether that
- * ceiling rejects a larger request or silently truncates it was never
- * observed either way, so: raise the ceiling first, then raise this, and
- * watch the exchange call once.
- *
- * This is the SESSION length, not the token's. The JWT itself lives about five
- * minutes; the SDK refreshes it in the background only while a client
- * instance exists, which is what `src/presentation/auth/stytchKeepAlive.ts`
- * is for once the studio is open - see `server/auth.ts`.
- */
-const SESSION_DURATION_MINUTES = 60
+import { SESSION_IDLE_TIMEOUT_MINUTES, stytchClient as client } from './stytchClient'
 
 /** Where Stytch sends the browser back to. Must match a Redirect URL exactly. */
 function redirectUrl(): string {
@@ -159,7 +140,7 @@ const SIGNED_IN_EVENTS: ReadonlySet<StytchEventType> = new Set([
  * chunk finishes downloading. The SDK's constructor already kicked off
  * `performBackgroundRefresh()` (`StytchB2BClient.mjs`) before this component
  * had a chance to render, so this is usually seconds, not minutes - but a
- * genuinely dead session (signed out elsewhere, hard 60-minute expiry) must
+ * genuinely dead session (signed out elsewhere, an hour without use) must
  * not leave a member staring at this sentence forever.
  */
 const RESTORE_TIMEOUT_MS = 5_000
@@ -270,7 +251,7 @@ export default function StytchSignIn({ onSignedIn }: StytchSignInProps) {
           // form has already handed back a session.
           authFlowType: 'Discovery',
           products: [B2BProducts.emailMagicLinks, B2BProducts.oauth],
-          sessionOptions: { sessionDurationMinutes: SESSION_DURATION_MINUTES },
+          sessionOptions: { sessionDurationMinutes: SESSION_IDLE_TIMEOUT_MINUTES },
           emailMagicLinksOptions: {
             discoveryRedirectURL: redirectUrl(),
             loginRedirectURL: redirectUrl(),

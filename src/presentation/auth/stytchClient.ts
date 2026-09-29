@@ -14,6 +14,9 @@
  * `StytchSignIn.tsx`, which is itself reached only via `React.lazy` - see that
  * file's module comment and `scripts/check-worker-bundle.mjs`. So the SDK is
  * still never in the first download of a build that is not using Stytch.
+ *
+ * Also exports `SESSION_IDLE_TIMEOUT_MINUTES`, the one number both sign-in and
+ * the keep-alive agree on for how long a session lives without use.
  */
 import { createStytchB2BClient } from '@stytch/react/b2b'
 
@@ -40,6 +43,31 @@ import { createStytchB2BClient } from '@stytch/react/b2b'
  * `undefined` and cannot be fixed by a Worker `var`. That is why the build
  * step sets it from a repository variable, and why the null branch below
  * exists: Stytch's own token check only logs a warning, which is easy to miss.
+ *
+ * No auto-extend-on-every-refresh option is passed to the constructor here,
+ * on purpose - do NOT add one. It sounds like the right knob for "keep the
+ * member signed in while they work", but it would extend the session on the
+ * SDK's OWN three-minute background refresh, which fires whether or not
+ * anyone is actually using the tab. Turning it on means any open, untouched
+ * tab keeps a session alive forever. `stytchKeepAlive.ts` does the real job
+ * instead: it only extends after real clicks, keys or scrolling. A vitest
+ * check reads this file's own source for that option's name so a well-meaning
+ * "simplification" cannot bring it back silently - see that check for why the
+ * name itself is spelled out only there, not here. See STYTCH_LOG decision 1
+ * and ADR-31's fourth revision.
  */
 const PUBLIC_TOKEN = import.meta.env.VITE_STYTCH_PUBLIC_TOKEN
 export const stytchClient = PUBLIC_TOKEN ? createStytchB2BClient(PUBLIC_TOKEN) : null
+
+/**
+ * How long a session lives without use, in minutes.
+ *
+ * Sign-in (`StytchSignIn.tsx`) asks Stytch for this many minutes up front, and
+ * every extension `stytchKeepAlive.ts` makes resets the clock to this much
+ * from now - so the two must always agree, and this is the one place that
+ * says so. Stytch's own Frontend SDK page in the dashboard caps whatever a
+ * frontend call may request; raising this number only works if that ceiling
+ * is raised to match first. See STYTCH_LOG decision 1 and ADR-31's fourth
+ * revision.
+ */
+export const SESSION_IDLE_TIMEOUT_MINUTES = 60

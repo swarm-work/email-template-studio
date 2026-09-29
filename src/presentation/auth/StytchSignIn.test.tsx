@@ -30,6 +30,10 @@ const { getSync, onChange, getOnChangeCallback } = vi.hoisted(() => {
 
 vi.mock('./stytchClient', () => ({
   stytchClient: { session: { getSync, onChange } },
+  // Required: StytchSignIn.tsx now imports this from here (a null client
+  // still needs the constant, so it lives in stytchClient.ts, not this
+  // component), and Vitest throws on access to a name this mock omits.
+  SESSION_IDLE_TIMEOUT_MINUTES: 60,
 }))
 
 vi.mock('@stytch/react/b2b', () => ({

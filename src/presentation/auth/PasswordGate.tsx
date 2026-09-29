@@ -67,7 +67,7 @@ const StytchSignIn = lazy(() => import('./StytchSignIn'))
  * a slower one (a JWKS outage clearing up, `server/auth.ts`) still gets caught
  * well inside the five-minute JWT lifetime. Four tries and then stop: without
  * a bound this would poll forever against a session that is never coming back
- * (a real sign-out, the hard 60-minute expiry).
+ * (a real sign-out, an hour without use).
  */
 const STALE_REPROBE_DELAYS_MS = [2_000, 5_000, 10_000, 20_000]
 
@@ -278,7 +278,7 @@ export function PasswordGate({ children, fetchImpl = defaultFetch }: PasswordGat
    * re-registering its `session.onChange` listener) for no reason.
    *
    * `onEnded` is what lets a session that ends for real (signed out
-   * elsewhere, the hard 60-minute expiry) show the sign-in form immediately,
+   * elsewhere, an hour without use) show the sign-in form immediately,
    * rather than waiting for the next API call to notice.
    */
   const isOpenInStytchMode = state.kind === 'open' && state.authMode === 'stytch'
