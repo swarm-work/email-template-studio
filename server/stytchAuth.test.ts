@@ -229,6 +229,29 @@ describe('loadAuthConfig with Stytch', () => {
       })
       expect(config.mode === 'stytch' && config.allowedOrganizations).toEqual(['swarm'])
     })
+
+    // The property most likely to break in a future reorder of
+    // `loadAuthConfig`: a missing allow-list must win over EVERY weaker mode
+    // that happens to also be configured, not just fall through past Stytch
+    // toward whichever one is checked next. Both cases below set a mode that
+    // `loadAuthConfig` would otherwise pick.
+    it('still refuses to mode none, not password, when a password is also set', () => {
+      const config = loadAuthConfig({
+        STYTCH_PROJECT_ID: PROJECT_ID,
+        STUDIO_PASSWORD: 'a-long-enough-password',
+      })
+      expect(config.mode).toBe('none')
+      expect(config.mode === 'none' && config.reason).toContain('STYTCH_ALLOWED_ORGANIZATIONS')
+    })
+
+    it('still refuses to mode none, not developer, when a dev identity is also set', () => {
+      const config = loadAuthConfig({
+        STYTCH_PROJECT_ID: PROJECT_ID,
+        STUDIO_DEV_IDENTITY: EMAIL,
+      })
+      expect(config.mode).toBe('none')
+      expect(config.mode === 'none' && config.reason).toContain('STYTCH_ALLOWED_ORGANIZATIONS')
+    })
   })
 })
 
@@ -289,21 +312,26 @@ describe('createStytchAuthenticator', () => {
     expect(result.ok === false && result.reason).toContain('signature')
   })
 
-  it('refuses a token whose key id is not in the published set', async () => {
+  it('refuses a token whose key id is not in the published set, marking the session "stale" not "refused"', async () => {
+    // A rotation mid-flight looks exactly like this, and is not evidence of a
+    // stranger - 'refused' would send a genuine Swarm member to the "not on
+    // the team" panel (ADR-31, update 2026-09-29, second revision).
     const token = await makeToken({}, { kid: OTHER_KID })
     const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-    expect(result).toMatchObject({ ok: false })
+    expect(result).toMatchObject({ ok: false, session: 'stale' })
     expect(result.ok === false && result.reason).toContain('unknown key')
   })
 
-  it('refuses when the JWKS endpoint cannot be reached, and says so', async () => {
+  it('refuses when the JWKS endpoint cannot be reached, marking the session "stale" not "refused"', async () => {
+    // An outage says nothing about who the visitor is, so it must not read as
+    // "you are not on the team" either.
     const failing = vi.fn(async () => new Response('nope', { status: 500 }))
     const authenticator = createStytchAuthenticator(PROJECT_ID, ALLOWED_ORGANIZATIONS, {
       fetch: failing,
       now: () => NOW_MS,
     })
     const result = await authenticator.authenticate(cookieHeaders(await makeToken()))
-    expect(result).toMatchObject({ ok: false })
+    expect(result).toMatchObject({ ok: false, session: 'stale' })
     expect(result.ok === false && result.reason).toContain('Stytch signing keys')
   })
 
@@ -352,10 +380,16 @@ describe('createStytchAuthenticator', () => {
   })
 
   describe('expiry, where there are two and only one is right', () => {
-    it('refuses an expired token', async () => {
+    it('refuses an expired token, but marks the session "stale" rather than "refused"', async () => {
+      // The whole point of ADR-31's 2026-09-29 update, second revision: the
+      // JWT lives about five minutes and the SDK refreshes it in the
+      // background, so an honest team member's sleeping tab hits exactly
+      // this path. `session !== 'refused'` is what stops PasswordGate from
+      // showing them the "not on the Swarm team" panel over it.
       const token = await makeToken({ exp: NOW_SECONDS - 120 })
       const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-      expect(result).toMatchObject({ ok: false })
+      expect(result).toMatchObject({ ok: false, session: 'stale' })
+      expect(result.ok === false && result.session).not.toBe('refused')
       expect(result.ok === false && result.reason).toContain('expired')
     })
 
@@ -365,10 +399,10 @@ describe('createStytchAuthenticator', () => {
       expect(result).toMatchObject({ ok: true })
     })
 
-    it('refuses a token that is not valid yet', async () => {
+    it('refuses a token that is not valid yet, also marked "stale" for the same reason as expiry', async () => {
       const token = await makeToken({ nbf: NOW_SECONDS + 600 })
       const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-      expect(result).toMatchObject({ ok: false })
+      expect(result).toMatchObject({ ok: false, session: 'stale' })
     })
 
     it('does NOT accept an expired token because the session is still open', async () => {
@@ -580,14 +614,19 @@ describe('createStytchAuthenticator', () => {
       expect(result).toMatchObject({ ok: true })
     })
 
-    it('matches a slug case-insensitively', async () => {
+    it('matches a slug case-insensitively, and lower-cases it on the identity too', async () => {
+      // Lower-cased ONCE, on the identity itself (organizationFromStytchClaims)
+      // - not just at this comparison - so workspaceAccess.roleFor, which
+      // compares identity.organization.slug with plain `===` and does no
+      // case-folding of its own, agrees with the allow-list about who 'Swarm'
+      // is.
       const token = await makeToken({
         'https://stytch.com/organization': { organization_id: 'organization-test-1', slug: 'Swarm' },
       })
       const result = await authenticatorWith(jwksFetch(), () => NOW_MS, ['swarm']).authenticate(
         cookieHeaders(token),
       )
-      expect(result).toMatchObject({ ok: true })
+      expect(result).toMatchObject({ ok: true, identity: { organization: { slug: 'swarm' } } })
     })
 
     it('refuses a member of another organisation, naming their email and that organisation', async () => {

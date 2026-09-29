@@ -227,6 +227,10 @@
         "SES_ALLOWED_RECIPIENTS": "qa@example.test,second@example.test",
         // No Access in front of the test build, so the API runs as this fixed identity.
         "STUDIO_DEV_IDENTITY": "playwright@example.test",
+        // Does nothing here - this env sets no STYTCH_PROJECT_ID, so auth stays
+        // `developer` mode above. Present only to silence wrangler's "exists at
+        // the top level, but not on env.e2e.vars" warning on every build and test run.
+        "STYTCH_ALLOWED_ORGANIZATIONS": "swarm",
       },
       // Bindings are NOT inherited by a named environment, so both are repeated
       // here. A separate database id keeps the Playwright run from touching the

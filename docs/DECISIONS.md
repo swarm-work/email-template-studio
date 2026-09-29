@@ -396,6 +396,45 @@ someone outside `swarm`: invite them into the `swarm` organisation first (so the
 all), then hold them to `editor` with a named row in `workspace_members` if the organisation-wide
 `admin` default is more than that collaboration should have.
 
+**Update 2026-09-29, second revision: "nothing changes for the team" was not true.** The PR that
+added the organisation allow-list said exactly that in its description, and it was wrong. The
+allow-list check (`session: 'refused'`) was, at first, given to every way a Stytch session could
+fail verification - including an **expired** or **not-yet-valid** JWT, a JWKS fetch that failed, and
+a key id this Worker had not seen yet. The token lives about five minutes (see the authenticator
+above) and the browser SDK refreshes it silently in the background, but only while that SDK is
+actually loaded - and it is loaded **only** for sign-in or sign-out, never while the studio itself is
+open. So a real Swarm member who left a tab asleep for anywhere from five to sixty minutes (the
+SDK sets the session cookie to expire with the _session_, not the token) reopened it to the "This
+studio is only for the Swarm team" panel, with Sign out as the only way out. A JWKS outage or a mid-
+flight key rotation would have told the **whole team** the same lie. On the password-gate's
+predecessor screen, the same 401 rendered the ordinary Stytch sign-in, whose module-scope client
+refreshes the session on construction - so a reload was enough. The refusal panel had no such
+refresh path behind it.
+
+The fix separates "genuinely not on the team" from "a problem the browser's own refresh already
+knows how to fix": `AuthResult.session` gained a third value, `'stale'`, covering exactly the four
+cases above, and `PasswordGate.tsx` routes `'stale'` to the ordinary Stytch sign-in screen - which is
+also what loads the SDK and lets the refresh happen - never to the refusal panel. `'refused'` now
+means only a genuinely permanent problem: the organisation allow-list, or a claim the token will
+never gain back (no email, no subject, a malformed or unverifiable token). The refusal panel's title
+followed the same split: only an organisation mismatch is told "only for the Swarm team" - a claims
+problem (a Google-only sign-in with no email claim, say) can hit a real Swarm member too, so it keeps
+the plainer wording the password gate used before this feature existed. See `server/auth.ts`
+(`AuthResult`, `checkStytchClaims`) and `PasswordGate.tsx` for the code; `stytchAuth.test.ts` and
+`PasswordGate.test.tsx` cover both directions - an expired token no longer reads `session: 'refused'`,
+and a `'stale'` 401 renders the sign-in screen, not the panel.
+
+**A slug allow-list is only as strong as the team's hold on that slug in each Stytch project.** While
+`create_organization_enabled` is on, a stranger can claim the `swarm` slug in a project the team has
+not created it in yet - a future Live project stood up before anyone signs into it, for instance - or
+after the `swarm` organisation's slug is renamed and the old value is still sitting in
+`STYTCH_ALLOWED_ORGANIZATIONS` in some deployed environment. (ADR-33's own 2026-09-29 update raises
+the same cross-environment slug-collision risk for workspace membership; here it controls sign-in
+itself.) Two things follow: create or claim the `swarm` slug in any new project **before** pointing an
+environment's `STYTCH_PROJECT_ID` at it, and if the organisation's slug is ever renamed, update every
+environment's `STYTCH_ALLOWED_ORGANIZATIONS` the same day - turning off `create_organization_enabled`
+first, so the old slug cannot be claimed by someone else in the gap.
+
 ## ADR-32 Workspaces: one flat table, and the store scopes every read and write by it
 
 **Context.** Until 2026-09-25 the studio was single-tenant: one library, one `templates.slug`

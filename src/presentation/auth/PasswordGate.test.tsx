@@ -75,6 +75,33 @@ describe('PasswordGate', () => {
     expect(spy.mock.calls.length).toBeLessThan(5)
   })
 
+  it('probes once with its DEFAULT fetch when the session is refused too, not only on the 200 path', async () => {
+    // The 3,767-request loop above was only ever exercised by the 200 path -
+    // every OTHER state, including the refusal panel this gate can now sit
+    // on for as long as the browser has the cookie, used an injected
+    // `fetchImpl` and so never ran through the default. A regression that
+    // re-introduced the loop only on a non-200 answer would pass every test
+    // above and fail silently in production.
+    const spy = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ code: 'unauthenticated', mode: 'stytch', session: 'refused' }), {
+          status: 401,
+          headers: { 'content-type': 'application/json' },
+        }),
+    )
+    vi.stubGlobal('fetch', spy)
+
+    render(
+      <PasswordGate>
+        <p>studio</p>
+      </PasswordGate>,
+    )
+    await screen.findByText('This studio is only for the Swarm team')
+    await new Promise((resolve) => setTimeout(resolve, 300))
+
+    expect(spy.mock.calls.length).toBeLessThan(5)
+  })
+
   it('shows the Stytch sign-in when the API reports the stytch mode', async () => {
     render(
       <PasswordGate fetchImpl={fetchStub([() => json({ code: 'unauthenticated', mode: 'stytch' }, 401)])}>
@@ -99,6 +126,67 @@ describe('PasswordGate', () => {
     )
     expect(await screen.findByText('stytch sign-in')).toBeInTheDocument()
     expect(screen.queryByText(/only for the Swarm team/i)).not.toBeInTheDocument()
+  })
+
+  it('shows the ordinary sign-in, not the refusal panel, when the session is merely "stale"', async () => {
+    // The bug ADR-31's 2026-09-29 update (second revision) fixed: the Stytch
+    // JWT lives about five minutes, so a team member who reopens the studio
+    // later gets exactly this from the server. Routing it to the refusal
+    // panel turned a routine refresh into a lockout with only Sign out to
+    // escape it - the ordinary sign-in screen is what actually loads the SDK
+    // and lets the background refresh happen.
+    render(
+      <PasswordGate
+        fetchImpl={fetchStub([
+          () =>
+            json(
+              {
+                code: 'unauthenticated',
+                mode: 'stytch',
+                session: 'stale',
+                message: 'Stytch session token has expired.',
+              },
+              401,
+            ),
+        ])}
+      >
+        <p>studio</p>
+      </PasswordGate>,
+    )
+    expect(await screen.findByText('stytch sign-in')).toBeInTheDocument()
+    expect(screen.queryByText(/only for the Swarm team/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Sign out' })).not.toBeInTheDocument()
+  })
+
+  it('shows the plainer refusal wording, not "only for the Swarm team", for a claims-kind refusal', async () => {
+    // A Google-only sign-in with no email claim can happen to a genuine Swarm
+    // member (server/auth.ts), so `refusal: 'claims'` must not accuse them of
+    // being on the wrong team.
+    const reason = 'Stytch session token carries no email address. Claims present: iss, sub.'
+    render(
+      <PasswordGate
+        fetchImpl={fetchStub([
+          () =>
+            json(
+              {
+                code: 'unauthenticated',
+                mode: 'stytch',
+                session: 'refused',
+                refusal: 'claims',
+                message: reason,
+              },
+              401,
+            ),
+        ])}
+      >
+        <p>studio</p>
+      </PasswordGate>,
+    )
+    expect(
+      await screen.findByText('Signed in with Stytch, but the studio API refused the session'),
+    ).toBeInTheDocument()
+    expect(screen.queryByText('This studio is only for the Swarm team')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Sign out of Stytch and try again' })).toBeInTheDocument()
   })
 
   it('shows a refusal panel on every load when the server refuses the Stytch session', async () => {
@@ -147,6 +235,39 @@ describe('PasswordGate', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Sign out' }))
     await waitFor(() => expect(signOutOfStytch).toHaveBeenCalledTimes(1))
     await waitFor(() => expect(toastError).toHaveBeenCalledWith('Could not reach Stytch to sign out.'))
+  })
+
+  it('reloads the page when signing out fails outright, rather than leaving the button dead', async () => {
+    // The chunk-failure branch: `signOutOfStytch` itself rejects (a deploy
+    // replaced the chunk between page load and this click). A dropped promise
+    // here would leave the ONLY way out of this panel doing nothing when
+    // clicked.
+    // jsdom's `location.reload` is not implemented and the property is not
+    // writable/configurable enough for `vi.spyOn` to replace directly, so the
+    // whole `location` object is swapped for one with a stub in its place.
+    const originalLocation = window.location
+    const reload = vi.fn()
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: { ...originalLocation, reload },
+    })
+    try {
+      signOutOfStytch.mockRejectedValueOnce(new Error('chunk failed to load'))
+      render(
+        <PasswordGate
+          fetchImpl={fetchStub([
+            () =>
+              json({ code: 'unauthenticated', mode: 'stytch', session: 'refused', message: 'refused' }, 401),
+          ])}
+        >
+          <p>studio</p>
+        </PasswordGate>,
+      )
+      await userEvent.click(await screen.findByRole('button', { name: 'Sign out' }))
+      await waitFor(() => expect(reload).toHaveBeenCalledTimes(1))
+    } finally {
+      Object.defineProperty(window, 'location', { configurable: true, value: originalLocation })
+    }
   })
 
   it('completes the round trip on /authenticate even though the probe still refuses', async () => {

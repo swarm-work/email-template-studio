@@ -40,6 +40,15 @@ These are settled. They are recorded here so the work does not re-open them.
 
 The superseded spec proposed a second allow-list in the Worker, checked per request. It has been cut.
 
+**Update 2026-09-29 (ADR-31): the domain restriction below turned out not to hold on its own.** The
+Stytch project also has `create_organization_enabled` on, which lets a complete stranger mint their own
+organisation during sign-in with no domain restriction at all - so "natively restricts sign-in to
+swarm.work addresses" was never quite true while that setting is on. What actually keeps a stranger out
+today is `STYTCH_ALLOWED_ORGANIZATIONS`, a Worker-side allow-list of organisation **slugs** (not emails)
+checked in `server/auth.ts`. See ADR-31's 2026-09-29 update in `docs/DECISIONS.md` for the full story. The
+email-based allow-list this section explains the absence of is still cut - the paragraph below is otherwise
+unchanged.
+
 Stytch B2B already restricts sign-in to swarm.work addresses natively through `email_allowed_domains` plus
 `RESTRICTED` JIT provisioning, which is one of the reasons decision 1 chose B2B. The allow-list's only
 unique contribution was **revocation speed**: because the Worker verifies signatures locally against cached

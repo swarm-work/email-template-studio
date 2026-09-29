@@ -73,13 +73,14 @@ the team's published keys is what turns that header into proof.
 
 **Five** modes, chosen by environment variables. The first one that matches wins:
 
-| Variables set                                        | Mode                | Use                                                                       |
-| ---------------------------------------------------- | ------------------- | ------------------------------------------------------------------------- |
-| `ACCESS_TEAM_DOMAIN` + `ACCESS_AUD`                  | `cloudflare-access` | Production. Verifies a real Access JWT.                                   |
-| `STYTCH_PROJECT_ID` + `STYTCH_ALLOWED_ORGANIZATIONS` | `stytch`            | Verifies a Stytch B2B session JWT AND the organisation it names (ADR-31). |
-| `STUDIO_PASSWORD`                                    | `password`          | A shared password, for a test deployment without Access.                  |
-| `STUDIO_DEV_IDENTITY`                                | `developer`         | Local and Playwright only. Trusts a fixed email.                          |
-| none of them                                         | `disabled`          | Every `/api/*` request gets 401.                                          |
+| Variables set                                                | Mode                | Use                                                                                                                                                                                                                           |
+| ------------------------------------------------------------ | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ACCESS_TEAM_DOMAIN` + `ACCESS_AUD`                          | `cloudflare-access` | Production. Verifies a real Access JWT.                                                                                                                                                                                       |
+| `STYTCH_PROJECT_ID` + `STYTCH_ALLOWED_ORGANIZATIONS`         | `stytch`            | Verifies a Stytch B2B session JWT AND the organisation it names (ADR-31).                                                                                                                                                     |
+| `STYTCH_PROJECT_ID` alone, no `STYTCH_ALLOWED_ORGANIZATIONS` | `none`              | **Fails closed - never falls through to `password` or `developer` below**, even if one is also set. A forgotten or blanked allow-list must read as "nobody", not "whoever is next in this table" (ADR-31, update 2026-09-29). |
+| `STUDIO_PASSWORD`                                            | `password`          | A shared password, for a test deployment without Access.                                                                                                                                                                      |
+| `STUDIO_DEV_IDENTITY`                                        | `developer`         | Local and Playwright only. Trusts a fixed email.                                                                                                                                                                              |
+| none of them                                                 | `disabled`          | Every `/api/*` request gets 401.                                                                                                                                                                                              |
 
 The order is what makes this safe to leave configured: a forgotten `STUDIO_DEV_IDENTITY`
 or `STUDIO_PASSWORD` can never downgrade a deployment that has real Access set up.
@@ -87,7 +88,9 @@ Setting only one of the two Access variables is refused outright rather than qui
 falling back to something weaker. Stytch sits between Access and the password on
 purpose: **removing `STYTCH_PROJECT_ID` and redeploying falls back to the password
 gate**, which is the rollback lever, and it is rehearsed before it is needed rather
-than discovered during an incident.
+than discovered during an incident. The lever is unsetting `STYTCH_PROJECT_ID` -
+**not** blanking `STYTCH_ALLOWED_ORGANIZATIONS`, which (see the table above) fails to
+mode `none` and locks everyone out instead.
 
 ### Stytch
 
@@ -107,6 +110,13 @@ never mean "anyone with a Stytch account may sign in" (ADR-31, update 2026-09-29
 `create_organization_enabled` in the Stytch dashboard, and restricting the `swarm`
 organisation's sign-up to `swarm.work` addresses, are the first lock and still worth doing
 either way; this variable is the second one, enforced by this Worker's own code.
+
+**This allow-list is only as strong as the team's hold on the `swarm` slug in each Stytch
+project.** Create or claim that slug in any new (Live) project before pointing an
+environment's `STYTCH_PROJECT_ID` at it, and if it is ever renamed, update
+`STYTCH_ALLOWED_ORGANIZATIONS` the same day - with `create_organization_enabled` turned off
+first, so the old slug cannot be claimed by someone else in the gap (`docs/DECISIONS.md`,
+ADR-31, update 2026-09-29, second revision).
 
 Two things about this mode differ from the others and both will be noticed before they
 are understood:

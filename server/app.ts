@@ -226,10 +226,15 @@ export function createApp({
           // "redirect to the identity provider". It names a mechanism, not a secret.
           mode: authenticator.mode,
           // Set only by the Stytch mode: 'absent' (no cookie yet, show the
-          // ordinary sign-in) or 'refused' (a cookie the server said no to,
-          // which a reload will not fix - see PasswordGate.tsx). Undefined,
+          // ordinary sign-in), 'stale' (a cookie the server said no to for a
+          // reason the browser's own refresh can fix - show the ordinary
+          // sign-in again) or 'refused' (a cookie the server said no to for a
+          // reason reloading will not fix - see PasswordGate.tsx). Undefined,
           // and so dropped from the JSON, in every other mode.
           session: result.session,
+          // Only meaningful alongside session 'refused' - see AuthResult in
+          // server/auth.ts. Picks the refusal panel's wording.
+          refusal: result.refusal,
           message: result.reason,
         },
         401,

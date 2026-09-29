@@ -202,8 +202,13 @@ export default function StytchSignIn({ onSignedIn }: StytchSignInProps) {
           // Discovery: the member types their address and Stytch works out
           // which organisation they belong to. The organisation's
           // `email_allowed_domains` plus RESTRICTED JIT provisioning is what
-          // keeps this to swarm.work addresses (ADR-31) - there is no
-          // allow-list in the Worker doing that job.
+          // is SUPPOSED to keep this to swarm.work addresses, but the Stytch
+          // project also has `create_organization_enabled` on, which lets a
+          // stranger mint their own organisation with no domain restriction at
+          // all. The actual lock is server-side: `STYTCH_ALLOWED_ORGANIZATIONS`
+          // in the Worker (ADR-31, update 2026-09-29), checked in
+          // `server/auth.ts` against the token's organisation slug after this
+          // form has already handed back a session.
           authFlowType: 'Discovery',
           products: [B2BProducts.emailMagicLinks, B2BProducts.oauth],
           sessionOptions: { sessionDurationMinutes: SESSION_DURATION_MINUTES },
