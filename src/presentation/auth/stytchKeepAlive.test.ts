@@ -41,19 +41,14 @@ function fakeDoc(initial: 'visible' | 'hidden' = 'hidden') {
   }
 }
 
-function fakeClient(
-  overrides: {
-    getSync?: () => { readonly last_accessed_at?: unknown } | null
-    authenticate?: () => Promise<unknown>
-  } = {},
-) {
+function fakeClient(overrides: { getSync?: () => { readonly last_accessed_at?: unknown } | null } = {}) {
   const unsubscribe = vi.fn()
   return {
     unsubscribe,
     client: {
       session: {
         getSync: vi.fn(overrides.getSync ?? (() => ({}))),
-        authenticate: vi.fn(overrides.authenticate ?? (async () => ({}))),
+        authenticate: vi.fn(async () => ({})),
         onChange: vi.fn((_callback: (session: unknown) => void) => unsubscribe),
       },
     },
@@ -171,21 +166,48 @@ describe('keepStytchSessionFresh', () => {
 
   it('swallows a rejected authenticate() call instead of leaving it an unhandled rejection', async () => {
     const clock = fakeClock()
-    const { client } = fakeClient({
-      authenticate: vi.fn(async () => {
-        throw new Error('network down')
-      }),
-    })
-    keepStytchSessionFresh(client, doc as unknown as Document, undefined, clock.now)
+    // A plain function, deliberately NOT `vi.fn`: a Vitest mock attaches its
+    // own handlers to every promise it returns (to record `settledResults`),
+    // which marks the rejection handled whether or not the module catches it -
+    // so a `vi.fn` here let this test pass with the module's `.catch` deleted.
+    let authenticateCalls = 0
+    const client = {
+      session: {
+        getSync: () => ({}),
+        authenticate: () => {
+          authenticateCalls += 1
+          return Promise.reject(new Error('network down'))
+        },
+        onChange: () => () => undefined,
+      },
+    }
+    // Node's own `process` (this test runs under Vitest in Node, jsdom or
+    // not). Typed by hand because `src/`'s tsconfig carries no Node types.
+    const nodeProcess = (
+      globalThis as unknown as {
+        process: {
+          on(event: 'unhandledRejection', listener: (reason: unknown) => void): void
+          off(event: 'unhandledRejection', listener: (reason: unknown) => void): void
+        }
+      }
+    ).process
+    const unhandled = vi.fn()
+    nodeProcess.on('unhandledRejection', unhandled)
+    try {
+      keepStytchSessionFresh(client, doc as unknown as Document, undefined, clock.now)
 
-    clock.advance(LONG_ENOUGH_MS)
-    doc.setVisibility('visible')
-    doc.fireVisibilityChange()
-    expect(client.session.authenticate).toHaveBeenCalledTimes(1)
+      clock.advance(LONG_ENOUGH_MS)
+      doc.setVisibility('visible')
+      doc.fireVisibilityChange()
+      expect(authenticateCalls).toBe(1)
 
-    // If the rejection were not caught inside the module, it would surface
-    // here as an unhandled promise rejection and fail this test.
-    await new Promise((resolve) => setTimeout(resolve, 0))
+      // Node reports an unhandled rejection once the microtask queue drains,
+      // which is before this timer fires.
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(unhandled).not.toHaveBeenCalled()
+    } finally {
+      nodeProcess.off('unhandledRejection', unhandled)
+    }
   })
 
   it('calls onEnded when the SDK reports the session is gone', () => {

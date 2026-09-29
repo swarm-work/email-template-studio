@@ -742,7 +742,7 @@ describe('authentication', () => {
     })
   })
 
-  it('leaves staleReason off the 401 body for the ordinary expired-JWT stale reading', async () => {
+  it("carries staleReason 'expired' on the 401 body for the ordinary expired-JWT stale reading", async () => {
     const app = createApp({
       authenticator: {
         mode: 'stytch',

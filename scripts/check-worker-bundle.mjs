@@ -261,11 +261,16 @@ const STYTCH_CLIENT_ALLOWED = new Set([
  * fooled by nothing more exotic than a string that happens to read
  * `from "…"` outside an import, which none of this source does (checked by
  * hand: every literal `from '...'`/`import '...'` here IS an import).
+ *
+ * The whitespace before the quote is OPTIONAL (`\s*`, not `\s+`): minified
+ * output - which `checkClientBuildOutput` below scans with this same function
+ * - writes `from"./chunk.js"` with no space at all, and a `\s+` here once made
+ * that half of the output check find no imports whatsoever.
  */
 function staticImportSpecifiers(source) {
   const specifiers = new Set()
-  for (const match of source.matchAll(/\bfrom\s+['"]([^'"]+)['"]/g)) specifiers.add(match[1])
-  for (const match of source.matchAll(/\bimport\s+['"]([^'"]+)['"]/g)) specifiers.add(match[1])
+  for (const match of source.matchAll(/\bfrom\s*['"]([^'"]+)['"]/g)) specifiers.add(match[1])
+  for (const match of source.matchAll(/\bimport\s*['"]([^'"]+)['"]/g)) specifiers.add(match[1])
   return specifiers
 }
 
@@ -417,9 +422,19 @@ function checkClientBuildOutput() {
     console.error(`Could not read the entry chunk at ${entryPath.pathname}.`)
     throw error
   }
-  const staticStytchImports = [...leadingStaticImportSpecifiers(entrySource)].filter((specifier) =>
-    /stytch/i.test(specifier),
-  )
+  const entryImports = [...leadingStaticImportSpecifiers(entrySource)]
+  // A tripwire for this check itself: the entry chunk always imports at least
+  // the shared React chunk, so finding NOTHING means the scan has gone blind
+  // (a change in how the bundler writes imports), not that the entry is clean.
+  if (entryImports.length === 0) {
+    console.error(
+      `\nFound no static imports at all at the top of the entry chunk (${entrySrc}). The scan in ` +
+        'leadingStaticImportSpecifiers no longer understands the bundler output, so this check cannot vouch ' +
+        'for anything - fix the scan.\n',
+    )
+    process.exit(1)
+  }
+  const staticStytchImports = entryImports.filter((specifier) => /stytch/i.test(specifier))
   if (staticStytchImports.length > 0) {
     console.error(
       `\nThe entry chunk (${entrySrc}) statically imports a Stytch chunk, which means it ships in every ` +
