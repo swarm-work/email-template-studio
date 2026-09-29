@@ -129,7 +129,7 @@ plus two items the persistence work created.
 
 **Why.** This is the one item whose damage is irreversible. Without a configuration set, SES emits no bounce, complaint, rejection or delivery events, and AWS revokes production access on rates you cannot see. Everything downstream (SNS, suppression, alarms, the delivery log) depends on this one setting. The code already forwards `SES_CONFIGURATION_SET`; nothing sets it.
 
-**How.** Step zero is a fresh AWS session for `swarm-dev-internal-tools`. Confirm reality with `aws sesv2 get-account` and `aws sesv2 get-email-identity --email-identity swarm.camp` in `ap-southeast-2`. Create `studio-transactional-production` and `studio-transactional-staging` with reputation metrics enabled, add `SES_CONFIGURATION_SET` to the relevant vars blocks, redeploy, send one test and check the set's metrics. In the same session enable the account-level suppression list for BOUNCE and COMPLAINT (the no-code half of item 4.10).
+**How.** Step zero is a fresh AWS session for `swarm-main`. Confirm reality with `aws sesv2 get-account` and `aws sesv2 get-email-identity --email-identity swarm.camp` in `ap-southeast-2`. Create `studio-transactional-production` and `studio-transactional-staging` with reputation metrics enabled, add `SES_CONFIGURATION_SET` to the relevant vars blocks, redeploy, send one test and check the set's metrics. In the same session enable the account-level suppression list for BOUNCE and COMPLAINT (the no-code half of item 4.10).
 
 ### 3.7 Rehearse the backup once
 

@@ -40,10 +40,11 @@ export function WorkspaceSettingsPage() {
         </Alert>
       ) : null}
 
-      {/* Keyed by the slug: a switch to another workspace remounts both, so the
+      {/* Keyed by the slug (plus a distinct suffix each, since siblings need
+          unique keys): a switch to another workspace remounts both, so the
           form starts from that workspace's values instead of syncing to them. */}
-      <GeneralSettings key={workspace.slug} admin={admin} />
-      <MembersSection key={workspace.slug} admin={admin} />
+      <GeneralSettings key={`${workspace.slug}-general`} admin={admin} />
+      <MembersSection key={`${workspace.slug}-members`} admin={admin} />
     </div>
   )
 }

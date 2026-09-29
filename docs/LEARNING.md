@@ -784,6 +784,11 @@ adapters agree.
 may not enter it. A 403 would confirm the workspace exists, which is information a stranger should
 not get. The test in `workspaceRoutes.test.ts` compares the two bodies with `toBe`.
 
+One accepted exception: _creating_ a workspace is a different code path, and `POST
+/api/workspaces` answers `409 slug-taken` to any caller allowed to create one at all, which does
+confirm that slug is in use. Workspace names are not secret, so this is a known trade, not a bug -
+`requireWorkspace` (entering an existing workspace) still never confirms one exists.
+
 ### A React context with an optional reader
 
 `src/presentation/workspace/WorkspaceContext.tsx` exposes `useWorkspace()`, which throws outside a

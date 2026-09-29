@@ -15,6 +15,37 @@
 import type { Identity } from './auth.ts'
 import type { StoredMember, StoredWorkspace, WorkspaceRole } from './workspaceStore.ts'
 
+/**
+ * Who may create a NEW workspace (ADR-33, update 2026-09-29).
+ *
+ * The Stytch project behind this app lets a stranger create their own
+ * organisation during sign-in, so "signed in" alone is not "belongs to a
+ * team" - a stranger with a self-made organisation would otherwise become
+ * the admin of a brand-new workspace just by calling this endpoint. So
+ * creation is narrower than entering an existing workspace:
+ *   1. A 'server' identity may always create one (same trust as ADR-33's
+ *      entry rule).
+ *   2. A directory identity may create one when its Stytch organisation
+ *      already owns at least one workspace, or when it is already a named
+ *      admin of at least one workspace - either way, it is already part of
+ *      a team the studio recognises, not a fresh, self-made organisation.
+ */
+export function mayCreateWorkspace(
+  identity: Identity,
+  existingWorkspaces: readonly StoredWorkspace[],
+  ownMemberships: readonly StoredMember[],
+): boolean {
+  if (identity.origin === 'server') return true
+  const organizationSlug = identity.organization?.slug
+  if (
+    organizationSlug !== undefined &&
+    existingWorkspaces.some((workspace) => workspace.stytchOrganizationSlug === organizationSlug)
+  ) {
+    return true
+  }
+  return ownMemberships.some((membership) => membership.role === 'admin')
+}
+
 export function roleFor(
   workspace: StoredWorkspace,
   membership: StoredMember | null,

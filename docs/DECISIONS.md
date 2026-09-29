@@ -444,6 +444,30 @@ workspace, and a lockout the moment a table is empty.
 onto `admin` is a one-line change in `roleFor` when the team wants editors by default. The password
 mode's "everyone is an admin" is the same fact it has always been, now written down.
 
+**Update 2026-09-29.** Entering an existing workspace and _creating_ a new one turned out to need
+different rules. The Stytch project behind this app lets anyone create their own organisation during
+sign-in, so a stranger reaching the API has a valid session but belongs to no team the studio
+recognises - "signed in" is not "belongs to a team". Before this update, `POST /api/workspaces`
+let any signed-in caller create a workspace and become its first admin, so that stranger could make
+one for themself. `server/workspaceAccess.ts` now also exports `mayCreateWorkspace(identity,
+existingWorkspaces, ownMemberships)`, used only by that route: a `server` identity may always create
+one; a directory identity may create one when its Stytch organisation already owns at least one
+workspace, or when it is already a named `admin` of at least one workspace - either way, proof it
+already belongs to a team the studio knows about, not a fresh, self-made organisation. Everyone else
+gets `403 forbidden` with "Only members of an existing team can create a workspace." Rule 3 above
+(entering a workspace through its organisation) and the member table itself are unchanged; this only
+narrows who may make a brand-new workspace.
+
+Calling an organisation owning a workspace "proof" of belonging to a team assumes every workspace's
+`stytchOrganizationSlug` is already a real, claimed slug in that environment's Stytch project - rule 3
+and `mayCreateWorkspace` both match on slug, not id (see the decision above), and nothing stops a
+brand-new, unclaimed slug in one environment (say, Test) from colliding with a slug that is claimed
+and meaningful in another (Live). This was true before this update too; it is only more load-bearing
+now that slug ownership also gates workspace creation. One more consequence worth naming: an
+Access-mode identity (`origin: 'directory'`, no Stytch organisation at all) can no longer create a
+workspace unless it is already a named `admin` somewhere - Access has no organisation to check against
+rule 2 of `mayCreateWorkspace`.
+
 ## ADR-4 Motion: beUI selectively
 
 **Context.** The brief asks for beUI where motion communicates state, and for reduced-motion support.

@@ -108,8 +108,11 @@ export class InMemoryWorkspaceStore implements WorkspaceStore {
   }
 
   async membershipsOf(email: string): Promise<readonly StoredMember[]> {
+    // Case-insensitive: members are stored lower-cased (see putMember), but the
+    // caller (an identity's email, or a URL path segment) may carry any case.
+    const target = email.toLowerCase()
     return [...this.#members.values()]
-      .filter((member) => member.email === email)
+      .filter((member) => member.email === target)
       .sort((a, b) => a.workspaceId.localeCompare(b.workspaceId))
       .map(copy)
   }
@@ -122,12 +125,20 @@ export class InMemoryWorkspaceStore implements WorkspaceStore {
   ): Promise<StoredMember | null> {
     // The foreign key in SQL refuses a member of a workspace that is not there.
     if (!this.#workspaces.has(workspaceId)) return null
-    const member: StoredMember = { workspaceId, email, role, addedBy: ctx.by, addedAt: ctx.at }
-    this.#members.set(memberKey(workspaceId, email), member)
+    // Lower-cased so 'Jane@Swarm.Work' and 'jane@swarm.work' are one member.
+    const normalizedEmail = email.toLowerCase()
+    const member: StoredMember = {
+      workspaceId,
+      email: normalizedEmail,
+      role,
+      addedBy: ctx.by,
+      addedAt: ctx.at,
+    }
+    this.#members.set(memberKey(workspaceId, normalizedEmail), member)
     return copy(member)
   }
 
   async removeMember(workspaceId: string, email: string): Promise<'deleted' | 'not-found'> {
-    return this.#members.delete(memberKey(workspaceId, email)) ? 'deleted' : 'not-found'
+    return this.#members.delete(memberKey(workspaceId, email.toLowerCase())) ? 'deleted' : 'not-found'
   }
 }

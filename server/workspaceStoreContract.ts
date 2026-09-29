@@ -130,5 +130,24 @@ export function describeWorkspaceStore(name: string, makeStore: () => WorkspaceS
       expect(await store.putMember('ws_missing', 'a@x.test', 'admin', CTX)).toBeNull()
       expect(await store.membershipsOf('a@x.test')).toEqual([])
     })
+
+    it('treats member emails case-insensitively: stored lower-case, found by any case', async () => {
+      const store = makeStore()
+      await store.create(newWorkspace('acme'), CTX)
+      await store.putMember('ws_acme', 'Jane@Swarm.Work', 'admin', CTX)
+
+      expect((await store.listMembers('ws_acme')).map((m) => m.email)).toEqual(['jane@swarm.work'])
+      expect((await store.membershipsOf('jane@swarm.work')).map((m) => m.workspaceId)).toEqual(['ws_acme'])
+      expect((await store.membershipsOf('JANE@SWARM.WORK')).map((m) => m.workspaceId)).toEqual(['ws_acme'])
+
+      // A second PUT for the same address in a different case is a role
+      // change, not a second member.
+      await store.putMember('ws_acme', 'JANE@swarm.work', 'editor', LATER_CTX)
+      expect((await store.listMembers('ws_acme')).map((m) => [m.email, m.role])).toEqual([
+        ['jane@swarm.work', 'editor'],
+      ])
+
+      expect(await store.removeMember('ws_acme', 'Jane@Swarm.Work')).toBe('deleted')
+    })
   })
 }

@@ -5,7 +5,7 @@ import { D1WorkspaceStore, isWorkspaceSlugConflict } from './d1WorkspaceStore.ts
 import { InMemoryWorkspaceStore } from './inMemoryWorkspaceStore.ts'
 import { NodeSqliteDatabase } from './testSqlite.ts'
 import { CTX } from './templateStoreContract.ts'
-import { roleAllows, roleFor } from './workspaceAccess.ts'
+import { mayCreateWorkspace, roleAllows, roleFor } from './workspaceAccess.ts'
 import { DEFAULT_WORKSPACE, DEFAULT_WORKSPACE_CTX } from './workspaceStore.ts'
 import type { StoredWorkspace } from './workspaceStore.ts'
 import { describeWorkspaceStore, newWorkspace } from './workspaceStoreContract.ts'
@@ -45,6 +45,36 @@ describe('the default workspace', () => {
     await store.putMember('ws_acme', 'a@x.test', 'admin', CTX)
     await database.prepare('DELETE FROM workspaces WHERE id = ?').bind('ws_acme').run()
     expect(await store.membershipsOf('a@x.test')).toEqual([])
+  })
+
+  it('putMember collapses a legacy mixed-case row instead of adding a second one', async () => {
+    // Before lower-casing existed, the old PUT route stored whatever case the
+    // caller sent, so a row like 'Jane@Swarm.Work' can already be sitting in
+    // production. The (workspace_id, email) primary key is still
+    // case-sensitive, so putMember('jane@swarm.work', ...) must not just fail
+    // the ON CONFLICT and insert a second row - it has to land on one row.
+    const database = new NodeSqliteDatabase()
+    const store = new D1WorkspaceStore(database)
+    await store.create(newWorkspace('acme'), CTX)
+    await database
+      .prepare(
+        'INSERT INTO workspace_members (workspace_id, email, role, added_by, added_at) VALUES (?, ?, ?, ?, ?)',
+      )
+      .bind('ws_acme', 'Jane@Swarm.Work', 'admin', CTX.by, CTX.at)
+      .run()
+
+    const updated = await store.putMember('ws_acme', 'jane@swarm.work', 'editor', CTX)
+
+    expect(updated).toEqual({
+      workspaceId: 'ws_acme',
+      email: 'jane@swarm.work',
+      role: 'editor',
+      addedBy: CTX.by,
+      addedAt: CTX.at,
+    })
+    expect(await store.listMembers('ws_acme')).toEqual([
+      { workspaceId: 'ws_acme', email: 'jane@swarm.work', role: 'editor', addedBy: CTX.by, addedAt: CTX.at },
+    ])
   })
 })
 
@@ -109,5 +139,58 @@ describe('roleFor', () => {
     expect(roleAllows('admin', 'editor')).toBe(true)
     expect(roleAllows('editor', 'editor')).toBe(true)
     expect(roleAllows('editor', 'admin')).toBe(false)
+  })
+})
+
+describe('mayCreateWorkspace', () => {
+  const person = (overrides: Partial<Identity> = {}): Identity => ({
+    email: 'person@swarm.work',
+    origin: 'directory',
+    roles: [],
+    ...overrides,
+  })
+  const admin = (email = 'person@swarm.work') => ({
+    workspaceId: 'ws_x',
+    email,
+    role: 'admin' as const,
+    addedBy: 'x',
+    addedAt: 'x',
+  })
+  const editor = (email = 'person@swarm.work') => ({
+    workspaceId: 'ws_x',
+    email,
+    role: 'editor' as const,
+    addedBy: 'x',
+    addedAt: 'x',
+  })
+
+  it('lets a server identity create a workspace, whatever else is true', () => {
+    const developer = person({ email: 'developer@localhost', origin: 'server' })
+    expect(mayCreateWorkspace(developer, [], [])).toBe(true)
+  })
+
+  it('lets a directory identity in when its organisation already owns a workspace', () => {
+    const inOrg = person({ organization: { id: 'organization-test-1', slug: 'swarm' } })
+    const workspaces = [
+      { ...DEFAULT_WORKSPACE, createdBy: 'x', createdAt: 'x', updatedBy: 'x', updatedAt: 'x' },
+    ]
+    expect(mayCreateWorkspace(inOrg, workspaces, [])).toBe(true)
+  })
+
+  it('lets a directory identity in when it is already a named admin somewhere, organisation or not', () => {
+    expect(mayCreateWorkspace(person(), [], [admin()])).toBe(true)
+  })
+
+  it('refuses a directory identity that is only a named editor, never an admin', () => {
+    expect(mayCreateWorkspace(person(), [], [editor()])).toBe(false)
+  })
+
+  it('refuses a directory identity whose organisation owns no workspace and who is named nowhere', () => {
+    const otherOrg = person({ organization: { id: 'organization-test-2', slug: 'acme' } })
+    const workspaces = [
+      { ...DEFAULT_WORKSPACE, createdBy: 'x', createdAt: 'x', updatedBy: 'x', updatedAt: 'x' },
+    ]
+    expect(mayCreateWorkspace(otherOrg, workspaces, [])).toBe(false)
+    expect(mayCreateWorkspace(person(), [], [])).toBe(false)
   })
 })

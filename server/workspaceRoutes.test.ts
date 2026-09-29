@@ -284,6 +284,65 @@ describe('POST /api/workspaces', () => {
     )
     expect(noHeader.status).toBe(400)
   })
+
+  // ADR-33, update 2026-09-29: Stytch lets anyone create their own
+  // organisation during sign-in, so "signed in" alone cannot be enough here.
+  it('refuses a directory identity that belongs to no team at all', async () => {
+    const { app } = await makeApp(identityAuthenticator(OUTSIDER))
+    const response = await send(app, 'POST', '/api/workspaces', {
+      name: 'Stranger Co',
+      defaultFrom: 'a@stranger.test',
+    })
+    expect(response.status).toBe(403)
+    const error = await errorOf(response)
+    expect(error.code).toBe('forbidden')
+    expect(error.message).toBe('Only members of an existing team can create a workspace.')
+  })
+
+  it('refuses a directory identity who is only a named EDITOR somewhere, not an admin', async () => {
+    const { app, workspaceStore } = await makeApp(identityAuthenticator(OUTSIDER))
+    await workspaceStore.putMember('ws_acme', OUTSIDER.email, 'editor', CTX)
+    const response = await send(app, 'POST', '/api/workspaces', {
+      name: 'Stranger Co',
+      defaultFrom: 'a@stranger.test',
+    })
+    expect(response.status).toBe(403)
+    expect((await errorOf(response)).code).toBe('forbidden')
+  })
+
+  // The incident this rule exists for: not OUTSIDER (no organisation at all),
+  // but a stranger who signed in with a Stytch organisation they made
+  // themselves. Stytch lets anyone do this, so holding *an* organisation is
+  // not "belongs to a team" - it must be one that already owns a workspace.
+  it('refuses a directory identity whose own self-made Stytch organisation owns no workspace', async () => {
+    const strangerWithOwnOrg: Identity = {
+      email: 'stranger@example.test',
+      origin: 'directory',
+      roles: [],
+      organization: { id: 'org-x', slug: 'strangers-own-org' },
+    }
+    const { app } = await makeApp(identityAuthenticator(strangerWithOwnOrg))
+    const response = await send(app, 'POST', '/api/workspaces', {
+      name: 'Stranger Co',
+      defaultFrom: 'a@stranger.test',
+    })
+    expect(response.status).toBe(403)
+    const error = await errorOf(response)
+    expect(error.code).toBe('forbidden')
+    expect(error.message).toBe('Only members of an existing team can create a workspace.')
+  })
+
+  it('lets a directory identity create a workspace by already being a named admin, even with no organisation', async () => {
+    // owner@acme.test (seeded by seededStore) is a named admin of `acme` and
+    // has no Stytch organisation at all - the "named admin somewhere" branch.
+    const admin: Identity = { email: 'owner@acme.test', origin: 'directory', roles: [] }
+    const { app } = await makeApp(identityAuthenticator(admin))
+    const response = await send(app, 'POST', '/api/workspaces', {
+      name: 'Second Client',
+      defaultFrom: 'hello@second.test',
+    })
+    expect(response.status).toBe(201)
+  })
 })
 
 describe('PATCH /api/workspaces/:workspace', () => {
@@ -316,6 +375,60 @@ describe('PATCH /api/workspaces/:workspace', () => {
       (await send(app, 'PATCH', '/api/workspaces/swarm-camp', { allowedFromDomain: 'not a domain' })).status,
     ).toBe(400)
     expect((await send(app, 'PATCH', '/api/workspaces/swarm-camp', { slug: 'renamed' })).status).toBe(400)
+  })
+
+  // `swarm-camp` has an organisation ('swarm') and no named member at all: it
+  // relies entirely on the organisation for admin access, which is exactly
+  // the lockout this guard exists to prevent (ADR-33, update 2026-09-29).
+  // This is a NEW check: `lastAdminProblem` (used by the member routes below)
+  // returns early whenever the workspace still has an organisation, which is
+  // this workspace's starting state.
+  it('refuses to clear the organisation when no member is a named admin', async () => {
+    const { app } = await makeApp()
+    const cleared = await send(app, 'PATCH', '/api/workspaces/swarm-camp', { stytchOrganizationSlug: null })
+    expect(cleared.status).toBe(409)
+    expect((await errorOf(cleared)).code).toBe('last-admin')
+  })
+
+  it('refuses to change the organisation to a different one when no member is a named admin', async () => {
+    const { app } = await makeApp()
+    const changed = await send(app, 'PATCH', '/api/workspaces/swarm-camp', {
+      stytchOrganizationSlug: 'someone-elses-org',
+    })
+    expect(changed.status).toBe(409)
+    expect((await errorOf(changed)).code).toBe('last-admin')
+  })
+
+  it('does not refuse a PATCH that leaves the organisation exactly as it was', async () => {
+    const { app } = await makeApp()
+    // Same value as already set: not a change, so the guard has nothing to check.
+    const unchanged = await send(app, 'PATCH', '/api/workspaces/swarm-camp', {
+      stytchOrganizationSlug: 'swarm',
+      name: 'swarm.camp',
+    })
+    expect(unchanged.status).toBe(200)
+  })
+
+  it('does not refuse a PATCH that ADDS an organisation where there was none', async () => {
+    // `acme` starts with a null organisation (it relies on its named admin
+    // instead). Giving it one cannot lock anyone out, unlike clearing or
+    // changing one away from it, so the guard must let this through.
+    const { app } = await makeApp()
+    const added = await send(app, 'PATCH', '/api/workspaces/acme', {
+      stytchOrganizationSlug: 'newly-linked-org',
+    })
+    expect(added.status).toBe(200)
+  })
+
+  it('allows clearing or changing the organisation when a named admin already exists', async () => {
+    // `acme` has a named admin (owner@acme.test, from seededStore) and starts
+    // with no organisation, so setting one and then clearing it again are
+    // both safe: that admin can always get back in through the members table.
+    const { app } = await makeApp()
+    const set = await send(app, 'PATCH', '/api/workspaces/acme', { stytchOrganizationSlug: 'acme-org' })
+    expect(set.status).toBe(200)
+    const cleared = await send(app, 'PATCH', '/api/workspaces/acme', { stytchOrganizationSlug: null })
+    expect(cleared.status).toBe(200)
   })
 })
 
@@ -392,5 +505,50 @@ describe('members', () => {
     expect((await send(app, 'PUT', '/api/workspaces/acme/members/x@y.test', { role: 'owner' })).status).toBe(
       400,
     )
+  })
+
+  it('treats member emails case-insensitively: added mixed-case, found and removed by any case', async () => {
+    const { app } = await makeApp()
+    const added = await send(app, 'PUT', '/api/workspaces/acme/members/New@Acme.Test', { role: 'editor' })
+    expect(added.status).toBe(200)
+    // Stored (and echoed back) lower-cased, whatever case the URL carried.
+    expect(memberResponse.parse(await added.json()).member.email).toBe('new@acme.test')
+
+    const listed = await send(app, 'GET', '/api/workspaces/acme/members', undefined, PLAIN_HEADERS)
+    expect(memberListResponse.parse(await listed.json()).members.map((m) => m.email)).toContain(
+      'new@acme.test',
+    )
+
+    const removed = await send(
+      app,
+      'DELETE',
+      '/api/workspaces/acme/members/NEW@ACME.TEST',
+      undefined,
+      PLAIN_HEADERS,
+    )
+    expect(removed.status).toBe(200)
+  })
+
+  it('lets someone in through a membership that was added under a different letter case', async () => {
+    const jane: Identity = { email: 'jane@swarm.work', origin: 'directory', roles: [] }
+    const { app, workspaceStore } = await makeApp(identityAuthenticator(jane))
+    await workspaceStore.putMember('ws_acme', 'Jane@Swarm.Work', 'editor', CTX)
+
+    const response = await send(app, 'GET', '/api/workspaces/acme', undefined, PLAIN_HEADERS)
+    expect(response.status).toBe(200)
+    expect(workspaceResponse.parse(await response.json()).workspace.role).toBe('editor')
+  })
+
+  it('applies the last-admin guard regardless of the case in the URL', async () => {
+    const { app } = await makeApp()
+    const removed = await send(
+      app,
+      'DELETE',
+      '/api/workspaces/acme/members/OWNER@ACME.TEST',
+      undefined,
+      PLAIN_HEADERS,
+    )
+    expect(removed.status).toBe(409)
+    expect((await errorOf(removed)).code).toBe('last-admin')
   })
 })
