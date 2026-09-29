@@ -241,30 +241,80 @@ const STYTCH_CLIENT_ALLOWED = new Set([
   'src/presentation/auth/stytchSignOut.ts',
   'src/presentation/auth/stytchKeepAlive.ts',
 ])
-const STYTCH_CLIENT_IMPORT = /(?:from|import\()\s*['"]\.\/stytchClient['"]/
 
 /**
  * `stytchKeepAlive.ts` names no package itself - it only imports
  * `stytchClient.ts` - so the checks above cannot see it. It must still stay
  * behind a dynamic `import()` (today, only `PasswordGate.tsx` uses one): a
- * static `import ... from './stytchKeepAlive'` would pull it, and the SDK it
- * starts, into whatever chunk that file already ships in.
+ * static `import ... from './stytchKeepAlive'`, or a bare side-effect
+ * `import './stytchKeepAlive'`, would pull it, and the SDK it starts, into
+ * whatever chunk that file already ships in.
  */
-const STYTCH_KEEP_ALIVE_STATIC_IMPORT = /\bfrom\s+['"]\.\/stytchKeepAlive['"]/
 
-function offendersMatching(pattern, { allowed = new Set() } = {}) {
+/**
+ * Every specifier a file's source names in a `from '...'` clause or a bare
+ * side-effect `import '...'` - NOT a dynamic `import(...)`, which is its own,
+ * separate collection below, since a dynamic import is exactly how
+ * `stytchKeepAlive.ts` is allowed to be reached.
+ *
+ * This is a regex scan, not a parser, same as the checks above - it is
+ * fooled by nothing more exotic than a string that happens to read
+ * `from "…"` outside an import, which none of this source does (checked by
+ * hand: every literal `from '...'`/`import '...'` here IS an import).
+ */
+function staticImportSpecifiers(source) {
+  const specifiers = new Set()
+  for (const match of source.matchAll(/\bfrom\s+['"]([^'"]+)['"]/g)) specifiers.add(match[1])
+  for (const match of source.matchAll(/\bimport\s+['"]([^'"]+)['"]/g)) specifiers.add(match[1])
+  return specifiers
+}
+
+/** `staticImportSpecifiers`, plus every specifier reached through `import(...)`. */
+function allImportSpecifiers(source) {
+  const specifiers = staticImportSpecifiers(source)
+  for (const match of source.matchAll(/\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g)) specifiers.add(match[1])
+  return specifiers
+}
+
+/**
+ * True when `specifier` resolves to a module named `moduleName`, whatever
+ * sits in front of it: `./moduleName`, `../auth/moduleName`,
+ * `@/presentation/auth/moduleName`, with or without a `.ts`/`.tsx` extension.
+ * Anchored so `./moduleNameHelpers` or `./notModuleName` do not match.
+ */
+function namesModule(specifier, moduleName) {
+  return new RegExp(`(?:^|/)${moduleName}(?:\\.tsx?)?$`).test(specifier)
+}
+
+/**
+ * Files under `src` (tests excluded, same as the checks above) whose imports
+ * - drawn from `specifiersOf` - name `moduleName`, other than one of `allowed`.
+ */
+function offendersNaming(moduleName, specifiersOf, { allowed = new Set() } = {}) {
   const found = []
   for (const file of sourceFiles('src')) {
     if (!isSourceFile(file) || /\.test\.(ts|tsx)$/.test(file) || allowed.has(file)) continue
-    if (pattern.test(readFileSync(join(ROOT, file), 'utf8'))) found.push(file)
+    const source = readFileSync(join(ROOT, file), 'utf8')
+    for (const specifier of specifiersOf(source)) {
+      if (namesModule(specifier, moduleName)) {
+        found.push(file)
+        break
+      }
+    }
   }
   return found
 }
 
-const stytchClientOffenders = offendersMatching(STYTCH_CLIENT_IMPORT, { allowed: STYTCH_CLIENT_ALLOWED })
+// Any form of import counts here - static OR dynamic - because it is not the
+// download weight at stake (as it is for the two packages above), it is a
+// SECOND client silently breaking the first one's refresh (see the comment
+// above STYTCH_CLIENT_ALLOWED).
+const stytchClientOffenders = offendersNaming('stytchClient', allImportSpecifiers, {
+  allowed: STYTCH_CLIENT_ALLOWED,
+})
 if (stytchClientOffenders.length > 0) {
   console.error(
-    '\nThese files import "./stytchClient", which only StytchSignIn.tsx, stytchSignOut.ts and ' +
+    '\nThese files import "stytchClient", which only StytchSignIn.tsx, stytchSignOut.ts and ' +
       'stytchKeepAlive.ts may:\n' +
       stytchClientOffenders.map((file) => `  ${file}`).join('\n') +
       '\n',
@@ -272,11 +322,13 @@ if (stytchClientOffenders.length > 0) {
   process.exit(1)
 }
 
-const stytchKeepAliveOffenders = offendersMatching(STYTCH_KEEP_ALIVE_STATIC_IMPORT)
+// Only STATIC specifiers count here: a dynamic `import('./stytchKeepAlive')`
+// is exactly how PasswordGate.tsx is supposed to reach it.
+const stytchKeepAliveOffenders = offendersNaming('stytchKeepAlive', staticImportSpecifiers)
 if (stytchKeepAliveOffenders.length > 0) {
   console.error(
-    '\nThese files import "./stytchKeepAlive" with a static import; it must only be reached through a ' +
-      'dynamic import():\n' +
+    '\nThese files import "stytchKeepAlive" with a static (or bare side-effect) import; it must only be ' +
+      'reached through a dynamic import():\n' +
       stytchKeepAliveOffenders.map((file) => `  ${file}`).join('\n') +
       '\n',
   )
@@ -284,6 +336,104 @@ if (stytchKeepAliveOffenders.length > 0) {
 }
 
 console.log(
-  'Stytch internal-module check: "./stytchClient" named only by its 3 allowed module(s); ' +
-    '"./stytchKeepAlive" reached only through dynamic import().',
+  'Stytch internal-module check: "stytchClient" named only by its 3 allowed module(s); ' +
+    '"stytchKeepAlive" reached only through dynamic import().',
 )
+
+/* --------------------------------------------------------------------------
+ * The built CLIENT output, not just its source: the entry chunk every visitor
+ * downloads first must never modulepreload or statically import a Stytch
+ * chunk. The checks above can be fooled by a THIRD module Rollup happens to
+ * merge into an eagerly loaded chunk in some future dependency graph; this
+ * checks the actual `vite build` artifact instead (ADR-31).
+ * ------------------------------------------------------------------------ */
+
+const CLIENT_DIST_DIR = new URL('../dist/client/', import.meta.url)
+const CLIENT_INDEX_HTML = new URL('index.html', CLIENT_DIST_DIR)
+
+/** Every href on a `<link rel="modulepreload">` tag, whatever order its attributes are in. */
+function modulePreloadHrefs(html) {
+  const hrefs = []
+  for (const tag of html.matchAll(/<link\b[^>]*>/g)) {
+    if (!/rel=["']modulepreload["']/.test(tag[0])) continue
+    const href = /href=["']([^"']+)["']/.exec(tag[0])
+    if (href) hrefs.push(href[1])
+  }
+  return hrefs
+}
+
+/** The `src` of the page's entry `<script type="module">`, or undefined. */
+function entryScriptSrc(html) {
+  for (const tag of html.matchAll(/<script\b[^>]*>/g)) {
+    if (!/type=["']module["']/.test(tag[0])) continue
+    const src = /src=["']([^"']+)["']/.exec(tag[0])
+    if (src) return src[1]
+  }
+  return undefined
+}
+
+/**
+ * The specifiers a bundled chunk statically imports, read from the very
+ * START of the file only. Rollup always emits every static `import` before
+ * any other statement in a chunk, so a generous prefix - far shorter than
+ * where this app's OWN source is ever embedded as a literal string deep in
+ * the bundle (the code-template scaffolding a "New template" starts from,
+ * which itself contains lines that read like imports) - cannot see a dynamic
+ * `import()` call and cannot be fooled by a string that merely looks like one.
+ */
+function leadingStaticImportSpecifiers(source) {
+  return staticImportSpecifiers(source.slice(0, 20_000))
+}
+
+function checkClientBuildOutput() {
+  let html
+  try {
+    html = readFileSync(CLIENT_INDEX_HTML, 'utf8')
+  } catch (error) {
+    console.error(`Could not read ${CLIENT_INDEX_HTML.pathname}. Run this after \`vite build\`.`)
+    throw error
+  }
+
+  const stytchPreloads = modulePreloadHrefs(html).filter((href) => /stytch/i.test(href))
+  if (stytchPreloads.length > 0) {
+    console.error(
+      `\n${CLIENT_INDEX_HTML.pathname} modulepreloads a Stytch chunk, which means it is no longer lazy:\n` +
+        stytchPreloads.map((href) => `  ${href}`).join('\n') +
+        '\n',
+    )
+    process.exit(1)
+  }
+
+  const entrySrc = entryScriptSrc(html)
+  if (!entrySrc) {
+    console.error(`\nCould not find the entry <script type="module"> in ${CLIENT_INDEX_HTML.pathname}.\n`)
+    process.exit(1)
+  }
+  const entryPath = new URL(entrySrc.replace(/^\//, ''), CLIENT_DIST_DIR)
+  let entrySource
+  try {
+    entrySource = readFileSync(entryPath, 'utf8')
+  } catch (error) {
+    console.error(`Could not read the entry chunk at ${entryPath.pathname}.`)
+    throw error
+  }
+  const staticStytchImports = [...leadingStaticImportSpecifiers(entrySource)].filter((specifier) =>
+    /stytch/i.test(specifier),
+  )
+  if (staticStytchImports.length > 0) {
+    console.error(
+      `\nThe entry chunk (${entrySrc}) statically imports a Stytch chunk, which means it ships in every ` +
+        `page's first download:\n` +
+        staticStytchImports.map((specifier) => `  ${specifier}`).join('\n') +
+        '\n',
+    )
+    process.exit(1)
+  }
+
+  console.log(
+    `Client build output check: ${CLIENT_INDEX_HTML.pathname} modulepreloads nothing Stytch, and the ` +
+      `entry chunk (${entrySrc}) statically imports nothing Stytch.`,
+  )
+}
+
+checkClientBuildOutput()
