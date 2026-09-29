@@ -463,6 +463,51 @@ the first download of any build: the keep-alive module names no package itself, 
 `scripts/check-worker-bundle.mjs` now also checks that `stytchClient.ts` itself is reached only by
 these three modules. See `docs/STYTCH_LOG.md` section 2 and `docs/STYTCH_PLAN.md` risk 3.
 
+**Update 2026-09-29, fourth revision: an hour without use, not an hour after sign-in.** The third
+revision kept the session's JWT fresh, but the session itself still expired a fixed 60 minutes after
+sign-in, whether or not anyone was at the keyboard. Stytch never extends a session on its own: the
+SDK's background refresh (`SessionManager.mjs`) sends no duration unless the client was built with
+`keepSessionAlive`, and without one the API leaves `expires_at` untouched. Turning `keepSessionAlive`
+on was rejected on purpose - it would extend the session on **every** three-minute background refresh,
+so any tab left open and untouched, with nobody at the keyboard, would keep a session alive forever.
+`stytchClient.ts` documents this choice next to where the client is built, so the reasoning survives
+a future edit.
+
+Instead, `stytchKeepAlive.ts` treats a `pointerdown`, `keydown` or `wheel` event on the document -
+each listened for in the capture phase and passively, so neither the rich-text editor nor a UI
+library underneath it can hide the event by calling `stopPropagation()` - as "the member is using the
+studio." The tab becoming visible again does **not** count: switching back to the tab, or the window
+regaining focus, only refreshes the JWT with a plain call that asks for no extension, exactly as
+before. On real input, the module calls `client.session.authenticate({ session_duration_minutes: 60
+})`, which both refreshes the JWT and pushes the session's expiry to 60 minutes from that moment - but
+at most once every 5 minutes per tab, with one trailing call at the end of a burst of activity so the
+last few minutes of work are not lost. Together this means a session ends 55 to 65 minutes after the
+member's last click, key press or scroll: the five-minute spread is the price of not asking Stytch on
+every single keystroke. One gap is inherent, not a bug: clicking or scrolling **inside the rendered
+email preview** does not count, because that preview renders in a sandboxed iframe
+(`sandbox=""`, `PreviewWorkspace.tsx`, `PreviewThumbnail.tsx`) and a sandboxed iframe's events never
+reach the parent document `stytchKeepAlive.ts` listens on. A member who only scrolls the preview for an
+hour, without clicking or typing anywhere else in the studio, is signed out on schedule.
+
+Two more calls close smaller gaps. Ten seconds after every successful extension, the module makes one
+more plain refresh with no duration. This exists because Stytch's own three-minute background refresh
+can be in flight from before the extension went out; if that older answer lands after the extension,
+it overwrites the cookies with the **old**, shorter expiry (`SubscriptionService.mjs` only guards on
+the session id matching, not on which answer is newer). The ten-second refresh asks again and puts the
+correct, extended expiry back. Separately, if an extension call fails - a network blip is the normal
+case - the module does not give up: it retries 60 seconds later without needing new input, and every
+one of these calls is wrapped so a rejected promise is turned into a plain `false` result rather than
+an unhandled rejection that could otherwise crash a test run or log a spurious browser error.
+
+There is deliberately no absolute cap on how long a single session can live. Stytch's documentation
+describes none beyond the 5-to-527,040-minute range accepted on any one call, and the user's decision
+above only asked for "ends about an hour after they stop," not "ends no matter what." A member who
+keeps working keeps the same session for as long as they keep working, even across days. If a hard
+ceiling is ever wanted, the lever is `started_at` on the session: skip the extension once
+`Date.now() - Date.parse(session.started_at)` passes some limit. Sign-in and every extension both ask
+Stytch for the same 60 minutes as before, so nothing about the Stytch dashboard needs to change for
+this revision - see `docs/STYTCH_LOG.md` decision 1 and `docs/DEPLOYMENT.md`.
+
 ## ADR-32 Workspaces: one flat table, and the store scopes every read and write by it
 
 **Context.** Until 2026-09-25 the studio was single-tenant: one library, one `templates.slug`

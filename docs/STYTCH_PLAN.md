@@ -320,7 +320,8 @@ Do not treat these as settled.
 2. **The exact B2B JWKS path and the claim literals.** T1 settles both.
 3. **Whether the B2B login component completes the token exchange at the redirect URL.** Test it.
 4. **The dashboard's default `max_session_duration_minutes`**, which is a ceiling that silently truncates a
-   larger request. Check it before asking for 720 minutes.
+   larger request. Check it before asking for 720 minutes. Not in play for decision 1 as decided (60 minutes
+   at sign-in and on every extension); it matters only if a longer idle timeout is ever asked for.
 5. **Whether `vite/client`'s `ImportMetaEnv` still carries an index signature.** If it does, an untyped
    `import.meta.env.VITE_STYTCH_PUBLIC_TOKEN` still compiles as `any` and T3 cannot rely on the compiler
    alone. `node_modules` was not installed when this was written.

@@ -124,7 +124,7 @@ environment's `STYTCH_PROJECT_ID` at it, and if it is ever renamed, update
 first, so the old slug cannot be claimed by someone else in the gap (`docs/DECISIONS.md`,
 ADR-31, update 2026-09-29, second revision).
 
-Two things about this mode differ from the others and both will be noticed before they
+Three things about this mode differ from the others and all will be noticed before they
 are understood:
 
 - **The token lives about five minutes.** The browser SDK refreshes it in the
@@ -136,6 +136,12 @@ are understood:
   already-issued token keeps working until it expires. Removing someone from the
   Stytch organisation takes up to five minutes to bite. That is an accepted property,
   recorded in ADR-31.
+- **A session ends about an hour after the member last used the studio**, not an hour after
+  sign-in. A click, key press or scroll in the studio extends it (at most once every five
+  minutes); a tab left open but untouched does not, and shows the sign-in screen within a
+  few minutes of the hour running out. Nothing in the Stytch dashboard is involved beyond the
+  Frontend SDK page's maximum session duration being at least 60 minutes, which sign-in
+  already needs (ADR-31, fourth revision).
 
 A malformed `STYTCH_PROJECT_ID` fails **closed** with an explanation rather than
 throwing, because a thrown error becomes a 500 the browser gate cannot interpret and
