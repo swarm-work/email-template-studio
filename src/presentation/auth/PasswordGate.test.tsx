@@ -3,7 +3,7 @@
  */
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { PasswordGate } from './PasswordGate'
 
 // The real sign-in screen pulls in the Stytch SDK, which wants a browser and a
@@ -12,6 +12,15 @@ import { PasswordGate } from './PasswordGate'
 vi.mock('./StytchSignIn', () => ({
   default: () => <p>stytch sign-in</p>,
 }))
+
+// Same reason: signing out reaches the real Stytch client. Mirrors
+// WorkspaceGate.test.tsx, which mocks the same pair for the same reason.
+const { signOutOfStytch, toastError } = vi.hoisted(() => ({
+  signOutOfStytch: vi.fn<() => Promise<string | null>>(async () => null),
+  toastError: vi.fn(),
+}))
+vi.mock('./stytchSignOut', () => ({ signOutOfStytch }))
+vi.mock('sonner', () => ({ toast: { error: toastError } }))
 
 /** Builds a fetch stub that answers the status check, then the sign-in POST. */
 function fetchStub(responses: Array<() => Response>) {
@@ -27,6 +36,11 @@ const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
 
 describe('PasswordGate', () => {
+  beforeEach(() => {
+    signOutOfStytch.mockClear()
+    toastError.mockClear()
+  })
+
   it('renders the studio straight away when the API is already reachable', async () => {
     render(
       <PasswordGate fetchImpl={fetchStub([() => json({ enabled: true })])}>
@@ -70,6 +84,69 @@ describe('PasswordGate', () => {
     expect(await screen.findByText('stytch sign-in')).toBeInTheDocument()
     expect(screen.queryByLabelText('Password')).not.toBeInTheDocument()
     expect(screen.queryByText('studio')).not.toBeInTheDocument()
+  })
+
+  it('still shows the ordinary sign-in when the session is merely absent (no cookie yet)', async () => {
+    // An explicit `session: 'absent'`, as a server new enough to send it would.
+    render(
+      <PasswordGate
+        fetchImpl={fetchStub([
+          () => json({ code: 'unauthenticated', mode: 'stytch', session: 'absent' }, 401),
+        ])}
+      >
+        <p>studio</p>
+      </PasswordGate>,
+    )
+    expect(await screen.findByText('stytch sign-in')).toBeInTheDocument()
+    expect(screen.queryByText(/only for the Swarm team/i)).not.toBeInTheDocument()
+  })
+
+  it('shows a refusal panel on every load when the server refuses the Stytch session', async () => {
+    // No /authenticate path and no prior sign-in attempt in THIS render: this is
+    // what a reload, or a brand new tab, sees with a refused cookie already set.
+    const reason =
+      "This studio is only for the swarm organisation. You signed in as x@y.com in organisation 'acme'."
+    render(
+      <PasswordGate
+        fetchImpl={fetchStub([
+          () => json({ code: 'unauthenticated', mode: 'stytch', session: 'refused', message: reason }, 401),
+        ])}
+      >
+        <p>studio</p>
+      </PasswordGate>,
+    )
+    expect(await screen.findByText('This studio is only for the Swarm team')).toBeInTheDocument()
+    expect(await screen.findByText(reason)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument()
+    // The sign-in form has nothing to offer here - the cookie is already the
+    // problem - so it must not render alongside the refusal.
+    expect(screen.queryByText('stytch sign-in')).not.toBeInTheDocument()
+    expect(screen.queryByText('studio')).not.toBeInTheDocument()
+  })
+
+  it('signs out from the refusal panel, and never fails silently', async () => {
+    signOutOfStytch.mockResolvedValueOnce('Could not reach Stytch to sign out.')
+    render(
+      <PasswordGate
+        fetchImpl={fetchStub([
+          () =>
+            json(
+              {
+                code: 'unauthenticated',
+                mode: 'stytch',
+                session: 'refused',
+                message: 'refused by the allow-list',
+              },
+              401,
+            ),
+        ])}
+      >
+        <p>studio</p>
+      </PasswordGate>,
+    )
+    await userEvent.click(await screen.findByRole('button', { name: 'Sign out' }))
+    await waitFor(() => expect(signOutOfStytch).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith('Could not reach Stytch to sign out.'))
   })
 
   it('completes the round trip on /authenticate even though the probe still refuses', async () => {

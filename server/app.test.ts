@@ -614,6 +614,65 @@ describe('authentication', () => {
     expect(await response.json()).toMatchObject({ message: 'token was not signed by this team' })
   })
 
+  // The `session` field lets the browser tell "no cookie yet" apart from "a
+  // cookie was refused" (server/auth.ts, ADR-31 update 2026-09-29). Only the
+  // Stytch authenticator sets it; a small stand-in here is enough to prove the
+  // middleware carries it through onto the 401 body, next to every field that
+  // was already there.
+  it("carries the authenticator's session field (absent) on the 401 body", async () => {
+    const app = createApp({
+      authenticator: {
+        mode: 'stytch',
+        async authenticate() {
+          return { ok: false, reason: 'No Stytch session cookie on the request.', session: 'absent' }
+        },
+      },
+      config: enabledConfig,
+      sender,
+    })
+    const response = await app.request('/api/send-test/status', { headers: { host: 'localhost:8787' } })
+    expect(response.status).toBe(401)
+    expect(await response.json()).toMatchObject({
+      status: 'error',
+      code: 'unauthenticated',
+      mode: 'stytch',
+      session: 'absent',
+      message: 'No Stytch session cookie on the request.',
+    })
+  })
+
+  it("carries the authenticator's session field (refused) on the 401 body", async () => {
+    const app = createApp({
+      authenticator: {
+        mode: 'stytch',
+        async authenticate() {
+          return {
+            ok: false,
+            reason:
+              "This studio is only for the swarm organisation. You signed in as x@y.com in organisation 'acme'.",
+            session: 'refused',
+          }
+        },
+      },
+      config: enabledConfig,
+      sender,
+    })
+    const response = await app.request('/api/send-test/status', { headers: { host: 'localhost:8787' } })
+    expect(response.status).toBe(401)
+    expect(await response.json()).toMatchObject({ mode: 'stytch', session: 'refused' })
+  })
+
+  it('leaves the session field off the 401 body when the authenticator does not set one', async () => {
+    const app = createApp({
+      authenticator: createDisabledAuthenticator('nothing is configured'),
+      config: enabledConfig,
+      sender,
+    })
+    const response = await app.request('/api/send-test/status', { headers: { host: 'localhost:8787' } })
+    const body = (await response.json()) as Record<string, unknown>
+    expect('session' in body).toBe(false)
+  })
+
   it('checks the origin before the identity, so a cross-site call is refused as such', async () => {
     const app = createApp({ config: enabledConfig, sender })
     const response = await app.request('/api/send-test/status', {

@@ -61,9 +61,18 @@ export interface Identity {
 /**
  * The result of trying to identify a caller. A failure carries a sentence the
  * API can return, so a 401 explains itself instead of being a bare status code.
+ *
+ * `session` is set only by the Stytch authenticator, and only on failure, to
+ * tell apart two situations the browser must handle differently (ADR-31,
+ * update 2026-09-29):
+ *   - 'absent': no Stytch cookie at all - the ordinary "not signed in yet" state.
+ *   - 'refused': a cookie was presented and this server said no to it (bad
+ *     signature, expired, or a real member of an organisation that is not on
+ *     STYTCH_ALLOWED_ORGANIZATIONS). Reloading will not fix this on its own.
  */
 export type AuthResult =
-  { readonly ok: true; readonly identity: Identity } | { readonly ok: false; readonly reason: string }
+  | { readonly ok: true; readonly identity: Identity }
+  | { readonly ok: false; readonly reason: string; readonly session?: 'absent' | 'refused' }
 
 /** What the API calls on every `/api/*` request. */
 export interface Authenticator {
@@ -113,7 +122,12 @@ const CLOCK_SKEW_SECONDS = 60
  */
 export type AuthConfig =
   | { readonly mode: 'cloudflare-access'; readonly teamDomain: string; readonly aud: string }
-  | { readonly mode: 'stytch'; readonly projectId: string }
+  | {
+      readonly mode: 'stytch'
+      readonly projectId: string
+      /** Trimmed, lower-cased Stytch organisation slugs. Never empty - see loadAuthConfig. */
+      readonly allowedOrganizations: readonly string[]
+    }
   | { readonly mode: 'password'; readonly password: string }
   | { readonly mode: 'developer'; readonly email: string }
   | { readonly mode: 'none'; readonly reason: string }
@@ -167,7 +181,24 @@ export function loadAuthConfig(env: Record<string, string | undefined>): AuthCon
           `"project-test-00000000-0000-0000-0000-000000000000", got "${stytchProjectId}".`,
       }
     }
-    return { mode: 'stytch', projectId: stytchProjectId }
+    // Fail CLOSED, same reasoning as the malformed project id above: a Stytch
+    // session proves nothing about WHICH organisation someone belongs to, and
+    // Stytch's own dashboard lets a stranger create their own organisation
+    // during sign-in (create_organization_enabled). Without an allow-list, a
+    // valid Stytch session would be enough to get in, which is the exact
+    // opposite of "team only". A forgotten variable must read as "nobody", not
+    // "everybody" - so a missing or empty value refuses every sign-in rather
+    // than silently accepting one (ADR-31, update 2026-09-29).
+    const allowedOrganizations = parseAllowedOrganizations(env.STYTCH_ALLOWED_ORGANIZATIONS)
+    if (allowedOrganizations.length === 0) {
+      return {
+        mode: 'none',
+        reason:
+          'STYTCH_ALLOWED_ORGANIZATIONS is not set. Set it to a comma-separated list of the Stytch ' +
+          'organisation slugs allowed to sign in, for example "swarm".',
+      }
+    }
+    return { mode: 'stytch', projectId: stytchProjectId, allowedOrganizations }
   }
   if (password) {
     // A short password is worse than none, because it invites the belief that
@@ -199,6 +230,21 @@ function clean(value: string | undefined): string | undefined {
   return trimmed === '' ? undefined : trimmed
 }
 
+/**
+ * Parses STYTCH_ALLOWED_ORGANIZATIONS: a comma-separated list of Stytch
+ * organisation SLUGS (not ids - see IdentityOrganization; the slug is what
+ * survives the Test-to-Live project switch). Each entry is trimmed and
+ * lower-cased, so "Swarm, swarm " and "swarm,swarm" mean the same thing, and
+ * a stray comma or blank variable drops out rather than becoming an entry
+ * that can never match a real slug.
+ */
+function parseAllowedOrganizations(value: string | undefined): readonly string[] {
+  return (value ?? '')
+    .split(',')
+    .map((entry) => entry.trim().toLowerCase())
+    .filter((entry) => entry !== '')
+}
+
 /** "https://team.cloudflareaccess.com/" and "team.cloudflareaccess.com" both give the host. */
 function hostOf(value: string): string {
   const withScheme = value.includes('://') ? value : `https://${value}`
@@ -226,7 +272,7 @@ export function createAuthenticator(config: AuthConfig, options: AuthenticatorOp
     case 'cloudflare-access':
       return createAccessAuthenticator(config.teamDomain, config.aud, options)
     case 'stytch':
-      return createStytchAuthenticator(config.projectId, options)
+      return createStytchAuthenticator(config.projectId, config.allowedOrganizations, options)
     case 'password':
       return createPasswordAuthenticator(config.password, options)
     case 'developer':
@@ -591,9 +637,18 @@ function createKeyring(url: string, label: string, options: AuthenticatorOptions
  * Both the issuer and the JWKS host are derived from the project id rather than
  * configured separately, so there is exactly one source of truth and no second
  * literal to get wrong.
+ *
+ * `allowedOrganizations` is the second lock (ADR-31, update 2026-09-29). Stytch
+ * proves the token is a real, current session; it says nothing about whether
+ * this deployment wants that person in. Stytch's own discovery flow lets a
+ * stranger mint their own organisation during sign-in, so a verified signature
+ * alone is not "team only" - a member of any OTHER organisation, however
+ * genuinely signed in, is refused here, by slug (never the id - see
+ * IdentityOrganization).
  */
 export function createStytchAuthenticator(
   projectId: string,
+  allowedOrganizations: readonly string[],
   options: AuthenticatorOptions = {},
 ): Authenticator {
   const now = options.now ?? (() => Date.now())
@@ -606,14 +661,18 @@ export function createStytchAuthenticator(
   return {
     mode: 'stytch',
     async authenticate(headers) {
+      // No cookie at all is the ordinary "not signed in yet" state, not a
+      // refusal: the browser should offer the sign-in screen, not a "you are
+      // not welcome here" one. Every OTHER return below carries a cookie that
+      // WAS presented and this server said no to, which is `session: 'refused'`.
       const token = readCookie(headers.get('cookie'), STYTCH_SESSION_COOKIE)
       if (!token) {
-        return { ok: false, reason: 'No Stytch session cookie on the request.' }
+        return { ok: false, reason: 'No Stytch session cookie on the request.', session: 'absent' }
       }
 
       const parts = token.split('.')
       if (parts.length !== 3) {
-        return { ok: false, reason: 'Stytch session token is not a well formed JWT.' }
+        return { ok: false, reason: 'Stytch session token is not a well formed JWT.', session: 'refused' }
       }
       const [headerPart, payloadPart, signaturePart] = parts
 
@@ -623,26 +682,38 @@ export function createStytchAuthenticator(
         header = JSON.parse(decodeBase64Url(headerPart)) as { alg?: string; kid?: string }
         claims = JSON.parse(decodeBase64Url(payloadPart)) as StytchClaims
       } catch {
-        return { ok: false, reason: 'Stytch session token header or payload is not valid JSON.' }
+        return {
+          ok: false,
+          reason: 'Stytch session token header or payload is not valid JSON.',
+          session: 'refused',
+        }
       }
 
       // Same reason as Access: pinning the algorithm is what stops "alg: none"
       // and "HS256 signed with the public key" forgeries.
       if (header.alg !== 'RS256') {
-        return { ok: false, reason: `Unsupported Stytch token algorithm: ${header.alg ?? 'none'}.` }
+        return {
+          ok: false,
+          reason: `Unsupported Stytch token algorithm: ${header.alg ?? 'none'}.`,
+          session: 'refused',
+        }
       }
       if (!header.kid) {
-        return { ok: false, reason: 'Stytch session token does not name a signing key.' }
+        return { ok: false, reason: 'Stytch session token does not name a signing key.', session: 'refused' }
       }
 
       let key: VerifyKey | undefined
       try {
         key = await keyFor(header.kid)
       } catch (error) {
-        return { ok: false, reason: `Could not load the Stytch signing keys: ${messageOf(error)}` }
+        return {
+          ok: false,
+          reason: `Could not load the Stytch signing keys: ${messageOf(error)}`,
+          session: 'refused',
+        }
       }
       if (!key) {
-        return { ok: false, reason: 'Stytch session token was signed by an unknown key.' }
+        return { ok: false, reason: 'Stytch session token was signed by an unknown key.', session: 'refused' }
       }
 
       const signed = new TextEncoder().encode(`${headerPart}.${payloadPart}`)
@@ -650,15 +721,19 @@ export function createStytchAuthenticator(
       try {
         signature = decodeBase64UrlBytes(signaturePart)
       } catch {
-        return { ok: false, reason: 'Stytch session token signature is not valid base64url.' }
+        return {
+          ok: false,
+          reason: 'Stytch session token signature is not valid base64url.',
+          session: 'refused',
+        }
       }
       const verified = await crypto.subtle.verify('RSASSA-PKCS1-v1_5', key, signature, signed)
       if (!verified) {
-        return { ok: false, reason: 'Stytch session token signature did not verify.' }
+        return { ok: false, reason: 'Stytch session token signature did not verify.', session: 'refused' }
       }
 
       const problem = checkStytchClaims(claims, projectId, Math.floor(now() / 1000))
-      if (problem) return { ok: false, reason: problem }
+      if (problem) return { ok: false, reason: problem, session: 'refused' }
 
       const email = emailFromStytchClaims(claims)
       if (!email) {
@@ -671,17 +746,31 @@ export function createStytchAuthenticator(
             'Stytch session token carries no email address. Claims present: ' +
             `${Object.keys(claims).join(', ') || '(none)'}. ` +
             'No email-based authentication factor either (a Google-only sign-in). Add a top-level email claim via the project’s custom claim template, or extend STYTCH_EMAIL_CLAIM_PATHS.',
+          session: 'refused',
         }
       }
+
+      // The second lock (ADR-31, update 2026-09-29). The token is genuinely
+      // Stytch's and genuinely current - that only answers WHO signed in, not
+      // whether this deployment wants them. Matched by slug, lower-cased on
+      // both sides, so a dashboard slug's casing can never cause a mismatch.
       const organization = organizationFromStytchClaims(claims)
+      const memberOfAllowedOrganization =
+        organization !== undefined && allowedOrganizations.includes(organization.slug.toLowerCase())
+      if (!memberOfAllowedOrganization) {
+        const allowedList = allowedOrganizations.join(' or ')
+        return {
+          ok: false,
+          session: 'refused',
+          reason: organization
+            ? `This studio is only for the ${allowedList} organisation. You signed in as ${email} in organisation '${organization.slug}'.`
+            : `This studio is only for the ${allowedList} organisation. You signed in as ${email}, but the session names no organisation.`,
+        }
+      }
+
       return {
         ok: true,
-        identity: {
-          email,
-          origin: 'directory',
-          ...(organization ? { organization } : {}),
-          roles: rolesFromStytchClaims(claims),
-        },
+        identity: { email, origin: 'directory', organization, roles: rolesFromStytchClaims(claims) },
       }
     },
   }

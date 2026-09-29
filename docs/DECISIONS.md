@@ -367,6 +367,35 @@ a fifth of this token's life. And the issuer literal is accepted in both its sch
 spellings, both derived from the project id, because a wrong literal there is a total lockout whose
 error message reads like a broken signature.
 
+**Update 2026-09-29.** A verified Stytch session turned out to prove less than it looked like it
+proved. The Stytch project has `create_organization_enabled` on, which is what discovery sign-in
+needs to let a _known_ member land in the right place — but it also means a complete stranger can
+type any email address, receive a magic link for it, and mint their **own** organisation on the
+spot. That stranger now holds a session this Worker's signature check happily verifies: real
+signature, real project, real (five-minute) expiry, just not anyone the studio meant to admit. Before
+this update `createStytchAuthenticator` asked only "is this token genuinely Stytch's and genuinely
+current", never "whose team is it for" — so the answer was yes, and they landed on "You are not in
+any workspace" only because ADR-33's directory check happened to fail next. That second check was
+never the intended lock; it was a side effect of workspaces existing at all.
+
+The fix is a second lock at the same layer as the first: `STYTCH_ALLOWED_ORGANIZATIONS`, a
+comma-separated list of organisation **slugs**, checked against the token's own
+`https://stytch.com/organization` claim before the identity is ever handed to a route. It fails
+CLOSED the same way a malformed `STYTCH_PROJECT_ID` already did — a missing or blank list means mode
+`none`, nobody gets in, rather than a forgotten setting quietly meaning "everyone may". Turning off
+`create_organization_enabled` in the Stytch dashboard is the first lock and still the right thing to
+do; this is the second, and the one this repository's own code can guarantee without trusting a
+dashboard toggle nobody here can see change.
+
+**Consequence for ADR-33.** "A member of the workspace's Stytch organisation is an admin" (ADR-33
+decision 3) already assumed the organisation was `swarm`. This update makes that assumption load
+bearing for sign-in itself: a real, named member of a **different** Stytch organisation - genuinely
+signed in, genuinely themselves - is now refused at the Worker before ADR-33's directory check ever
+runs. The named-member-row path (ADR-33 decision 1) is unaffected and is now the ONLY door for
+someone outside `swarm`: invite them into the `swarm` organisation first (so they can sign in at
+all), then hold them to `editor` with a named row in `workspace_members` if the organisation-wide
+`admin` default is more than that collaboration should have.
+
 ## ADR-32 Workspaces: one flat table, and the store scopes every read and write by it
 
 **Context.** Until 2026-09-25 the studio was single-tenant: one library, one `templates.slug`

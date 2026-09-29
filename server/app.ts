@@ -219,9 +219,19 @@ export function createApp({
     const result = await authenticator.authenticate(c.req.raw.headers)
     if (!result.ok) {
       return c.json(
-        // `mode` lets the browser tell "show a password box" apart from
-        // "redirect to the identity provider". It names a mechanism, not a secret.
-        { status: 'error', code: 'unauthenticated', mode: authenticator.mode, message: result.reason },
+        {
+          status: 'error',
+          code: 'unauthenticated',
+          // `mode` lets the browser tell "show a password box" apart from
+          // "redirect to the identity provider". It names a mechanism, not a secret.
+          mode: authenticator.mode,
+          // Set only by the Stytch mode: 'absent' (no cookie yet, show the
+          // ordinary sign-in) or 'refused' (a cookie the server said no to,
+          // which a reload will not fix - see PasswordGate.tsx). Undefined,
+          // and so dropped from the JSON, in every other mode.
+          session: result.session,
+          message: result.reason,
+        },
         401,
       )
     }

@@ -99,6 +99,12 @@
     "AWS_REGION": "ap-southeast-2",
     "SES_FROM_ADDRESS": "testing@swarm.camp",
     "SES_ALLOWED_RECIPIENTS": "echo@swarm.work",
+    // Read only when STYTCH_PROJECT_ID is also set (this top-level block has no
+    // such id today - `.dev.vars` supplies one locally). Present here anyway so
+    // `npm run dev` keeps working the moment a developer adds one: Stytch mode
+    // fails CLOSED without this variable (server/auth.ts, ADR-31 update
+    // 2026-09-29), and a forgotten setting must never mean "anyone may sign in".
+    "STYTCH_ALLOWED_ORGANIZATIONS": "swarm",
   },
   "env": {
     // The three deployed environment Workers. They are separate Worker scripts,
@@ -153,6 +159,7 @@
         "SES_FROM_ADDRESS": "testing@swarm.camp",
         "SES_ALLOWED_RECIPIENTS": "echo@swarm.work",
         "STYTCH_PROJECT_ID": "project-test-33c9013d-46a4-4fd3-bff3-cbeabe44ee87",
+        "STYTCH_ALLOWED_ORGANIZATIONS": "swarm",
       },
       "d1_databases": [
         {
@@ -174,6 +181,7 @@
         "SES_FROM_ADDRESS": "testing@swarm.camp",
         "SES_ALLOWED_RECIPIENTS": "echo@swarm.work",
         "STYTCH_PROJECT_ID": "project-test-33c9013d-46a4-4fd3-bff3-cbeabe44ee87",
+        "STYTCH_ALLOWED_ORGANIZATIONS": "swarm",
       },
       "d1_databases": [
         {
@@ -197,6 +205,7 @@
         "SES_FROM_ADDRESS": "testing@swarm.camp",
         "SES_ALLOWED_RECIPIENTS": "echo@swarm.work",
         "STYTCH_PROJECT_ID": "project-test-33c9013d-46a4-4fd3-bff3-cbeabe44ee87",
+        "STYTCH_ALLOWED_ORGANIZATIONS": "swarm",
       },
       "d1_databases": [
         {

@@ -12,8 +12,13 @@
  *   2. 200 -> we are already allowed in (a valid cookie, Cloudflare Access, or a
  *      local developer identity), so render the studio
  *   3. 401 with mode "password" -> show the password form
- *   4. 401 with mode "stytch" -> lazily load and show the Stytch sign-in screen
- *   5. 401 with any other mode -> Access is in front and the browser must be sent
+ *   4. 401 with mode "stytch" and session "refused" -> a cookie WAS presented
+ *      and this server said no to it (wrong organisation, expired, malformed).
+ *      Reloading will not fix this, so show the refusal panel and a Sign out
+ *      button on every load, not only right after a fresh sign-in attempt.
+ *   5. 401 with mode "stytch" and no cookie ("absent") -> lazily load and show
+ *      the ordinary Stytch sign-in screen
+ *   6. 401 with any other mode -> Access is in front and the browser must be sent
  *      to the identity provider, which a reload does
  *
  * The name is now narrower than the job: this gate covers the password mode AND
@@ -22,6 +27,7 @@
  * than twice (docs/STYTCH_PLAN.md, T10).
  */
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Input } from '@/components/ui/input'
@@ -67,7 +73,14 @@ type GateState =
   | { readonly kind: 'checking' }
   | { readonly kind: 'open' }
   | { readonly kind: 'locked'; readonly message?: string }
-  | { readonly kind: 'stytch'; readonly message?: string }
+  /** No Stytch cookie yet - the ordinary "show the sign-in form" state. */
+  | { readonly kind: 'stytch' }
+  /**
+   * A Stytch cookie WAS presented and the server refused it (wrong
+   * organisation, expired, malformed). Shown on every load, not only right
+   * after a sign-in attempt - see the module comment.
+   */
+  | { readonly kind: 'stytch-refused'; readonly message: string }
   | { readonly kind: 'unreachable'; readonly message: string }
 
 interface PasswordGateProps {
@@ -80,10 +93,6 @@ export function PasswordGate({ children, fetchImpl = defaultFetch }: PasswordGat
   const [state, setState] = useState<GateState>({ kind: 'checking' })
   const [password, setPassword] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  // Set only when Stytch reported a finished sign-in and the API STILL refused.
-  // That is the one moment the API's reason is worth showing: it names what the
-  // token is missing, which no amount of retrying the form will fix.
-  const [signInProblem, setSignInProblem] = useState<string | null>(null)
 
   /** Asks the API what it thinks of us, without touching state. */
   const probe = useCallback(async (): Promise<GateState> => {
@@ -95,11 +104,26 @@ export function PasswordGate({ children, fetchImpl = defaultFetch }: PasswordGat
     }
     if (response.ok) return { kind: 'open' }
     if (response.status === 401) {
-      const body = (await response.json().catch(() => null)) as { mode?: string; message?: string } | null
+      const body = (await response.json().catch(() => null)) as {
+        mode?: string
+        session?: string
+        message?: string
+      } | null
       if (body?.mode === 'password') return { kind: 'locked' }
-      // The message is only shown AFTER a sign-in attempt (see `signInProblem`):
-      // before one, "no session cookie" is the normal state, not a problem.
-      if (body?.mode === 'stytch') return { kind: 'stytch', message: body.message }
+      if (body?.mode === 'stytch') {
+        // 'refused' means a cookie WAS presented and this server said no to it
+        // (wrong organisation, expired, malformed) - reloading will not fix
+        // that, so the reason is worth showing on EVERY load, not only right
+        // after a sign-in attempt. 'absent' (or nothing, for an older server)
+        // is the ordinary "not signed in yet" state.
+        if (body.session === 'refused') {
+          return {
+            kind: 'stytch-refused',
+            message: body.message ?? 'The studio API refused this Stytch session.',
+          }
+        }
+        return { kind: 'stytch' }
+      }
       // Cloudflare Access (or nothing at all) is in front. There is no password
       // for the visitor to type; reloading is what sends them to the login.
       return { kind: 'unreachable', message: 'This studio requires you to sign in. Reload to continue.' }
@@ -128,27 +152,35 @@ export function PasswordGate({ children, fetchImpl = defaultFetch }: PasswordGat
    *
    * Then ask the API again. The probe stays the single source of truth for
    * "open" - the gate never opens on Stytch's word alone, because the Worker is
-   * the one that verifies the token, and it may still say no.
+   * the one that verifies the token, and it may still say no. If it still says
+   * no, `probe` itself resolves to `stytch-refused` and the refusal panel
+   * below renders - the same panel a reload would show, so this is no longer a
+   * separate code path.
    */
   const onStytchSignedIn = useCallback(() => {
     if (typeof window !== 'undefined' && window.location.pathname === AUTHENTICATE_PATH) {
       window.history.replaceState(null, '', '/')
     }
-    void probe().then((next) => {
-      setSignInProblem(
-        next.kind === 'stytch' ? (next.message ?? 'The studio API did not accept the session.') : null,
-      )
-      setState(next)
-    })
+    void probe().then(setState)
   }, [probe])
 
   /**
    * Revokes the Stytch session and reloads onto the sign-in screen, through the
    * same lazy seam the header uses (a static import here would put the SDK in
    * every build's first download - see stytchSignOut.ts).
+   *
+   * Must never fail silently: this button is the only way out of the refusal
+   * panel below, so a sentence from `signOutOfStytch` is surfaced as a toast,
+   * and a chunk that will not load (a deploy replaced it) reloads the page,
+   * which fetches the new one. Mirrors `useSignedInIdentity.ts`'s `signOut`.
    */
-  const onSignOutAndRetry = useCallback(() => {
-    void import('./stytchSignOut').then(({ signOutOfStytch }) => signOutOfStytch())
+  const onSignOut = useCallback(() => {
+    void import('./stytchSignOut')
+      .then(({ signOutOfStytch }) => signOutOfStytch())
+      .then((problem) => {
+        if (problem) toast.error(problem)
+      })
+      .catch(() => window.location.reload())
   }, [])
 
   async function submit(event: React.FormEvent) {
@@ -200,20 +232,34 @@ export function PasswordGate({ children, fetchImpl = defaultFetch }: PasswordGat
           >
             <StytchSignIn onSignedIn={onStytchSignedIn} />
           </Suspense>
-          {signInProblem && (
-            <AuthCardBody>
-              <p role="alert" className="text-danger-foreground text-sm">
-                Signed in with Stytch, but the studio API refused the session: {signInProblem}
+        </AuthCard>
+      </AuthGround>
+    )
+  }
+
+  // A Stytch cookie WAS presented and this server refused it - wrong
+  // organisation, expired, or malformed. Shown on EVERY load the status probe
+  // reports it, not only right after a sign-in attempt: the person may have
+  // reloaded, or opened the studio in a new tab, with the same refused cookie
+  // still on the browser. Reloading alone would just show this again, so the
+  // only way forward the screen offers is signing out.
+  if (state.kind === 'stytch-refused') {
+    return (
+      <AuthGround>
+        <AuthCard>
+          <AuthCardBody>
+            <div className="space-y-4">
+              <p className="text-foreground text-center text-sm font-medium">
+                This studio is only for the Swarm team
               </p>
-              {/* The only sure way out of a refused session is a NEW one. Stytch
-                  applies claim templates when a session is created, so a
-                  template added after sign-in never reaches the current
-                  session, however often the JWT refreshes. Revoke and start over. */}
-              <Button type="button" variant="outline" className="mt-3 w-full" onClick={onSignOutAndRetry}>
-                Sign out of Stytch and try again
+              <Alert variant="destructive">
+                <AlertDescription>{state.message}</AlertDescription>
+              </Alert>
+              <Button type="button" variant="outline" className="w-full" onClick={onSignOut}>
+                Sign out
               </Button>
-            </AuthCardBody>
-          )}
+            </div>
+          </AuthCardBody>
         </AuthCard>
       </AuthGround>
     )

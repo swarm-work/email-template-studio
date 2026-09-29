@@ -144,12 +144,13 @@ Two further places know the mode list but will not fail the build:
 
 ## 4. Configuration
 
-| Value                      | Where it lives                                       | Secret? | Notes                                                              |
-| -------------------------- | ---------------------------------------------------- | ------- | ------------------------------------------------------------------ |
-| `STYTCH_PROJECT_ID` (Live) | `wrangler.jsonc`, in the `env.production` vars block | No      | Public; it appears in the JWKS URL                                 |
-| `STYTCH_PROJECT_ID` (Test) | `.dev.vars`, git-ignored                             | No      | Overrides the committed value locally                              |
-| `VITE_STYTCH_PUBLIC_TOKEN` | **The build environment, not a Worker var**          | No      | See the trap below                                                 |
-| Stytch project **secret**  | Nowhere in this repository                           | **Yes** | Only needed for revocation and GDPR deletion. Decide who holds it. |
+| Value                          | Where it lives                                              | Secret? | Notes                                                                                                                                                                  |
+| ------------------------------ | ----------------------------------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `STYTCH_PROJECT_ID` (Live)     | `wrangler.jsonc`, in the `env.production` vars block        | No      | Public; it appears in the JWKS URL                                                                                                                                     |
+| `STYTCH_PROJECT_ID` (Test)     | `.dev.vars`, git-ignored                                    | No      | Overrides the committed value locally                                                                                                                                  |
+| `STYTCH_ALLOWED_ORGANIZATIONS` | `wrangler.jsonc`, every `vars` block that sets a project id | No      | Comma-separated organisation **slugs** (e.g. `swarm`). Required whenever a project id is set: missing or blank fails CLOSED to mode `none` (ADR-31, update 2026-09-29) |
+| `VITE_STYTCH_PUBLIC_TOKEN`     | **The build environment, not a Worker var**                 | No      | See the trap below                                                                                                                                                     |
+| Stytch project **secret**      | Nowhere in this repository                                  | **Yes** | Only needed for revocation and GDPR deletion. Decide who holds it.                                                                                                     |
 
 **The public-token trap.** Vite inlines `VITE_`-prefixed values into the browser bundle **at build time**. A
 wrangler `var` cannot deliver one. The CI deploy job runs `npm run build` with no `VITE_` environment, so the
