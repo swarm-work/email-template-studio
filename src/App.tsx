@@ -15,6 +15,7 @@ import {
 import { createTemplateRepository } from '@/infrastructure/templates/createTemplateRepository'
 import { createWorkspaceRepository } from '@/infrastructure/workspaces/createWorkspaceRepository'
 import { PasswordGate } from '@/presentation/auth/PasswordGate'
+import { useSignedInIdentity } from '@/presentation/auth/useSignedInIdentity'
 import { AppShell } from '@/presentation/layout/AppShell'
 import { GlobalHeader } from '@/presentation/layout/GlobalHeader'
 import { TemplatesRoute } from '@/presentation/templates/TemplatesRoute'
@@ -131,42 +132,8 @@ function WorkspaceShell({
   const [live, setLive] = useState(false)
   const onRenderTime = useCallback((ms: number | null) => setLastRenderMs(ms), [])
 
-  // Who is signed in, and whether there is anything to sign out OF.
-  //
-  // The status route already echoes the caller's email back, so this needs no
-  // new endpoint. `authMode` decides whether the sign-out control exists at all:
-  // under Cloudflare Access signing out is the identity provider's business, and
-  // under the shared password there is no person to sign out - which is exactly
-  // the gap ADR-31 closes.
-  const [signedInAs, setSignedInAs] = useState<string | undefined>(undefined)
-  const [authMode, setAuthMode] = useState<string | undefined>(undefined)
-
-  useEffect(() => {
-    let cancelled = false
-    void fetch('/api/send-test/status', { headers: { accept: 'application/json' } })
-      .then(async (response) => {
-        if (!response.ok) return null
-        return (await response.json()) as { user?: string; authMode?: string }
-      })
-      .then((body) => {
-        if (cancelled || !body) return
-        setSignedInAs(body.user)
-        setAuthMode(body.authMode)
-      })
-      // A failure here costs the avatar its name and nothing else. The gate
-      // above this component has already decided whether the studio opens.
-      .catch(() => undefined)
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  const onSignOut = useCallback(() => {
-    // Imported here, not at the top of the file: the header is on every screen,
-    // and a static import would pull the Stytch chunk into the first download of
-    // every build (see src/presentation/auth/stytchSignOut.ts).
-    void import('@/presentation/auth/stytchSignOut').then(({ signOutOfStytch }) => signOutOfStytch())
-  }, [])
+  // Who is signed in, and whether there is anything to sign out OF (ADR-31).
+  const { signedInAs, onSignOut } = useSignedInIdentity()
 
   // "LIVE" is only honest when the send server says it is connected.
   useEffect(() => {
@@ -202,7 +169,7 @@ function WorkspaceShell({
           lastRenderMs={lastRenderMs}
           live={live}
           signedInAs={signedInAs}
-          onSignOut={authMode === 'stytch' ? onSignOut : undefined}
+          onSignOut={onSignOut}
         />
       }
     >

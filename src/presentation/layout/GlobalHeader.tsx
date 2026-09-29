@@ -12,11 +12,10 @@
 import type { ReactNode } from 'react'
 import { NavLink } from 'react-router'
 import { toast } from 'sonner'
-import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { SwarmLogo } from '@/presentation/shared/SwarmLogo'
 import { cn } from '@/lib/utils'
-import { ThemeToggle } from './ThemeToggle'
+import { AccountMenu } from './AccountMenu'
 
 /** The product areas that actually have a screen behind them today. */
 export type ScreenPage = 'api' | 'templates'
@@ -74,24 +73,6 @@ const PLANNED_REASON_ID = 'header-planned-reason'
 /** The render pill explains itself: it is a browser measurement, not a service level. */
 const LATENCY_TOOLTIP = 'Time of the last preview render in this browser.'
 
-/**
- * First letters of the first two words, e.g. "meridian-platform" → "MP".
- *
- * Also takes an email address, because the avatar names the signed-in person
- * once there is one: the domain is dropped and dots count as separators, so
- * "jericho.delrosario@swarm.work" reads "JD" rather than "J".
- */
-function initialsOf(name: string): string {
-  const base = name.includes('@') ? name.slice(0, name.indexOf('@')) : name
-  const words = base.split(/[\s\-_.]+/).filter(Boolean)
-  return (
-    words
-      .slice(0, 2)
-      .map((word) => word[0]?.toUpperCase() ?? '')
-      .join('') || '?'
-  )
-}
-
 const NAV_ITEM_CLASS =
   'focus-visible:ring-ring/50 shrink-0 rounded-md px-2.5 py-1 text-sm whitespace-nowrap transition-colors outline-none focus-visible:ring-3'
 
@@ -105,10 +86,12 @@ export function GlobalHeader({
 }: GlobalHeaderProps) {
   return (
     <header className="bg-card shrink-0 border-b">
-      {/* `flex-wrap` so that below `md` the nav can drop onto a row of its own
-          (see the nav's `order-last w-full`); from `md` up everything fits on
-          the one 48px row, as before. */}
-      <div className="mx-auto flex min-h-12 max-w-[1440px] min-w-0 flex-wrap items-center gap-x-3 gap-y-1 px-4 max-md:pt-2 sm:px-6">
+      {/* `flex-wrap` so that below `lg` the nav can drop onto a row of its own
+          (see the nav's `order-last w-full`); from `lg` up everything fits on
+          the one 48px row. The break was `md` until the workspace switcher
+          became visible at every width: at 768px brand + switcher + nav no
+          longer fit on one row. */}
+      <div className="mx-auto flex min-h-12 max-w-[1440px] min-w-0 flex-wrap items-center gap-x-3 gap-y-1 px-4 max-lg:pt-2 sm:px-6">
         {/* Swarm's own lockup (badge + wordmark) from the brand kit, then the
             product name. The link reads "Swarm Email Template Studio" to a
             screen reader; below sm only the logo fits. */}
@@ -120,27 +103,33 @@ export function GlobalHeader({
           <span className="hidden text-sm font-semibold tracking-tight sm:inline">Email Template Studio</span>
         </a>
 
-        <span className="text-border hidden text-lg select-none xl:inline" aria-hidden="true">
+        <span className="text-border hidden text-lg select-none sm:inline" aria-hidden="true">
           /
         </span>
 
-        {/* The workspace picker (ADR-32). Below xl the nav needs the room, and
-            the avatar still names the workspace when nobody is signed in. */}
-        <span className="hidden min-w-0 xl:inline-flex">
+        {/* The workspace picker (ADR-32), at every width: it is the only route
+            to "Workspace settings" and "New workspace". It used to wait for xl
+            to leave the nav room; the account menu freed that room, and below
+            xl a long name is truncated rather than the picker hidden. The width
+            cap sits on the control itself, not on this wrapper: shadcn's Button
+            is `shrink-0` and would spill out of a capped wrapper. */}
+        <span className="inline-flex min-w-0">
           {workspaceSwitcher ?? (
-            <span className="text-muted-foreground truncate font-mono text-xs">{workspace.name}</span>
+            <span className="text-muted-foreground max-w-40 truncate font-mono text-xs xl:max-w-56">
+              {workspace.name}
+            </span>
           )}
         </span>
 
         {/* The nav never disappears: it is the only route to the API keys
-            screen. From `md` it sits in the row and scrolls sideways inside
-            itself if it runs out of room. Below `md` it moves to its own
+            screen. From `lg` it sits in the row and scrolls sideways inside
+            itself if it runs out of room. Below `lg` it moves to its own
             full-width row under the brand (`order-last w-full`) and WRAPS
             rather than scrolling: a scroll strip on a phone hid half of its
             first or last item at the edge with no visible way to reach it. */}
         <nav
           aria-label="Product"
-          className="order-last -mx-1 flex w-full min-w-0 [scrollbar-width:none] flex-wrap items-center gap-1 px-1 pb-2 md:order-none md:mx-0 md:ml-4 md:w-auto md:flex-1 md:flex-nowrap md:overflow-x-auto md:px-0 md:pb-0"
+          className="order-last -mx-1 flex w-full min-w-0 [scrollbar-width:none] flex-wrap items-center gap-1 px-1 pb-2 lg:order-none lg:mx-0 lg:ml-4 lg:w-auto lg:flex-1 lg:flex-nowrap lg:overflow-x-auto lg:px-0 lg:pb-0"
         >
           {NAV_ITEMS.map((item) =>
             item.enabled ? (
@@ -174,11 +163,13 @@ export function GlobalHeader({
         </nav>
 
         <div className="ml-auto flex min-w-0 items-center gap-2">
-          {/* 2xl, not xl: the theme toggle joined this cluster in phase 9, and at
-              1440 the three of them together took the width the nav needs — the
-              ACTIVE page's label was clipped to "Temp" in the README's own
-              screenshots. The latency pill is the one thing here that is
-              information rather than navigation, so it is the one that waits. */}
+          {/* 2xl, not xl: when the theme toggle joined this cluster in phase 9,
+              at 1440 the ACTIVE page's label was clipped to "Temp" in the
+              README's own screenshots. The toggle has since moved into the
+              account menu, but the workspace switcher now shows at every width,
+              so the room is still spoken for. The latency pill is the one thing
+              here that is information rather than navigation, so it is the one
+              that waits. */}
           <Tooltip>
             <TooltipTrigger asChild>
               <span
@@ -191,29 +182,10 @@ export function GlobalHeader({
             <TooltipContent>{LATENCY_TOOLTIP}</TooltipContent>
           </Tooltip>
 
-          <ThemeToggle />
-
-          {/* A bare <span> is `role=generic`, which does not take a name, so the
-              avatar is an image as far as assistive technology is concerned.
-              Once a real person is signed in the avatar names THEM rather than
-              the workspace - that naming is the whole point of the work in
-              ADR-31, and it is what the send log and D1's created_by column
-              record too. */}
-          <span
-            role="img"
-            aria-label={signedInAs ? `Signed in as ${signedInAs}` : `Signed in to ${workspace.name}`}
-            title={signedInAs}
-            className="bg-muted text-muted-foreground flex size-6 shrink-0 items-center justify-center rounded-full text-[10px] font-medium"
-          >
-            {initialsOf(signedInAs ?? workspace.name)}
-          </span>
-
-          {onSignOut ? (
-            <Button variant="ghost" size="sm" className="hidden lg:inline-flex" onClick={onSignOut}>
-              Sign out
-            </Button>
-          ) : null}
-
+          {/* One menu for the person: name, dark mode, sign out. It replaced
+              the three-way theme toggle, the bare avatar and the Sign out
+              button that used to sit here side by side (ADR-29 update). */}
+          <AccountMenu signedInAs={signedInAs} workspaceName={workspace.name} onSignOut={onSignOut} />
           <span id={PLANNED_REASON_ID} className="sr-only">
             {PLANNED_REASON}
           </span>

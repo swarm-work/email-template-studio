@@ -56,7 +56,7 @@ Three more tokens exist only for the sign-in screen (`src/presentation/auth/Auth
 | Diagnostics           | real checks vs collapsed "not connected" placeholders                                                                                                                 |
 | Template card         | kind (Visual/Code), status, category, version chips, Modified badge, "Updated 3 days ago"                                                                             |
 | Template library      | skeleton (3 card outlines) / error Alert + Retry / empty / no search results — see below                                                                              |
-| Global header         | brand, workspace label, nav with `aria-current`, render pill, theme toggle, avatar                                                                                    |
+| Global header         | brand, workspace switcher, nav with `aria-current`, render pill, account menu (name, dark mode, sign out)                                                             |
 | Dialogs               | Send test (explanatory, action disabled), Reset confirmations                                                                                                         |
 | Toasts                | bottom-right, one sentence, past tense                                                                                                                                |
 
@@ -85,10 +85,11 @@ name is empty, and "That name has no letters or numbers in it. Type a slug to us
 ## Header
 
 One `GlobalHeader` inside one `AppShell`, rendered once by `App.tsx` so it never remounts between
-screens; the first Tab lands on a **Skip to editor** link. Contents left to right: brand, workspace as
-a **static label** (there is one workspace — a dropdown that cannot switch anything is a lie), the
-nav (`Overview & Logs` is `aria-disabled` and says so when clicked; `API Keys & Webhooks` and `Template Studio` work, and the current one carries
-`aria-current="page"`), the render pill, the theme toggle and an initials avatar. `Domains`, **Docs**
+screens; the first Tab lands on a **Skip to editor** link. Contents left to right: brand, the
+**workspace switcher** (ADR-32: every workspace the person may enter, **Workspace settings** and
+**New workspace**), the nav (`Overview & Logs` is `aria-disabled` and says so when clicked; `API Keys & Webhooks` and `Template Studio` work, and the current one carries
+`aria-current="page"`), the render pill, and an initials avatar that opens the **account menu**: who is
+signed in, a **Dark mode** switch, and **Sign out** in Stytch mode only (ADR-29 update). `Domains`, **Docs**
 (which linked to react.email's documentation, not ours) and a planned **Feedback** button were removed
 at the owner's request; nothing replaces them.
 
@@ -106,10 +107,12 @@ Every `aria-disabled` control in the header points at one `sr-only` sentence, "P
 milestone.", so a screen reader is told what is unavailable **and** why — the same disabled-with-reason
 rule the studio's **Save template** and **Convert to code** buttons follow.
 
-Below `xl` the workspace label and the pill step aside so the nav fits. The nav never
-disappears: it is the only route between the screens. From `md` it sits in the header row as a
-horizontal scroll strip; below `md` it drops to a full-width row of its own under the brand
-(`order-last w-full`), still a scroll strip, so a phone reaches every screen too. Nothing in the
+Below `2xl` the pill steps aside so the nav fits. The workspace switcher never does — it is the only
+route to its settings and to **New workspace** — and below `xl` it is capped at `max-w-40` and
+truncates a long name with an ellipsis. The nav never disappears either: it is the only route between
+the screens. From `lg` it sits in the header row as a horizontal scroll strip; below `lg` it drops to
+a full-width row of its own under the brand (`order-last w-full`) and wraps, so a phone reaches every
+screen too. Nothing in the
 header is allowed to push the page into a horizontal scroll, and an e2e sweep at
 1440/1280/1024/768/390 asserts it.
 
@@ -167,7 +170,7 @@ simply scrolls away and never minimises. The summary row fades in with `motion-s
 motion gets the swap without the fade. The envelope has no To field (recipients are chosen in the
 send dialog), so the summary shows Reply-to in its place.
 
-**Code workspace** (`code/CodeWorkspace`) — `CompileInfoStrip`, then the primitives row, then
+**Code workspace** (`code/CodeWorkspace`) — `CompileInfoStrip`, then
 `grid xl:grid-cols-[minmax(0,1fr)_300px]` with the editor left and the rail right; below `xl` the rail
 stacks under the editor as `md:grid-cols-2`. The editor panel is one region, `Code editor`, holding
 the tab strip (`template.tsx · preview-props.json · Compiled HTML · Plain text`, mono for the file
@@ -212,7 +215,7 @@ decoration: `aria-hidden="true"`, `tabIndex={-1}`, `title=""`, `pointer-events-n
 and on the right one `aria-live` sentence `Last saved v3 · 10:22`. The numbers are not live regions;
 a status bar that speaks every byte count is unusable.
 
-Every strip that can run out of room (primitives, tab bar, status bar) scrolls inside itself with
+Every strip that can run out of room (tab bar, status bar) scrolls inside itself with
 `overflow-x-auto [scrollbar-width:none]`; the page itself never scrolls sideways, and the e2e sweep at
 1440/1280/1024/768/390 asserts it for the sub-header, the envelope panel and the status bar too.
 
@@ -415,7 +418,6 @@ Short, direct, sentence case. Say what happened and what to do next. Examples us
 - "Set by the send server." (From identity) · "Enter a valid email address." (reply-to)
 - "Only visible in this studio. Never sent." (internal description and tags, both editable since phase 7b)
 - "Values used by the preview and by test sends. They are never sent to real recipients." (props payload)
-- "Put the cursor in template.tsx to insert a primitive." (primitives row on another tab)
 - "Compiled with Sucrase — types are stripped, not checked." (compile strip)
 - "Gmail hides everything past about 102 KB behind a 'View entire message' link." (status bar tooltip)
 - "Open the visual editor first: the conversion reads the canvas." (convert to code, while the canvas is not mounted — the feature flag is off, or the server has not answered yet)

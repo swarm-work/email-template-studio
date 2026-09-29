@@ -36,7 +36,7 @@ The studio has three modes. The screenshots below are taken by `e2e/screenshots.
 
 **Editing a code template**
 
-- Write React Email TSX and the JSON preview payload in CodeMirror, with formatting, reset and a primitives strip that inserts components at the cursor.
+- Write React Email TSX and the JSON preview payload in CodeMirror, with formatting and reset.
 - Read the compiled HTML and the plain-text part in their own tabs.
 - See JSON syntax errors and schema errors (with field paths) reported separately, and swap the payload for one of the sample data sets derived from the template's own sample and schema (`Default`, `Long values`, `Missing optional fields` — only the ones that are both valid and actually different).
 - Read a render report (render time, sizes, a sparkline of the last twelve renders) and a diagnostics panel that only claims what it actually checks.

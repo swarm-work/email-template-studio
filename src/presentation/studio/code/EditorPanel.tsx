@@ -8,8 +8,8 @@
  * one to measure again whenever it could have been hidden: when the tab changes,
  * and when the whole workspace comes back from preview mode.
  */
-import type { ReactNode, Ref } from 'react'
-import { CodeEditor, type CodeEditorHandle } from '@/presentation/shared/CodeEditor'
+import type { ReactNode } from 'react'
+import { CodeEditor } from '@/presentation/shared/CodeEditor'
 import { EditorTabBar } from './EditorTabBar'
 import { panelId, tabId, type EditorTabId } from './editorTabs'
 
@@ -30,8 +30,6 @@ export interface EditorPanelProps {
   actions: ReactNode
   /** Status strip and render-error banner, drawn under the editors. */
   footer?: ReactNode
-  /** Lets the primitives row insert into the TSX editor. */
-  tsxEditorRef?: Ref<CodeEditorHandle>
   baseId: string
   /**
    * False while another workspace (preview) is showing, which puts every editor
@@ -52,7 +50,6 @@ export function EditorPanel({
   onTabChange,
   actions,
   footer,
-  tsxEditorRef,
   baseId,
   visible = true,
 }: EditorPanelProps) {
@@ -72,7 +69,6 @@ export function EditorPanel({
 
       <TabPanel baseId={baseId} tab="tsx" activeTab={activeTab}>
         <CodeEditor
-          ref={tsxEditorRef}
           value={source}
           onChange={onSourceChange}
           language="tsx"

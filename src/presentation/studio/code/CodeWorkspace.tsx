@@ -5,7 +5,7 @@
  * the chrome itself (which reset is being confirmed). Everything about the
  * template lives in the draft; nothing is copied into local state here.
  */
-import { useRef, useState, type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import {
   AlertDialog,
@@ -24,14 +24,12 @@ import { CodeStatusStrip } from './CodeStatusStrip'
 import { CompileInfoStrip } from './CompileInfoStrip'
 import { EditorPanel } from './EditorPanel'
 import type { EditorTabId } from './editorTabs'
-import { PrimitivesRow } from './PrimitivesRow'
 import { PropsPayloadCard } from './PropsPayloadCard'
 import { NOTHING_TO_RESET_REASON, READ_ONLY_FORMAT_REASON, READ_ONLY_RESET_REASON } from './reasons'
 import { RenderErrorBanner } from './RenderErrorBanner'
 import { RenderReportCard } from './RenderReportCard'
 import { ShortcutsCard } from './ShortcutsCard'
 import { DiagnosticsPanel } from '../DiagnosticsPanel'
-import type { CodeEditorHandle } from '@/presentation/shared/CodeEditor'
 import { ReasonedButton } from '@/presentation/shared/ReasonedButton'
 
 export interface CodeWorkspaceProps {
@@ -87,7 +85,6 @@ export function CodeWorkspace({
   previewThumbnail,
   active = true,
 }: CodeWorkspaceProps) {
-  const tsxEditorRef = useRef<CodeEditorHandle>(null)
   const [confirmReset, setConfirmReset] = useState<'tsx' | 'props' | null>(null)
 
   const fileName = fileNameFor(template.kind, template.metadata.slug)
@@ -116,13 +113,6 @@ export function CodeWorkspace({
 
       <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
         <div className="flex min-w-0 flex-col gap-2">
-          <div className="bg-card overflow-hidden rounded-lg border">
-            <PrimitivesRow
-              enabled={activeTab === 'tsx'}
-              onInsert={(snippet) => tsxEditorRef.current?.insertAtCursor(snippet)}
-            />
-          </div>
-
           <EditorPanel
             baseId="studio-code-editor"
             fileName={fileName}
@@ -134,7 +124,6 @@ export function CodeWorkspace({
             text={text}
             activeTab={activeTab}
             onTabChange={onActiveTabChange}
-            tsxEditorRef={tsxEditorRef}
             visible={active}
             actions={
               <>

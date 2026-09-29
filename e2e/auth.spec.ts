@@ -59,3 +59,22 @@ test('the API reports the developer mode, so no sign-in screen is shown', async 
   const response = await page.request.get('/api/send-test/status')
   expect(response.status(), 'the e2e build should be authenticated as the fixed developer identity').toBe(200)
 })
+
+test('the account menu names the developer identity and offers no sign out', async ({ page }) => {
+  // Sign out exists only when there is a Stytch session to end. Developer mode
+  // has none, so the menu carries the name and the theme switch and stops there.
+  await page.goto('/')
+  const trigger = page.getByRole('button', { name: 'Signed in as playwright@example.test' })
+  await expect(trigger).toBeVisible()
+
+  await trigger.click()
+  const menu = page.getByRole('menu')
+  await expect(menu).toContainText('playwright@example.test')
+  await expect(menu.getByRole('menuitemcheckbox', { name: 'Dark mode' })).toBeVisible()
+  await expect(menu.getByRole('menuitem', { name: 'Sign out' })).toHaveCount(0)
+
+  // Escape closes it and hands focus back to the avatar, as a menu should.
+  await page.keyboard.press('Escape')
+  await expect(menu).toBeHidden()
+  await expect(trigger).toBeFocused()
+})
