@@ -130,6 +130,10 @@ const STYTCH_ALLOWED = new Map([
     'src/presentation/auth/stytchSignOut.ts',
     'reaches the SDK through a dynamic import(), so the always-mounted header does not pull the chunk in',
   ],
+  [
+    'src/presentation/auth/stytchClient.ts',
+    'constructs the one client; reached only via React.lazy / dynamic import()',
+  ],
 ])
 
 function* sourceFiles(path) {
@@ -218,3 +222,68 @@ for (const lazy of LAZY_PACKAGES) {
       ` (scanned ${[...lazy.freePaths, ...lazy.scannedPaths].join(', ')}).`,
   )
 }
+
+/* --------------------------------------------------------------------------
+ * Two more seams, one level below the package itself (ADR-31, update
+ * 2026-09-29, third revision).
+ * ------------------------------------------------------------------------ */
+
+/**
+ * `stytchClient.ts` is the one place a Stytch client is built. A second
+ * caller building its own is worse than the extra kilobytes an unchecked
+ * editor or Stytch import would be: Stytch's own `SessionManagerRegistry`
+ * cancels the OLDER client's background refresh the instant a second one
+ * registers (`SessionManager.mjs`), so a stray import here would silently
+ * break the keep-alive rather than merely duplicate it.
+ */
+const STYTCH_CLIENT_ALLOWED = new Set([
+  'src/presentation/auth/StytchSignIn.tsx',
+  'src/presentation/auth/stytchSignOut.ts',
+  'src/presentation/auth/stytchKeepAlive.ts',
+])
+const STYTCH_CLIENT_IMPORT = /(?:from|import\()\s*['"]\.\/stytchClient['"]/
+
+/**
+ * `stytchKeepAlive.ts` names no package itself - it only imports
+ * `stytchClient.ts` - so the checks above cannot see it. It must still stay
+ * behind a dynamic `import()` (today, only `PasswordGate.tsx` uses one): a
+ * static `import ... from './stytchKeepAlive'` would pull it, and the SDK it
+ * starts, into whatever chunk that file already ships in.
+ */
+const STYTCH_KEEP_ALIVE_STATIC_IMPORT = /\bfrom\s+['"]\.\/stytchKeepAlive['"]/
+
+function offendersMatching(pattern, { allowed = new Set() } = {}) {
+  const found = []
+  for (const file of sourceFiles('src')) {
+    if (!isSourceFile(file) || /\.test\.(ts|tsx)$/.test(file) || allowed.has(file)) continue
+    if (pattern.test(readFileSync(join(ROOT, file), 'utf8'))) found.push(file)
+  }
+  return found
+}
+
+const stytchClientOffenders = offendersMatching(STYTCH_CLIENT_IMPORT, { allowed: STYTCH_CLIENT_ALLOWED })
+if (stytchClientOffenders.length > 0) {
+  console.error(
+    '\nThese files import "./stytchClient", which only StytchSignIn.tsx, stytchSignOut.ts and ' +
+      'stytchKeepAlive.ts may:\n' +
+      stytchClientOffenders.map((file) => `  ${file}`).join('\n') +
+      '\n',
+  )
+  process.exit(1)
+}
+
+const stytchKeepAliveOffenders = offendersMatching(STYTCH_KEEP_ALIVE_STATIC_IMPORT)
+if (stytchKeepAliveOffenders.length > 0) {
+  console.error(
+    '\nThese files import "./stytchKeepAlive" with a static import; it must only be reached through a ' +
+      'dynamic import():\n' +
+      stytchKeepAliveOffenders.map((file) => `  ${file}`).join('\n') +
+      '\n',
+  )
+  process.exit(1)
+}
+
+console.log(
+  'Stytch internal-module check: "./stytchClient" named only by its 3 allowed module(s); ' +
+    '"./stytchKeepAlive" reached only through dynamic import().',
+)

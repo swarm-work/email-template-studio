@@ -10,7 +10,11 @@
  * How it decides what to show:
  *   1. ask the API for its status
  *   2. 200 -> we are already allowed in (a valid cookie, Cloudflare Access, or a
- *      local developer identity), so render the studio
+ *      local developer identity), so render the studio. If `authMode` on that
+ *      body is "stytch", this is also the ONLY place that ever loads
+ *      `stytchKeepAlive.ts` - see that effect below - so the JWT stays fresh
+ *      for as long as the studio stays open, not just for the five minutes
+ *      after sign-in (ADR-31, update 2026-09-29, third revision).
  *   3. 401 with mode "password" -> show the password form
  *   4. 401 with mode "stytch" and session "refused" -> a cookie WAS presented
  *      and this server said no to it for a reason reloading cannot fix (wrong
@@ -24,9 +28,14 @@
  *      SDK and lets that refresh happen; a "stale" session must NEVER reach
  *      the refusal panel below, or a team member who left a tab open for an
  *      hour is told they are not on the team (ADR-31, update 2026-09-29,
- *      second revision).
- *   6. 401 with any other mode -> Access is in front and the browser must be sent
- *      to the identity provider, which a reload does
+ *      second revision). A bounded re-probe (`STALE_REPROBE_DELAYS_MS` below)
+ *      keeps asking the API while that refresh catches up.
+ *   6. 401 with any other mode ("disabled" - `server/auth.ts` names the
+ *      config-time absence of any auth setting "none", but the value this
+ *      request actually answers with is "disabled"; see docs/DEPLOYMENT.md -
+ *      or "cloudflare-access") -> the browser must be sent to the identity
+ *      provider, which a reload does; "disabled" additionally surfaces the
+ *      server's own reason, since no reload will ever fix it.
  *
  * The name is now narrower than the job: this gate covers the password mode AND
  * the Stytch mode. Renaming it to `AuthGate` belongs with the change that
@@ -60,6 +69,17 @@ const StytchSignIn = lazy(() => import('./StytchSignIn'))
 const AUTHENTICATE_PATH = '/authenticate'
 
 /**
+ * Delays for the bounded stale-session re-probe schedule below: 2s, 5s, 10s,
+ * 20s. The common case - an ordinary background refresh, seconds away once
+ * the SDK loads, see `stytchClient.ts` - resolves on the first or second try;
+ * a slower one (a JWKS outage clearing up, `server/auth.ts`) still gets caught
+ * well inside the five-minute JWT lifetime. Four tries and then stop: without
+ * a bound this would poll forever against a session that is never coming back
+ * (a real sign-out, the hard 60-minute expiry).
+ */
+const STALE_REPROBE_DELAYS_MS = [2_000, 5_000, 10_000, 20_000]
+
+/**
  * The default fetch, hoisted to module scope so it is the SAME function on
  * every render.
  *
@@ -78,16 +98,23 @@ const defaultFetch: typeof fetch = (...args) => fetch(...args)
 /** What the gate is currently doing. */
 type GateState =
   | { readonly kind: 'checking' }
-  | { readonly kind: 'open' }
+  /**
+   * `authMode` is undefined only for a pre-fix server or a body that failed to
+   * parse; the keep-alive effect below treats anything other than exactly
+   * `'stytch'` as "do not touch the SDK", so that absence is the safe default.
+   */
+  | { readonly kind: 'open'; readonly authMode?: string }
   | { readonly kind: 'locked'; readonly message?: string }
   /**
    * No Stytch cookie yet, OR one the SDK's own background refresh can still
    * fix (session "stale" - see the module comment) - either way, the ordinary
    * "show the sign-in form" state, which is also what loads the SDK and lets
    * that refresh happen. `stale: true` only on the second kind, so the effect
-   * below knows to re-probe once and pick up the refreshed cookie.
+   * below knows to keep re-probing until it clears. `message` is the server's
+   * own reason (only ever set alongside `stale`) - a JWKS outage or an unknown
+   * key id says something worth showing, not just "sign in again" (ADR-31).
    */
-  | { readonly kind: 'stytch'; readonly stale?: boolean }
+  | { readonly kind: 'stytch'; readonly stale?: boolean; readonly message?: string }
   /**
    * A Stytch cookie WAS presented and the server refused it for a reason
    * reloading cannot fix. Shown on every load, not only right after a sign-in
@@ -118,7 +145,13 @@ export function PasswordGate({ children, fetchImpl = defaultFetch }: PasswordGat
     } catch {
       return { kind: 'unreachable', message: 'Could not reach the studio API.' }
     }
-    if (response.ok) return { kind: 'open' }
+    if (response.ok) {
+      // `authMode` is what tells the keep-alive effect below whether it is
+      // safe to load the SDK: both 200 bodies carry it (server/app.ts), and it
+      // is exactly the same string the 401 branch below already switches on.
+      const body = (await response.json().catch(() => null)) as { authMode?: string } | null
+      return { kind: 'open', authMode: body?.authMode }
+    }
     if (response.status === 401) {
       const body = (await response.json().catch(() => null)) as {
         mode?: string
@@ -151,18 +184,23 @@ export function PasswordGate({ children, fetchImpl = defaultFetch }: PasswordGat
             refusal: body.refusal === 'claims' ? 'claims' : 'organization',
           }
         }
-        return { kind: 'stytch', stale: body.session === 'stale' }
+        const stale = body.session === 'stale'
+        return { kind: 'stytch', stale, message: stale ? body.message : undefined }
       }
-      // Cloudflare Access, or an unconfigured server (mode "none"), is in
-      // front. There is no password for the visitor to type; reloading is
-      // what sends them to the login - except mode "none" never lets a reload
-      // succeed, so its own message (already public in this 401 body) is
-      // shown instead of the generic one, in case it names a forgotten
-      // setting an operator can actually fix.
+      // Cloudflare Access, or an unconfigured server (wire mode "disabled" -
+      // `loadAuthConfig`'s OWN config mode is called "none", but
+      // `createDisabledAuthenticator` is what actually answers this request,
+      // and its `Authenticator.mode` - the value on the wire - is "disabled";
+      // see server/auth.ts and docs/DEPLOYMENT.md), is in front. There is no
+      // password for the visitor to type; reloading is what sends them to the
+      // login - except "disabled" never lets a reload succeed, so its own
+      // message (already public in this 401 body) is shown instead of the
+      // generic one, in case it names a forgotten setting an operator can
+      // actually fix.
       return {
         kind: 'unreachable',
         message:
-          body?.mode === 'none' && body.message
+          body?.mode === 'disabled' && body.message
             ? body.message
             : 'This studio requires you to sign in. Reload to continue.',
       }
@@ -184,28 +222,74 @@ export function PasswordGate({ children, fetchImpl = defaultFetch }: PasswordGat
 
   /**
    * A "stale" session (see the module comment) is one the SDK's own
-   * background refresh should mend by itself once it loads - but that refresh
-   * fires no event this gate can listen for, unlike a full sign-in
-   * (`onStytchSignedIn` below). So this gives the SDK a moment to fetch a
-   * fresh cookie, then asks the API again, exactly once - the ref, not state,
-   * is what makes it "once": re-entering the 'stytch' state later (a second
-   * stale reading after this same probe) must not restart the timer.
+   * background refresh should mend by itself once it loads. `StytchSignIn`'s
+   * own `session.onChange` listener is the fast path for that; this is the
+   * fallback net for everything it might miss (the chunk has not finished
+   * downloading yet, the refresh needed a retry). So this asks the API again
+   * on a short backoff (`STALE_REPROBE_DELAYS_MS`) until the session clears,
+   * proves genuinely dead, or the schedule runs out - the ref, not state, is
+   * what tracks how many attempts have run: re-entering 'stytch' with the
+   * SAME staleness (this effect's own probe answering "still stale") must
+   * continue the count, but a FRESH stale reading once the count has already
+   * reset (a new sign-in, a later reload) must start over.
    */
-  const reprobedStaleSession = useRef(false)
+  const staleReprobeAttempts = useRef(0)
   useEffect(() => {
-    if (state.kind !== 'stytch' || !state.stale || reprobedStaleSession.current) return
-    reprobedStaleSession.current = true
+    if (state.kind !== 'stytch' || !state.stale) {
+      staleReprobeAttempts.current = 0
+      return undefined
+    }
+    const attempt = staleReprobeAttempts.current
+    if (attempt >= STALE_REPROBE_DELAYS_MS.length) return undefined
     let cancelled = false
     const timer = window.setTimeout(() => {
+      staleReprobeAttempts.current = attempt + 1
       void probe().then((next) => {
         if (!cancelled) setState(next)
       })
-    }, 2000)
+    }, STALE_REPROBE_DELAYS_MS[attempt])
     return () => {
       cancelled = true
       window.clearTimeout(timer)
     }
   }, [state, probe])
+
+  /**
+   * The ONLY place `stytchKeepAlive.ts` is ever imported, and the ONLY
+   * condition that triggers it: the gate is open (a valid session got the
+   * studio rendered) AND this deployment is in Stytch mode. Developer,
+   * password and Cloudflare Access builds never satisfy this, so they never
+   * import it - the SDK stays exactly as absent from those builds as it was
+   * before this effect existed (`scripts/check-worker-bundle.mjs`).
+   *
+   * Keyed on the boolean, not on `state` itself: the two are equivalent
+   * today, since nothing sets a NEW 'open' state once this effect's own
+   * `onEnded` callback below has moved past it, but the boolean says exactly
+   * what this effect cares about - if 'open' ever grows a field that can
+   * change without `authMode` changing with it, this stays stable instead of
+   * tearing the keep-alive down and rebuilding it (dropping and
+   * re-registering its `session.onChange` listener) for no reason.
+   *
+   * `onEnded` is what lets a session that ends for real (signed out
+   * elsewhere, the hard 60-minute expiry) show the sign-in form immediately,
+   * rather than waiting for the next API call to notice.
+   */
+  const isOpenInStytchMode = state.kind === 'open' && state.authMode === 'stytch'
+  useEffect(() => {
+    if (!isOpenInStytchMode) return undefined
+    let cancelled = false
+    let stop: (() => void) | undefined
+    void import('./stytchKeepAlive')
+      .then((keepAlive) => {
+        if (!cancelled)
+          stop = keepAlive.keepStytchSessionFresh(undefined, undefined, () => setState({ kind: 'stytch' }))
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+      stop?.()
+    }
+  }, [isOpenInStytchMode])
 
   /**
    * Stytch has finished: its session cookie is set. Two things follow.
@@ -284,6 +368,15 @@ export function PasswordGate({ children, fetchImpl = defaultFetch }: PasswordGat
     return (
       <AuthGround>
         <AuthCard>
+          {/* The server's own reason for 'stale', when it has one worth
+              showing (a JWKS outage, an unknown signing key) - see the
+              GateState comment. Absent for the ordinary "no cookie yet" and
+              "JWT past its five minutes, refresh under way" cases, which say
+              nothing a member needs to read while the bounded re-probe above
+              and the sign-in screen's own background refresh sort it out. */}
+          {state.kind === 'stytch' && state.message ? (
+            <p className="text-muted-foreground px-9 pt-6 text-center text-sm">{state.message}</p>
+          ) : null}
           {/* The fallback shows while the lazy chunk downloads. It takes the
               same inset as the form it is standing in for, so the card does
               not jump in height when the form arrives. */}

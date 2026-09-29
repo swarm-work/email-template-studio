@@ -77,10 +77,16 @@ the team's published keys is what turns that header into proof.
 | ------------------------------------------------------------ | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ACCESS_TEAM_DOMAIN` + `ACCESS_AUD`                          | `cloudflare-access` | Production. Verifies a real Access JWT.                                                                                                                                                                                       |
 | `STYTCH_PROJECT_ID` + `STYTCH_ALLOWED_ORGANIZATIONS`         | `stytch`            | Verifies a Stytch B2B session JWT AND the organisation it names (ADR-31).                                                                                                                                                     |
-| `STYTCH_PROJECT_ID` alone, no `STYTCH_ALLOWED_ORGANIZATIONS` | `none`              | **Fails closed - never falls through to `password` or `developer` below**, even if one is also set. A forgotten or blanked allow-list must read as "nobody", not "whoever is next in this table" (ADR-31, update 2026-09-29). |
+| `STYTCH_PROJECT_ID` alone, no `STYTCH_ALLOWED_ORGANIZATIONS` | `none`\*            | **Fails closed - never falls through to `password` or `developer` below**, even if one is also set. A forgotten or blanked allow-list must read as "nobody", not "whoever is next in this table" (ADR-31, update 2026-09-29). |
 | `STUDIO_PASSWORD`                                            | `password`          | A shared password, for a test deployment without Access.                                                                                                                                                                      |
 | `STUDIO_DEV_IDENTITY`                                        | `developer`         | Local and Playwright only. Trusts a fixed email.                                                                                                                                                                              |
 | none of them                                                 | `disabled`          | Every `/api/*` request gets 401.                                                                                                                                                                                              |
+
+\* `none` is `loadAuthConfig`'s own name for this branch (`AuthConfig.mode`), not what a browser ever
+sees: `createAuthenticator` builds a `createDisabledAuthenticator` from it exactly like the "none of
+them" row below, so the `/api/*` 401 body's `mode` field - and `PasswordGate.tsx`'s browser-side switch
+on it - reads `disabled` for both rows (`server/auth.ts`; `server/auth.test.ts` pins
+`createAuthenticator({ mode: 'none', ... }).mode === 'disabled'`). Two config paths, one wire mode.
 
 The order is what makes this safe to leave configured: a forgotten `STUDIO_DEV_IDENTITY`
 or `STUDIO_PASSWORD` can never downgrade a deployment that has real Access set up.

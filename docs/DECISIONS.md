@@ -435,6 +435,34 @@ environment's `STYTCH_PROJECT_ID` at it, and if the organisation's slug is ever 
 environment's `STYTCH_ALLOWED_ORGANIZATIONS` the same day - turning off `create_organization_enabled`
 first, so the old slug cannot be claimed by someone else in the gap.
 
+**Update 2026-09-29, third revision: the refresh the second revision routed to did not exist.** "The
+browser SDK refreshes it silently in the background" (second revision, above) was aspirational for
+anyone who had actually reloaded the page: `StytchSignIn.tsx`'s module-scope client is built only
+while that component is mounted, and it is reached only through `React.lazy` and unmounted the moment
+the gate opens - so once a member was past sign-in, no Stytch client existed anywhere in the tab, and
+nothing ran the SDK's three-minute refresh loop `SessionManager.mjs` provides. Routing `'stale'` to
+the ordinary sign-in screen was the right fix for the refusal-panel bug the second revision found; it
+just assumed a refresh was happening underneath, when the true state was "the JWT counts down once at
+sign-in and is never touched again." The member experience: the studio opens after a reload, then
+every request 401s three to six minutes later (five-minute JWT plus 60 seconds of skew, minus its age
+at reload) with "Stytch session token has expired," and "Sign in again" reloads into the very same
+trap, because the session itself is still alive - only its JWT is not.
+
+`stytchClient.ts` now holds the one client instance at module scope, imported by `StytchSignIn.tsx`
+and `stytchSignOut.ts` rather than each building their own, and by a new `stytchKeepAlive.ts`, which
+`PasswordGate.tsx` imports once the gate is open AND `authMode` is `stytch` - never in developer,
+password or Access mode. Importing `stytchKeepAlive.ts` is enough to start the SDK's own refresh:
+its constructor call to `performBackgroundRefresh()` already runs the moment `stytchClient.ts` is
+first evaluated, whenever the `stytch_session` cookie exists (`StytchB2BClient.mjs`), and
+`SessionManager.mjs` then repeats it every three minutes on its own for as long as the client instance
+is alive - which is now for as long as the studio tab is open, not just for the moment sign-in took.
+`stytchKeepAlive.ts` additionally re-authenticates on `visibilitychange` (a suspended tab's timers do
+not fire while it sleeps) and tells the gate when the session ends for real. The SDK is still never in
+the first download of any build: the keep-alive module names no package itself, reaching
+`stytchClient.ts` only through the same dynamic `import()` `stytchSignOut.ts` already used, and
+`scripts/check-worker-bundle.mjs` now also checks that `stytchClient.ts` itself is reached only by
+these three modules. See `docs/STYTCH_LOG.md` section 2 and `docs/STYTCH_PLAN.md` risk 3.
+
 ## ADR-32 Workspaces: one flat table, and the store scopes every read and write by it
 
 **Context.** Until 2026-09-25 the studio was single-tenant: one library, one `templates.slug`

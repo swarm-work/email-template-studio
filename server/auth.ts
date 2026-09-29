@@ -647,11 +647,17 @@ function createKeyring(url: string, label: string, options: AuthenticatorOptions
  *
  *   1. The token arrives in a COOKIE, not a header, because the browser SDK put
  *      it there. It is not HttpOnly - the SDK has to read it too.
- *   2. It lives about FIVE MINUTES. The SDK silently refreshes it in the
- *      background, so this Worker will legitimately see expired tokens from
- *      tabs that were asleep, and must refuse them and let the browser retry.
- *      Do not widen CLOCK_SKEW_SECONDS to hide that: 60 seconds was nothing
- *      against a long Access token but is a fifth of this one.
+ *   2. It lives about FIVE MINUTES. The SDK refreshes it in the background, but
+ *      ONLY while a client instance actually exists in the tab - which is
+ *      exactly what `src/presentation/auth/stytchKeepAlive.ts` is for, loaded
+ *      once the studio is open in Stytch mode (ADR-31, update 2026-09-29,
+ *      third revision; before that fix, the SDK was never resident once the
+ *      sign-in screen unmounted, and this refresh simply did not happen). This
+ *      Worker still legitimately sees an expired token from a tab that slept
+ *      through the keep-alive's own three-minute cadence, and must refuse it
+ *      and let the browser retry. Do not widen CLOCK_SKEW_SECONDS to hide
+ *      that: 60 seconds was nothing against a long Access token but is a
+ *      fifth of this one.
  *   3. There are TWO expiries and mixing them up is a real bug. The outer `exp`
  *      is the five-minute one and is the one to check. The `expires_at` nested
  *      inside the session claim is the SESSION's end, hours away; trusting it
@@ -874,10 +880,12 @@ interface StytchClaimProblem {
  * Returns a reason to refuse, or null when every claim is acceptable.
  *
  * Expiry and not-yet-valid are tagged 'stale' rather than 'refused': the token
- * lives about five minutes and the browser SDK refreshes it in the background,
- * so an honest team member sees exactly this every time a tab slept - it is
- * not evidence of a stranger. Everything else here (wrong issuer, wrong
- * audience, no subject) is a real, permanent problem, so it stays 'refused'.
+ * lives about five minutes and the browser SDK refreshes it in the background
+ * for as long as the studio stays open (`stytchKeepAlive.ts`), so an honest
+ * team member sees exactly this on a tab that slept past that refresh, or on
+ * the first load after the SDK's very first refresh landed - it is not
+ * evidence of a stranger. Everything else here (wrong issuer, wrong audience,
+ * no subject) is a real, permanent problem, so it stays 'refused'.
  */
 function checkStytchClaims(
   claims: StytchClaims,

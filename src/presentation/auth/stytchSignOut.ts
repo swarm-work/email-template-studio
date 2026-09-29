@@ -8,9 +8,12 @@
  * be in the first download of every page, including builds with no Stytch at
  * all — the very thing `StytchSignIn.tsx` is lazily loaded to avoid.
  *
- * So the SDK is reached through a **dynamic `import()`**, evaluated only when
- * somebody actually clicks sign out. `scripts/check-worker-bundle.mjs` permits
- * this file to name the package for exactly that reason.
+ * So the SDK is reached through a **dynamic `import()`** - of `./stytchClient`,
+ * not `@stytch/react/b2b` directly, so this reuses the SAME client instance
+ * `stytchKeepAlive.ts` is keeping alive rather than building a second one.
+ * `scripts/check-worker-bundle.mjs` permits this file to name the SDK for
+ * exactly that reason, and evaluates it only when somebody actually clicks
+ * sign out.
  *
  * Two things here are easy to get wrong and both are deliberate.
  */
@@ -32,8 +35,13 @@ export async function signOutOfStytch(
   }
 
   try {
-    const { createStytchB2BClient } = await import('@stytch/react/b2b')
-    const client = createStytchB2BClient(token)
+    const { stytchClient } = await import('./stytchClient')
+    if (!stytchClient) {
+      // Can't actually happen when `token` above is set - `stytchClient.ts`
+      // reads the same variable - but the import's return type is nullable,
+      // and this keeps that honest rather than asserting it away.
+      return 'This studio is not using Stytch, so there is no session to end.'
+    }
 
     // `forceClear` is the whole point of this function.
     //
@@ -43,7 +51,7 @@ export async function signOutOfStytch(
     // server-side session may outlive this call when Stytch is unreachable, but
     // the token expires within about five minutes regardless (ADR-31), and a
     // visibly-still-signed-in user is the worse of the two failures.
-    await client.session.revoke({ forceClear: true })
+    await stytchClient.session.revoke({ forceClear: true })
   } catch {
     // Reaching here means the revoke could not be delivered. The local session
     // is already cleared by `forceClear`, so carrying on to the reload is

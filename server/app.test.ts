@@ -611,7 +611,13 @@ describe('authentication', () => {
     })
     const response = await app.request('/api/send-test/status', { headers: { host: 'localhost:8787' } })
     expect(response.status).toBe(401)
-    expect(await response.json()).toMatchObject({ message: 'token was not signed by this team' })
+    // The wire value is "disabled" - `loadAuthConfig`'s own config-time name
+    // for this branch is "none" (docs/DEPLOYMENT.md), but that name never
+    // reaches the browser: `PasswordGate.tsx` switches on THIS field.
+    expect(await response.json()).toMatchObject({
+      mode: 'disabled',
+      message: 'token was not signed by this team',
+    })
   })
 
   // The `session` field lets the browser tell "no cookie yet" apart from "a
@@ -660,6 +666,37 @@ describe('authentication', () => {
     const response = await app.request('/api/send-test/status', { headers: { host: 'localhost:8787' } })
     expect(response.status).toBe(401)
     expect(await response.json()).toMatchObject({ mode: 'stytch', session: 'refused' })
+  })
+
+  it("carries the authenticator's session field (stale) AND refusal on the 401 body", async () => {
+    // 'stale' never carries a `refusal` in practice (server/auth.ts only sets
+    // one alongside 'refused'), but the middleware itself does not know that -
+    // it just forwards whatever the authenticator returns. This pins that it
+    // forwards BOTH fields unconditionally, rather than, say, only ever
+    // forwarding `refusal` when `session` is exactly 'refused'.
+    const app = createApp({
+      authenticator: {
+        mode: 'stytch',
+        async authenticate() {
+          return {
+            ok: false,
+            reason: 'Stytch session token has expired.',
+            session: 'stale',
+            refusal: 'organization',
+          }
+        },
+      },
+      config: enabledConfig,
+      sender,
+    })
+    const response = await app.request('/api/send-test/status', { headers: { host: 'localhost:8787' } })
+    expect(response.status).toBe(401)
+    expect(await response.json()).toMatchObject({
+      mode: 'stytch',
+      session: 'stale',
+      refusal: 'organization',
+      message: 'Stytch session token has expired.',
+    })
   })
 
   it('leaves the session field off the 401 body when the authenticator does not set one', async () => {

@@ -270,6 +270,17 @@ will have produced the right value.
    widen `CLOCK_SKEW_SECONDS` (`server/auth.ts:66`) to paper over it — sixty seconds was nothing against a
    long Access token but is twenty per cent of a Stytch JWT. Fix the browser-side refresh instead.
 
+   **Fixed 2026-09-29.** The browser-side refresh this risk asked for did not merely need fixing, it did
+   not exist once a member was past sign-in: `StytchSignIn.tsx`'s client lived only as long as that
+   component was mounted, and it is reached only through `React.lazy`, unmounted the moment the gate
+   opened. Nothing kept a Stytch client instance alive in an open studio, so the SDK's own three-minute
+   refresh loop (`SessionManager.mjs`) never ran there, and every member hit exactly the failed save this
+   risk predicted, three to six minutes after a reload, every time. `src/presentation/auth/stytchClient.ts`
+   now holds the one client instance at module scope, and `src/presentation/auth/stytchKeepAlive.ts`
+   (imported by `PasswordGate.tsx` only once the gate is open in Stytch mode) is what keeps it alive for as
+   long as the tab stays open. See `docs/STYTCH_LOG.md` section 2 and `docs/DECISIONS.md` ADR-31 (update
+   2026-09-29, third revision).
+
 4. **Existing D1 rows say `shared-password`** and there is no backfill story. T9 must decide whether to leave
    them, annotate them, or migrate them.
 

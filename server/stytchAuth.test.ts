@@ -277,38 +277,41 @@ describe('createStytchAuthenticator', () => {
 
   it('refuses a token that is not three parts', async () => {
     const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders('not.a-jwt'))
-    expect(result).toMatchObject({ ok: false })
+    // A malformed token is a permanent problem, not one the SDK's own refresh
+    // could ever fix - 'refused', and 'claims' rather than 'organization'
+    // because a genuine Swarm member can send a malformed token too.
+    expect(result).toMatchObject({ ok: false, session: 'refused', refusal: 'claims' })
   })
 
   it('refuses a token whose payload is not JSON', async () => {
     const junk = `${base64Url('{"alg":"RS256","kid":"stytch-key-1"}')}.${base64Url('not json')}.sig`
     const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(junk))
-    expect(result).toMatchObject({ ok: false })
+    expect(result).toMatchObject({ ok: false, session: 'refused', refusal: 'claims' })
   })
 
   it('refuses alg none', async () => {
     const token = await makeToken({}, { alg: 'none' })
     const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-    expect(result).toMatchObject({ ok: false })
+    expect(result).toMatchObject({ ok: false, session: 'refused', refusal: 'claims' })
     expect(result.ok === false && result.reason).toContain('algorithm')
   })
 
   it('refuses a symmetric algorithm', async () => {
     const token = await makeToken({}, { alg: 'HS256' })
     const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-    expect(result).toMatchObject({ ok: false })
+    expect(result).toMatchObject({ ok: false, session: 'refused', refusal: 'claims' })
   })
 
   it('refuses a token that names no signing key', async () => {
     const token = await makeToken({}, { kid: undefined })
     const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-    expect(result).toMatchObject({ ok: false })
+    expect(result).toMatchObject({ ok: false, session: 'refused', refusal: 'claims' })
   })
 
   it('refuses a token signed by the wrong key', async () => {
     const token = await makeToken({}, {}, otherKeyPair.privateKey)
     const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-    expect(result).toMatchObject({ ok: false })
+    expect(result).toMatchObject({ ok: false, session: 'refused', refusal: 'claims' })
     expect(result.ok === false && result.reason).toContain('signature')
   })
 
@@ -351,7 +354,7 @@ describe('createStytchAuthenticator', () => {
     it('still refuses another project, and names what it received', async () => {
       const token = await makeToken({ iss: 'stytch.com/project-test-someone-else-0000' })
       const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-      expect(result).toMatchObject({ ok: false })
+      expect(result).toMatchObject({ ok: false, session: 'refused', refusal: 'claims' })
       // Quoting both sides is what makes a wrong literal a 30 second fix.
       expect(result.ok === false && result.reason).toContain('someone-else')
       expect(result.ok === false && result.reason).toContain(PROJECT_ID)
@@ -360,7 +363,7 @@ describe('createStytchAuthenticator', () => {
     it('refuses a token with no issuer at all', async () => {
       const token = await makeToken({ iss: undefined })
       const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-      expect(result).toMatchObject({ ok: false })
+      expect(result).toMatchObject({ ok: false, session: 'refused', refusal: 'claims' })
     })
   })
 
@@ -374,7 +377,7 @@ describe('createStytchAuthenticator', () => {
     it('refuses a token minted for a different project', async () => {
       const token = await makeToken({ aud: [LIVE_PROJECT_ID] })
       const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-      expect(result).toMatchObject({ ok: false })
+      expect(result).toMatchObject({ ok: false, session: 'refused', refusal: 'claims' })
       expect(result.ok === false && result.reason).toContain('different project')
     })
   })
@@ -421,14 +424,14 @@ describe('createStytchAuthenticator', () => {
     it('refuses an empty subject rather than logging a blank author', async () => {
       const token = await makeToken({ sub: '   ' })
       const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-      expect(result).toMatchObject({ ok: false })
+      expect(result).toMatchObject({ ok: false, session: 'refused', refusal: 'claims' })
       expect(result.ok === false && result.reason).toContain('subject')
     })
 
     it('refuses a missing subject', async () => {
       const token = await makeToken({ sub: undefined })
       const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-      expect(result).toMatchObject({ ok: false })
+      expect(result).toMatchObject({ ok: false, session: 'refused', refusal: 'claims' })
     })
   })
 
@@ -466,13 +469,13 @@ describe('createStytchAuthenticator', () => {
     it('ignores a non-string value rather than writing "[object Object]" into the log', async () => {
       const token = await makeToken({ email: { address: EMAIL } })
       const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-      expect(result).toMatchObject({ ok: false })
+      expect(result).toMatchObject({ ok: false, session: 'refused', refusal: 'claims' })
     })
 
     it('refuses when no email is present, and lists the claims that ARE', async () => {
       const token = await makeToken({ email: undefined })
       const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-      expect(result).toMatchObject({ ok: false })
+      expect(result).toMatchObject({ ok: false, session: 'refused', refusal: 'claims' })
       // This message is the whole point: it turns a total lockout that reads
       // like a signature failure into a one-line fix.
       expect(result.ok === false && result.reason).toContain('iss')
@@ -555,7 +558,10 @@ describe('createStytchAuthenticator', () => {
         'https://stytch.com/organization': { organization_id: 'organization-test-1', slug: '' },
       })
       const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-      expect(result).toMatchObject({ ok: false, session: 'refused' })
+      // Treated as NO organisation at all, so this is the allow-list refusal,
+      // not a claims problem - 'organization', the same as a token that omits
+      // the claim entirely.
+      expect(result).toMatchObject({ ok: false, session: 'refused', refusal: 'organization' })
       expect(result.ok === false && result.reason).toContain(EMAIL)
     })
 
@@ -578,7 +584,7 @@ describe('createStytchAuthenticator', () => {
         },
       })
       const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-      expect(result).toMatchObject({ ok: false })
+      expect(result).toMatchObject({ ok: false, session: 'refused', refusal: 'claims' })
       expect(result.ok === false && result.reason).toContain('claim template')
     })
 
@@ -636,7 +642,7 @@ describe('createStytchAuthenticator', () => {
       const result = await authenticatorWith(jwksFetch(), () => NOW_MS, ['swarm']).authenticate(
         cookieHeaders(token),
       )
-      expect(result).toMatchObject({ ok: false, session: 'refused' })
+      expect(result).toMatchObject({ ok: false, session: 'refused', refusal: 'organization' })
       // The whole point: whoever reads this knows who tried and where they are
       // a real member, without grepping a log.
       expect(result.ok === false && result.reason).toContain(EMAIL)
@@ -649,7 +655,7 @@ describe('createStytchAuthenticator', () => {
       const result = await authenticatorWith(jwksFetch(), () => NOW_MS, ['swarm']).authenticate(
         cookieHeaders(token),
       )
-      expect(result).toMatchObject({ ok: false, session: 'refused' })
+      expect(result).toMatchObject({ ok: false, session: 'refused', refusal: 'organization' })
       expect(result.ok === false && result.reason).toContain(EMAIL)
       expect(result.ok === false && result.reason).toContain('swarm')
     })

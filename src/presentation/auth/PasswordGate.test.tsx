@@ -1,9 +1,10 @@
 /**
  * @vitest-environment jsdom
  */
-import { render, screen, waitFor } from '@testing-library/react'
+import { StrictMode } from 'react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PasswordGate } from './PasswordGate'
 
 // The real sign-in screen pulls in the Stytch SDK, which wants a browser and a
@@ -22,6 +23,12 @@ const { signOutOfStytch, toastError } = vi.hoisted(() => ({
 vi.mock('./stytchSignOut', () => ({ signOutOfStytch }))
 vi.mock('sonner', () => ({ toast: { error: toastError } }))
 
+// The keep-alive reaches the real SDK too (through `stytchClient.ts`). Mocking
+// it here keeps these tests about WHEN the gate loads it, not what it does
+// once loaded - that is `stytchKeepAlive.test.ts`'s job.
+const keepAlive = vi.hoisted(() => vi.fn(() => () => {}))
+vi.mock('./stytchKeepAlive', () => ({ keepStytchSessionFresh: keepAlive }))
+
 /** Builds a fetch stub that answers the status check, then the sign-in POST. */
 function fetchStub(responses: Array<() => Response>) {
   let call = 0
@@ -39,6 +46,7 @@ describe('PasswordGate', () => {
   beforeEach(() => {
     signOutOfStytch.mockClear()
     toastError.mockClear()
+    keepAlive.mockClear()
   })
 
   it('renders the studio straight away when the API is already reachable', async () => {
@@ -340,5 +348,238 @@ describe('PasswordGate', () => {
     )
     await waitFor(() => expect(screen.queryByLabelText('Password')).not.toBeInTheDocument())
     expect(screen.getByText(/requires you to sign in/i)).toBeInTheDocument()
+  })
+
+  it('shows the server\'s own reason when the wire mode is "disabled", not the generic sentence', async () => {
+    // The wire value `createDisabledAuthenticator` actually sends is
+    // "disabled" (server/auth.ts), never "none" - "none" only ever names
+    // `loadAuthConfig`'s internal config branch (docs/DEPLOYMENT.md). Comparing
+    // against "none" here meant this branch never ran and every operator saw
+    // the generic sentence instead of the setting they forgot.
+    render(
+      <PasswordGate
+        fetchImpl={fetchStub([
+          () =>
+            json(
+              {
+                code: 'unauthenticated',
+                mode: 'disabled',
+                message: 'STYTCH_ALLOWED_ORGANIZATIONS is not set. Set it to a comma-separated list...',
+              },
+              401,
+            ),
+        ])}
+      >
+        <p>studio</p>
+      </PasswordGate>,
+    )
+    expect(await screen.findByText(/STYTCH_ALLOWED_ORGANIZATIONS is not set/)).toBeInTheDocument()
+    expect(screen.queryByText(/reload to continue/i)).not.toBeInTheDocument()
+  })
+
+  it('still shows the generic sentence for a mode this gate does not otherwise recognise', async () => {
+    render(
+      <PasswordGate fetchImpl={fetchStub([() => json({ code: 'unauthenticated', mode: 'none' }, 401)])}>
+        <p>studio</p>
+      </PasswordGate>,
+    )
+    expect(await screen.findByText(/requires you to sign in\. reload to continue/i)).toBeInTheDocument()
+  })
+
+  it('shows the server\'s reason above the sign-in form for a "stale" session, instead of discarding it', async () => {
+    // Before this fix, `{ kind: 'stytch', stale: true }` carried no message at
+    // all: a JWKS outage or an unknown signing key (server/auth.ts) showed the
+    // exact same blank sign-in screen as an ordinary five-minute-old JWT, with
+    // no way to tell the two apart from the screen alone.
+    render(
+      <PasswordGate
+        fetchImpl={fetchStub([
+          () =>
+            json(
+              {
+                code: 'unauthenticated',
+                mode: 'stytch',
+                session: 'stale',
+                message: 'Could not load the Stytch signing keys: HTTP 500',
+              },
+              401,
+            ),
+        ])}
+      >
+        <p>studio</p>
+      </PasswordGate>,
+    )
+    expect(await screen.findByText('Could not load the Stytch signing keys: HTTP 500')).toBeInTheDocument()
+    expect(await screen.findByText('stytch sign-in')).toBeInTheDocument()
+  })
+
+  describe('the Stytch keep-alive', () => {
+    it('loads it exactly once when the API opens in Stytch mode, including under React.StrictMode', async () => {
+      render(
+        <StrictMode>
+          <PasswordGate fetchImpl={fetchStub([() => json({ enabled: true, authMode: 'stytch' })])}>
+            <p>studio</p>
+          </PasswordGate>
+        </StrictMode>,
+      )
+      await screen.findByText('studio')
+      await waitFor(() => expect(keepAlive).toHaveBeenCalledTimes(1))
+    })
+
+    it('never loads it in developer mode', async () => {
+      render(
+        <PasswordGate fetchImpl={fetchStub([() => json({ enabled: true, authMode: 'developer' })])}>
+          <p>studio</p>
+        </PasswordGate>,
+      )
+      await screen.findByText('studio')
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(keepAlive).not.toHaveBeenCalled()
+    })
+
+    it('never loads it when signed in through the shared password', async () => {
+      render(
+        <PasswordGate fetchImpl={fetchStub([() => json({ enabled: true, authMode: 'password' })])}>
+          <p>studio</p>
+        </PasswordGate>,
+      )
+      await screen.findByText('studio')
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(keepAlive).not.toHaveBeenCalled()
+    })
+
+    it('never loads it behind Cloudflare Access', async () => {
+      render(
+        <PasswordGate fetchImpl={fetchStub([() => json({ enabled: true, authMode: 'cloudflare-access' })])}>
+          <p>studio</p>
+        </PasswordGate>,
+      )
+      await screen.findByText('studio')
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(keepAlive).not.toHaveBeenCalled()
+    })
+
+    it('never loads it when the 200 body carries no authMode at all (a pre-fix server)', async () => {
+      render(
+        <PasswordGate fetchImpl={fetchStub([() => json({ enabled: true })])}>
+          <p>studio</p>
+        </PasswordGate>,
+      )
+      await screen.findByText('studio')
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(keepAlive).not.toHaveBeenCalled()
+    })
+
+    it('never loads it on a 401 in Stytch mode - the sign-in screen owns the client there', async () => {
+      render(
+        <PasswordGate fetchImpl={fetchStub([() => json({ code: 'unauthenticated', mode: 'stytch' }, 401)])}>
+          <p>studio</p>
+        </PasswordGate>,
+      )
+      await screen.findByText('stytch sign-in')
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(keepAlive).not.toHaveBeenCalled()
+    })
+
+    it('runs its cleanup on unmount', async () => {
+      const stop = vi.fn()
+      keepAlive.mockReturnValueOnce(stop)
+      const { unmount } = render(
+        <PasswordGate fetchImpl={fetchStub([() => json({ enabled: true, authMode: 'stytch' })])}>
+          <p>studio</p>
+        </PasswordGate>,
+      )
+      await screen.findByText('studio')
+      await waitFor(() => expect(keepAlive).toHaveBeenCalledTimes(1))
+      unmount()
+      await waitFor(() => expect(stop).toHaveBeenCalledTimes(1))
+    })
+  })
+
+  describe('the bounded re-probe on a stale session', () => {
+    beforeEach(() => {
+      vi.useFakeTimers()
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    const staleBody = {
+      code: 'unauthenticated',
+      mode: 'stytch',
+      session: 'stale',
+      message: 'Stytch session token has expired.',
+    }
+
+    it('opens the studio once the session clears, on the first re-probe at 2 seconds', async () => {
+      const spy = vi
+        .fn()
+        .mockImplementationOnce(async () => json(staleBody, 401))
+        .mockImplementationOnce(async () => json({ enabled: true, authMode: 'stytch' }))
+      render(
+        <PasswordGate fetchImpl={spy}>
+          <p>studio</p>
+        </PasswordGate>,
+      )
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      expect(screen.getByText('stytch sign-in')).toBeInTheDocument()
+      expect(spy).toHaveBeenCalledTimes(1)
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_000)
+      })
+      expect(spy).toHaveBeenCalledTimes(2)
+      expect(screen.getByText('studio')).toBeInTheDocument()
+    })
+
+    it('keeps trying on a backoff and stops after the schedule runs out', async () => {
+      const spy = vi.fn(async () => json(staleBody, 401))
+      render(
+        <PasswordGate fetchImpl={spy}>
+          <p>studio</p>
+        </PasswordGate>,
+      )
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      expect(spy).toHaveBeenCalledTimes(1) // the initial probe on mount
+
+      for (const [index, delayMs] of [2_000, 5_000, 10_000, 20_000].entries()) {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(delayMs)
+        })
+        expect(spy).toHaveBeenCalledTimes(index + 2)
+      }
+
+      // The schedule is exhausted: waiting arbitrarily longer adds no more.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000)
+      })
+      expect(spy).toHaveBeenCalledTimes(5)
+      expect(screen.getByText('stytch sign-in')).toBeInTheDocument()
+      expect(screen.getByText('Stytch session token has expired.')).toBeInTheDocument()
+    })
+
+    it('cancels the pending re-probe on unmount, before it fires', async () => {
+      const spy = vi.fn(async () => json(staleBody, 401))
+      const { unmount } = render(
+        <PasswordGate fetchImpl={spy}>
+          <p>studio</p>
+        </PasswordGate>,
+      )
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      expect(spy).toHaveBeenCalledTimes(1)
+
+      unmount()
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000)
+      })
+      expect(spy).toHaveBeenCalledTimes(1)
+    })
   })
 })
