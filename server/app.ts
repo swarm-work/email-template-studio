@@ -235,6 +235,12 @@ export function createApp({
           // Only meaningful alongside session 'refused' - see AuthResult in
           // server/auth.ts. Picks the refusal panel's wording.
           refusal: result.refusal,
+          // Only meaningful alongside session 'stale' - see AuthResult in
+          // server/auth.ts. Tells the browser whether this stale reading is
+          // worth a sentence ('keys': a JWKS outage or an unknown signing
+          // key) or is the ordinary five-minute timeout ('expired'), which
+          // is not (PasswordGate.tsx).
+          staleReason: result.staleReason,
           message: result.reason,
         },
         401,

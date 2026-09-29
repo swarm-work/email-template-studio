@@ -87,6 +87,16 @@ export interface Identity {
  * (a malformed or unverifiable token, a session with no email or no subject)
  * - a Swarm member can hit that too (a Google-only sign-in with no email
  * claim, for instance), so it keeps the older, less presumptuous wording.
+ *
+ * `staleReason` is set only alongside `session: 'stale'`, and says WHY this
+ * reading is stale, so the browser can decide whether the reason is worth
+ * showing a member (PasswordGate.tsx): 'expired' is the ORDINARY case - the
+ * five-minute JWT has simply timed out, or (the `nbf` half of the same check)
+ * has not started yet - which the SDK's own background refresh fixes within
+ * seconds on every sleeping tab, every few minutes, forever. Showing a
+ * sentence about it would read as an error on every routine reload. 'keys' is
+ * an actual operational hiccup on THIS server (a JWKS fetch failed, or a key
+ * id it has not seen yet) - rarer, and worth a word while it clears up.
  */
 export type AuthResult =
   | { readonly ok: true; readonly identity: Identity }
@@ -95,6 +105,7 @@ export type AuthResult =
       readonly reason: string
       readonly session?: 'absent' | 'stale' | 'refused'
       readonly refusal?: 'organization' | 'claims'
+      readonly staleReason?: 'expired' | 'keys'
     }
 
 /** What the API calls on every `/api/*` request. */
@@ -750,17 +761,26 @@ export function createStytchAuthenticator(
         // 'stale', not 'refused': a JWKS outage says nothing about who this
         // visitor is, and refusing the whole team's session over it is worse
         // than a moment on the ordinary sign-in screen while it clears up.
+        // `staleReason: 'keys'` (not 'expired') is what tells the browser this
+        // one is actually worth a sentence, unlike an ordinary five-minute
+        // timeout (PasswordGate.tsx).
         return {
           ok: false,
           reason: `Could not load the Stytch signing keys: ${messageOf(error)}`,
           session: 'stale',
+          staleReason: 'keys',
         }
       }
       if (!key) {
         // Same reasoning: a key id this Worker has not fetched yet is what a
         // rotation looks like mid-flight, not a forged token - the ordinary
         // sign-in screen will pick up the new key on its own refresh.
-        return { ok: false, reason: 'Stytch session token was signed by an unknown key.', session: 'stale' }
+        return {
+          ok: false,
+          reason: 'Stytch session token was signed by an unknown key.',
+          session: 'stale',
+          staleReason: 'keys',
+        }
       }
 
       const signed = new TextEncoder().encode(`${headerPart}.${payloadPart}`)
@@ -795,6 +815,8 @@ export function createStytchAuthenticator(
           // 'stale' claim problems (expired, not-yet-valid) carry no refusal
           // kind, because PasswordGate never looks at it for those.
           ...(problem.session === 'refused' ? { refusal: 'claims' as const } : {}),
+          // Only meaningful when `session` is 'stale' - see checkStytchClaims.
+          ...(problem.staleReason ? { staleReason: problem.staleReason } : {}),
         }
       }
 
@@ -874,6 +896,8 @@ function stytchIssuers(projectId: string): readonly string[] {
 interface StytchClaimProblem {
   readonly reason: string
   readonly session: 'refused' | 'stale'
+  /** Only meaningful when `session` is 'stale' - see `AuthResult.staleReason`. */
+  readonly staleReason?: 'expired' | 'keys'
 }
 
 /**
@@ -906,11 +930,15 @@ function checkStytchClaims(
     return { session: 'refused', reason: 'Stytch token was issued for a different project.' }
   }
   // The OUTER exp, deliberately - see the note on the authenticator.
+  // `staleReason: 'expired'` (not 'keys') is what tells PasswordGate this is
+  // the ORDINARY five-minute timeout - never worth a sentence, since the
+  // SDK's own background refresh fixes it within seconds, on every sleeping
+  // tab, every few minutes, forever.
   if (typeof claims.exp !== 'number' || claims.exp + CLOCK_SKEW_SECONDS < nowSeconds) {
-    return { session: 'stale', reason: 'Stytch session token has expired.' }
+    return { session: 'stale', staleReason: 'expired', reason: 'Stytch session token has expired.' }
   }
   if (typeof claims.nbf === 'number' && claims.nbf - CLOCK_SKEW_SECONDS > nowSeconds) {
-    return { session: 'stale', reason: 'Stytch session token is not valid yet.' }
+    return { session: 'stale', staleReason: 'expired', reason: 'Stytch session token is not valid yet.' }
   }
   // Stytch's own SDK reads `sub: payload.sub || ""`. An empty subject would
   // sail through every check above and then write a blank author into the send

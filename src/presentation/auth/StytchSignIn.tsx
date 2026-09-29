@@ -37,6 +37,7 @@ import {
   type StytchEvent,
   type Theme,
 } from '@stytch/react/b2b'
+import { AUTHENTICATE_PATH } from './authenticatePath'
 import { stytchClient as client } from './stytchClient'
 
 /**
@@ -60,7 +61,7 @@ const SESSION_DURATION_MINUTES = 60
 
 /** Where Stytch sends the browser back to. Must match a Redirect URL exactly. */
 function redirectUrl(): string {
-  return `${window.location.origin}/authenticate`
+  return `${window.location.origin}${AUTHENTICATE_PATH}`
 }
 
 /**
@@ -175,14 +176,30 @@ export default function StytchSignIn({ onSignedIn }: StytchSignInProps) {
   // `RESTORE_TIMEOUT_MS`. `useState`'s lazy initialiser reads this once, at
   // mount, which is exactly when it is useful: later renders keep whatever
   // this component decided the first time.
-  const [restoring, setRestoring] = useState(() => Boolean(client?.session.getSync()))
+  //
+  // On the `/authenticate` callback specifically, this ALWAYS starts false,
+  // even when an older session cookie makes `getSync()` truthy: "restoring"
+  // renders the placeholder text below instead of `<StytchB2B>`, which is the
+  // ONE component that actually consumes the magic-link/OAuth token sitting in
+  // this URL. Starting "restoring" here would hide it behind that text for up
+  // to `RESTORE_TIMEOUT_MS`, and unless the earlier session happens to end
+  // first, the token in the URL is never consumed at all - the round trip
+  // silently does nothing.
+  const [restoring, setRestoring] = useState(() => {
+    if (typeof window !== 'undefined' && window.location.pathname === AUTHENTICATE_PATH) return false
+    return Boolean(client?.session.getSync())
+  })
 
   // Not from `onEvent` below: a background refresh is not a UI mutation, so it
   // fires no Stytch UI event at all (`ui/b2b/utils.mjs`). `session.onChange`
-  // is the one hook that also sees THAT kind of update. `fromCache` tells a
-  // session the SDK already had in memory apart from one the refresh actually
-  // confirmed with Stytch - only the latter means the gate should ask the API
-  // again; the cached one is exactly what is already showing "Restoring…".
+  // is the one hook that also sees THAT kind of update.
+  //
+  // No `fromCache` check here: the SDK marks its cache refreshed BEFORE it
+  // notifies `onChange` (`SessionManager.mjs`), so by the time this callback
+  // runs, `getInfo().fromCache` already reads `false` for every notification -
+  // checking it here always passed and caught nothing. Any non-null session
+  // notification - a completed background refresh, a fresh sign-in - is real
+  // enough to ask the API again.
   useEffect(() => {
     if (!client) return undefined
     // A local alias so the callback below closes over a binding TypeScript
@@ -190,9 +207,9 @@ export default function StytchSignIn({ onSignedIn }: StytchSignInProps) {
     // possibly reassigned across the closure boundary).
     const activeClient = client
     return activeClient.session.onChange((session) => {
-      if (session && !activeClient.session.getInfo().fromCache) {
+      if (session) {
         onSignedIn?.()
-      } else if (!session) {
+      } else {
         // The cached session turned out to be gone for real (revoked, or the
         // refresh failed outright) - stop waiting and show the sign-in form.
         setRestoring(false)

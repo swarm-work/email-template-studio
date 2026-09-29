@@ -321,7 +321,7 @@ describe('createStytchAuthenticator', () => {
     // the team" panel (ADR-31, update 2026-09-29, second revision).
     const token = await makeToken({}, { kid: OTHER_KID })
     const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-    expect(result).toMatchObject({ ok: false, session: 'stale' })
+    expect(result).toMatchObject({ ok: false, session: 'stale', staleReason: 'keys' })
     expect(result.ok === false && result.reason).toContain('unknown key')
   })
 
@@ -334,8 +334,15 @@ describe('createStytchAuthenticator', () => {
       now: () => NOW_MS,
     })
     const result = await authenticator.authenticate(cookieHeaders(await makeToken()))
-    expect(result).toMatchObject({ ok: false, session: 'stale' })
+    expect(result).toMatchObject({ ok: false, session: 'stale', staleReason: 'keys' })
     expect(result.ok === false && result.reason).toContain('Stytch signing keys')
+  })
+
+  it('never sets staleReason on a "refused" result - it is only meaningful alongside "stale"', async () => {
+    const token = await makeToken({ sub: undefined })
+    const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
+    expect(result).toMatchObject({ ok: false, session: 'refused' })
+    expect(result.ok === false && 'staleReason' in result).toBe(false)
   })
 
   describe('the issuer, which is the easiest thing to get wrong', () => {
@@ -391,7 +398,7 @@ describe('createStytchAuthenticator', () => {
       // showing them the "not on the Swarm team" panel over it.
       const token = await makeToken({ exp: NOW_SECONDS - 120 })
       const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-      expect(result).toMatchObject({ ok: false, session: 'stale' })
+      expect(result).toMatchObject({ ok: false, session: 'stale', staleReason: 'expired' })
       expect(result.ok === false && result.session).not.toBe('refused')
       expect(result.ok === false && result.reason).toContain('expired')
     })
@@ -405,7 +412,7 @@ describe('createStytchAuthenticator', () => {
     it('refuses a token that is not valid yet, also marked "stale" for the same reason as expiry', async () => {
       const token = await makeToken({ nbf: NOW_SECONDS + 600 })
       const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-      expect(result).toMatchObject({ ok: false, session: 'stale' })
+      expect(result).toMatchObject({ ok: false, session: 'stale', staleReason: 'expired' })
     })
 
     it('does NOT accept an expired token because the session is still open', async () => {

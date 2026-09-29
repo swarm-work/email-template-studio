@@ -1,7 +1,6 @@
 /**
  * @vitest-environment jsdom
  */
-import { StrictMode } from 'react'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -26,8 +25,19 @@ vi.mock('sonner', () => ({ toast: { error: toastError } }))
 // The keep-alive reaches the real SDK too (through `stytchClient.ts`). Mocking
 // it here keeps these tests about WHEN the gate loads it, not what it does
 // once loaded - that is `stytchKeepAlive.test.ts`'s job.
-const keepAlive = vi.hoisted(() => vi.fn(() => () => {}))
-vi.mock('./stytchKeepAlive', () => ({ keepStytchSessionFresh: keepAlive }))
+//
+// `keepAliveModule` is a mutable box, not a plain object, because ONE test
+// below (the cancellation one) needs to control exactly when
+// `import('./stytchKeepAlive')` settles - a dynamic import resolves once and
+// is cached forever after, like any ES module, so whatever
+// `keepAliveModule.current` holds the FIRST time anything in this file
+// actually imports the module is what every test, including this one, gets.
+// That test runs first in its describe block for exactly this reason.
+const { keepAlive, keepAliveModule } = vi.hoisted(() => {
+  const keepAlive = vi.fn((_client?: unknown, _doc?: unknown, _onEnded?: () => void) => () => {})
+  return { keepAlive, keepAliveModule: { current: Promise.resolve({ keepStytchSessionFresh: keepAlive }) } }
+})
+vi.mock('./stytchKeepAlive', () => keepAliveModule.current)
 
 /** Builds a fetch stub that answers the status check, then the sign-in POST. */
 function fetchStub(responses: Array<() => Response>) {
@@ -152,6 +162,7 @@ describe('PasswordGate', () => {
                 code: 'unauthenticated',
                 mode: 'stytch',
                 session: 'stale',
+                staleReason: 'expired',
                 message: 'Stytch session token has expired.',
               },
               401,
@@ -164,6 +175,34 @@ describe('PasswordGate', () => {
     expect(await screen.findByText('stytch sign-in')).toBeInTheDocument()
     expect(screen.queryByText(/only for the Swarm team/i)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Sign out' })).not.toBeInTheDocument()
+    // The ordinary five-minute timeout - the bug ADR-31's 2026-09-29 update
+    // (fourth revision) fixed: this exact server message must NOT appear above
+    // the sign-in form on every reload past five minutes, or a routine refresh
+    // reads as an error.
+    expect(screen.queryByText('Stytch session token has expired.')).not.toBeInTheDocument()
+  })
+
+  it("hides the server's message for an ordinary stale reading even when the server sends no staleReason at all (an older server)", async () => {
+    render(
+      <PasswordGate
+        fetchImpl={fetchStub([
+          () =>
+            json(
+              {
+                code: 'unauthenticated',
+                mode: 'stytch',
+                session: 'stale',
+                message: 'Stytch session token has expired.',
+              },
+              401,
+            ),
+        ])}
+      >
+        <p>studio</p>
+      </PasswordGate>,
+    )
+    expect(await screen.findByText('stytch sign-in')).toBeInTheDocument()
+    expect(screen.queryByText('Stytch session token has expired.')).not.toBeInTheDocument()
   })
 
   it('shows the plainer refusal wording, not "only for the Swarm team", for a claims-kind refusal', async () => {
@@ -386,11 +425,13 @@ describe('PasswordGate', () => {
     expect(await screen.findByText(/requires you to sign in\. reload to continue/i)).toBeInTheDocument()
   })
 
-  it('shows the server\'s reason above the sign-in form for a "stale" session, instead of discarding it', async () => {
+  it('shows the server\'s reason above the sign-in form for a "stale" session caused by a real key problem', async () => {
     // Before this fix, `{ kind: 'stytch', stale: true }` carried no message at
     // all: a JWKS outage or an unknown signing key (server/auth.ts) showed the
     // exact same blank sign-in screen as an ordinary five-minute-old JWT, with
-    // no way to tell the two apart from the screen alone.
+    // no way to tell the two apart from the screen alone. `staleReason: 'keys'`
+    // is what now tells the gate THIS stale reading is worth the sentence,
+    // unlike an ordinary expired JWT (see the tests above).
     render(
       <PasswordGate
         fetchImpl={fetchStub([
@@ -400,6 +441,7 @@ describe('PasswordGate', () => {
                 code: 'unauthenticated',
                 mode: 'stytch',
                 session: 'stale',
+                staleReason: 'keys',
                 message: 'Could not load the Stytch signing keys: HTTP 500',
               },
               401,
@@ -414,16 +456,74 @@ describe('PasswordGate', () => {
   })
 
   describe('the Stytch keep-alive', () => {
-    it('loads it exactly once when the API opens in Stytch mode, including under React.StrictMode', async () => {
+    // Runs FIRST in this block on purpose - see the comment on `keepAliveModule`
+    // above. It replaces `import('./stytchKeepAlive')`'s ONE resolution with a
+    // deferred promise this test controls, so it can prove the effect's
+    // `cancelled` flag actually does something: leave the state the effect
+    // depends on WHILE the import is still in flight, then let the import
+    // resolve, and confirm `keepStytchSessionFresh` was never called. Without
+    // this flag, the resolved module would call it on a gate that has already
+    // moved on - exactly the shape of bug a real deploy would only surface as
+    // Stytch's own "multiple copies of the client" warning or a session that
+    // stops refreshing for no visible reason.
+    it('never calls keepStytchSessionFresh if the gate leaves the open-in-Stytch-mode state before the dynamic import resolves', async () => {
+      let resolveImport!: (mod: { keepStytchSessionFresh: typeof keepAlive }) => void
+      keepAliveModule.current = new Promise((resolve) => {
+        resolveImport = resolve
+      })
+
+      const { unmount } = render(
+        <PasswordGate fetchImpl={fetchStub([() => json({ enabled: true, authMode: 'stytch' })])}>
+          <p>studio</p>
+        </PasswordGate>,
+      )
+      await screen.findByText('studio')
+
+      // The effect has started `import('./stytchKeepAlive')`; nothing has
+      // resolved it yet. Unmounting right now, before it settles, is exactly
+      // the race the `cancelled` flag guards against.
+      unmount()
+
+      resolveImport({ keepStytchSessionFresh: keepAlive })
+      await keepAliveModule.current
+      // Give the now-resolved import's own `.then()` a turn to run.
+      await act(async () => {
+        await Promise.resolve()
+      })
+
+      expect(keepAlive).not.toHaveBeenCalled()
+    })
+
+    it('loads it exactly once when the API opens in Stytch mode', async () => {
       render(
-        <StrictMode>
-          <PasswordGate fetchImpl={fetchStub([() => json({ enabled: true, authMode: 'stytch' })])}>
-            <p>studio</p>
-          </PasswordGate>
-        </StrictMode>,
+        <PasswordGate fetchImpl={fetchStub([() => json({ enabled: true, authMode: 'stytch' })])}>
+          <p>studio</p>
+        </PasswordGate>,
       )
       await screen.findByText('studio')
       await waitFor(() => expect(keepAlive).toHaveBeenCalledTimes(1))
+    })
+
+    it('shows the Stytch sign-in again once its onEnded callback fires, for a session that ends for real', async () => {
+      // Untested before: the gate wires its own `() => setState({ kind: 'stytch' })`
+      // as `keepStytchSessionFresh`'s third argument, but nothing ever called it
+      // to check what happens next. Capturing exactly what the mock received and
+      // invoking it is what proves the wiring, not just that a callback of SOME
+      // kind was passed.
+      render(
+        <PasswordGate fetchImpl={fetchStub([() => json({ enabled: true, authMode: 'stytch' })])}>
+          <p>studio</p>
+        </PasswordGate>,
+      )
+      await screen.findByText('studio')
+      await waitFor(() => expect(keepAlive).toHaveBeenCalledTimes(1))
+
+      const onEnded = keepAlive.mock.calls[0][2] as (() => void) | undefined
+      expect(onEnded).toBeTypeOf('function')
+      act(() => onEnded?.())
+
+      expect(await screen.findByText('stytch sign-in')).toBeInTheDocument()
+      expect(screen.queryByText('studio')).not.toBeInTheDocument()
     })
 
     it('never loads it in developer mode', async () => {
@@ -509,6 +609,7 @@ describe('PasswordGate', () => {
       code: 'unauthenticated',
       mode: 'stytch',
       session: 'stale',
+      staleReason: 'expired',
       message: 'Stytch session token has expired.',
     }
 
@@ -560,7 +661,10 @@ describe('PasswordGate', () => {
       })
       expect(spy).toHaveBeenCalledTimes(5)
       expect(screen.getByText('stytch sign-in')).toBeInTheDocument()
-      expect(screen.getByText('Stytch session token has expired.')).toBeInTheDocument()
+      // The ordinary five-minute timeout (`staleReason: 'expired'`) is never
+      // shown, even after the whole re-probe schedule has run out with no
+      // change - see the "hides the server's message" tests above.
+      expect(screen.queryByText('Stytch session token has expired.')).not.toBeInTheDocument()
     })
 
     it('cancels the pending re-probe on unmount, before it fires', async () => {

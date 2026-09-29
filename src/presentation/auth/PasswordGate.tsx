@@ -49,6 +49,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { AuthCard, AuthCardBody, AuthGround } from './AuthScreen'
+import { AUTHENTICATE_PATH } from './authenticatePath'
 
 /**
  * Lazily loaded on purpose, and the ONLY way this module reaches Stytch.
@@ -58,15 +59,6 @@ import { AuthCard, AuthCardBody, AuthGround } from './AuthScreen'
  * console error. `scripts/check-worker-bundle.mjs` enforces the seam.
  */
 const StytchSignIn = lazy(() => import('./StytchSignIn'))
-
-/**
- * The path Stytch redirects back to after a magic link or an OAuth round trip.
- * The SPA has no router: `wrangler.jsonc` serves index.html for unknown paths
- * (`not_found_handling: "single-page-application"`), so a pathname check is the
- * whole of the routing. Do NOT add this to `run_worker_first` - sending it to
- * the Worker would break the flow.
- */
-const AUTHENTICATE_PATH = '/authenticate'
 
 /**
  * Delays for the bounded stale-session re-probe schedule below: 2s, 5s, 10s,
@@ -110,9 +102,14 @@ type GateState =
    * fix (session "stale" - see the module comment) - either way, the ordinary
    * "show the sign-in form" state, which is also what loads the SDK and lets
    * that refresh happen. `stale: true` only on the second kind, so the effect
-   * below knows to keep re-probing until it clears. `message` is the server's
-   * own reason (only ever set alongside `stale`) - a JWKS outage or an unknown
-   * key id says something worth showing, not just "sign in again" (ADR-31).
+   * below knows to keep re-probing until it clears. `message` is set ONLY
+   * when the server's `staleReason` is 'keys' (server/auth.ts) - a JWKS outage
+   * or an unknown signing key names something worth showing. An ordinary
+   * expired-or-not-yet-valid JWT (`staleReason: 'expired'`) sets no message at
+   * all: it is not evidence of a problem, it is what every sleeping tab shows
+   * every few minutes, and repeating a sentence about it on each reload would
+   * read as an error where there is none (ADR-31, update 2026-09-29, fourth
+   * revision - this is the bug that update fixed).
    */
   | { readonly kind: 'stytch'; readonly stale?: boolean; readonly message?: string }
   /**
@@ -157,6 +154,7 @@ export function PasswordGate({ children, fetchImpl = defaultFetch }: PasswordGat
         mode?: string
         session?: string
         refusal?: string
+        staleReason?: string
         message?: string
       } | null
       if (body?.mode === 'password') return { kind: 'locked' }
@@ -185,7 +183,16 @@ export function PasswordGate({ children, fetchImpl = defaultFetch }: PasswordGat
           }
         }
         const stale = body.session === 'stale'
-        return { kind: 'stytch', stale, message: stale ? body.message : undefined }
+        // Shown only for a real operational problem this server hit (a JWKS
+        // outage, an unknown signing key - `staleReason: 'keys'`). An ordinary
+        // expired-or-not-yet-valid JWT (`staleReason: 'expired'`, or no
+        // `staleReason` at all from a server older than this field) sets no
+        // message: it is the routine five-minute timeout the SDK's own
+        // background refresh fixes within seconds, not something worth
+        // alarming a member with on every reload past five minutes (ADR-31,
+        // update 2026-09-29, fourth revision).
+        const message = stale && body.staleReason === 'keys' ? body.message : undefined
+        return { kind: 'stytch', stale, message }
       }
       // Cloudflare Access, or an unconfigured server (wire mode "disabled" -
       // `loadAuthConfig`'s OWN config mode is called "none", but
@@ -368,12 +375,14 @@ export function PasswordGate({ children, fetchImpl = defaultFetch }: PasswordGat
     return (
       <AuthGround>
         <AuthCard>
-          {/* The server's own reason for 'stale', when it has one worth
-              showing (a JWKS outage, an unknown signing key) - see the
-              GateState comment. Absent for the ordinary "no cookie yet" and
-              "JWT past its five minutes, refresh under way" cases, which say
-              nothing a member needs to read while the bounded re-probe above
-              and the sign-in screen's own background refresh sort it out. */}
+          {/* The server's own reason for 'stale', set here only when the
+              server's `staleReason` was 'keys' (a JWKS outage, an unknown
+              signing key) - see the GateState comment and probe() above.
+              Absent for the ordinary "no cookie yet" and "JWT past its five
+              minutes, refresh under way" (`staleReason: 'expired'`) cases,
+              which say nothing a member needs to read while the bounded
+              re-probe above and the sign-in screen's own background refresh
+              sort it out. */}
           {state.kind === 'stytch' && state.message ? (
             <p className="text-muted-foreground px-9 pt-6 text-center text-sm">{state.message}</p>
           ) : null}

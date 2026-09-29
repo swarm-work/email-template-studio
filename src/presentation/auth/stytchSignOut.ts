@@ -19,6 +19,24 @@
  */
 
 /**
+ * True while a call to `signOutOfStytch` below is revoking the session.
+ *
+ * `stytchKeepAlive.ts`'s `session.onChange` listener checks this before
+ * calling its own `onEnded` callback: `revoke({ forceClear: true })` clears
+ * the LOCAL session - and so fires that listener with `null` - before this
+ * function's own `reload()` ever runs. Without this flag, that split second
+ * shows the sign-in screen (loading its whole lazy chunk) right before the
+ * page navigates away anyway - a flash of the wrong screen on the one path
+ * that was never actually going back to it.
+ */
+let signOutInProgress = false
+
+/** Whether a sign-out this module started is still revoking. */
+export function isStytchSignOutInProgress(): boolean {
+  return signOutInProgress
+}
+
+/**
  * Ends the Stytch session and reloads onto the sign-in screen.
  *
  * Returns a sentence to show the person when something went wrong, or `null`
@@ -51,6 +69,10 @@ export async function signOutOfStytch(
     // server-side session may outlive this call when Stytch is unreachable, but
     // the token expires within about five minutes regardless (ADR-31), and a
     // visibly-still-signed-in user is the worse of the two failures.
+    //
+    // Set right before the call that can trigger it, not earlier - see the
+    // comment on `signOutInProgress` above.
+    signOutInProgress = true
     await stytchClient.session.revoke({ forceClear: true })
   } catch {
     // Reaching here means the revoke could not be delivered. The local session
@@ -58,6 +80,8 @@ export async function signOutOfStytch(
     // correct: the browser will land on the sign-in screen either way.
     reload()
     return null
+  } finally {
+    signOutInProgress = false
   }
 
   reload()
