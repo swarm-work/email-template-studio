@@ -131,7 +131,7 @@ The C pull request holds only new files. It can merge any time after PR #25.
    (same header file). 4 h. See it: your test send appears as a row.
 8. **Docs and ADR-39.** 2 h.
 9. **Rollout,** per environment: `npm run db:migrate:<env>`, **then** `npm run deploy:<env>`, dev first.
-   Staging (dry-run) and production (live since ADR-41) will show a new row; dev has sending off. 2 h.
+   Staging (dry-run) and production (configured live by ADR-41) will show a new row; dev has sending off. 2 h.
 
 ### Lane D: slice 3, API keys (about 19 h, in two halves)
 

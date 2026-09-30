@@ -155,5 +155,5 @@ Errors are reported with the AWS error type as the name, so the message reads li
 
 ## What this is not
 
-- Not a production sending pipeline. The production Worker sends real mail through this route since 2026-09-30 (ADR-41), but it is still the studio's test-send path: no queue, retries, templates-as-a-service or tracking.
+- Not a production sending pipeline. The production Worker is configured to send real mail through this route (ADR-41, decided 2026-09-30; live from its first deploy with the AWS secrets set), but it is still the studio's test-send path: no queue, retries, templates-as-a-service or tracking.
 - Not fully authenticated yet. The Node adapter relies on binding to loopback; the deployed Worker is behind a shared password gate until Cloudflare Access lands (`docs/PLAN.md` phase 1, TECH_DEBT #19), so its audit line names `shared-password` rather than a person.

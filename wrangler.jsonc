@@ -153,8 +153,9 @@
     //
     // Send posture: `dev` has sending off and `staging` is dry-run, so neither
     // sends real mail, and both keep the [TEST] subject prefix. `production`
-    // sends live since 2026-09-30 (ADR-41), to its one allow-listed address,
-    // without the prefix. Its AWS key pair is a pair of Worker secrets on
+    // is configured to send live (ADR-41, decided 2026-09-30; live from the first
+    // deploy with the AWS secrets set), to its one allow-listed address, without
+    // the prefix. Its AWS key pair is a pair of Worker secrets on
     // email-template-studio-production, never in this file; without them that
     // Worker boots with sending disabled and says why (worker/index.ts).
     //
@@ -210,7 +211,7 @@
       "name": "email-template-studio-production",
       "vars": {
         "STUDIO_ENVIRONMENT": "production",
-        // Live since 2026-09-30 (ADR-41): real mail through Amazon SES. The AWS key
+        // Configured for live sending (ADR-41, decided 2026-09-30): real mail through Amazon SES. The AWS key
         // pair is two Worker secrets on this Worker, never entries in this file.
         // The allow-list below is still one address, the owner's own inbox, on
         // purpose: with no [TEST] prefix here, it is what keeps a studio send from
