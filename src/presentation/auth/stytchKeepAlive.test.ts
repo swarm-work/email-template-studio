@@ -624,6 +624,7 @@ describe('keepStytchSessionFresh', () => {
     it('stops retrying once the credited input is too old, and needs a fresh one to try again', async () => {
       const { client, calls, setMode } = fakeClient()
       setMode('reject')
+      const startedAt = Date.now()
       keepStytchSessionFresh(client, doc as unknown as Document)
 
       doc.fire('pointerdown') // t = 0: fails, and is retried every minute from here
@@ -637,6 +638,14 @@ describe('keepStytchSessionFresh', () => {
       await vi.advanceTimersByTimeAsync(10 * 60_000)
       const attemptsWhileStale = extensions(calls).length
 
+      // Pin the window itself, not just "it stops eventually": the last retry
+      // is at exactly six minutes (the click's age is not MORE than the
+      // window yet), and there is none at seven. A window of five minutes or
+      // ten would each change this list.
+      expect(extensions(calls).map((call) => call.at - startedAt)).toEqual([
+        0, 60_000, 120_000, 180_000, 240_000, 300_000, 360_000,
+      ])
+
       setMode('resolve')
       await vi.advanceTimersByTimeAsync(10 * 60_000) // give it every chance to retry on its own
       expect(extensions(calls)).toHaveLength(attemptsWhileStale) // no new attempt - the stale credit was dropped
@@ -645,6 +654,38 @@ describe('keepStytchSessionFresh', () => {
       doc.fire('pointerdown')
       await vi.advanceTimersByTimeAsync(0)
       expect(extensions(calls)).toHaveLength(attemptsWhileStale + 1)
+    })
+  })
+
+  describe('a trailing extension that fails once', () => {
+    it('is retried a minute later, even though the input that earned it is by then older than the throttle window', async () => {
+      // The whole point of the extra `RETRY_FAILED_EXTENSION_MS` in the credit
+      // age window. The second click is one second after the first, so the
+      // trailing extension is due at 5:00; when that attempt fails, its retry
+      // is at 6:00, when the click is 5:59 old. With a window of only
+      // `EXTEND_AT_MOST_EVERY_MS` (five minutes) that retry would be dropped
+      // as stale, and the member's last burst of work would never extend the
+      // session.
+      const { client, calls, setMode } = fakeClient()
+      const startedAt = Date.now()
+      keepStytchSessionFresh(client, doc as unknown as Document)
+
+      doc.fire('pointerdown') // t = 0: the leading extension succeeds
+      await vi.advanceTimersByTimeAsync(1_000)
+      doc.fire('pointerdown') // t = 0:01: credited, waits for the throttle
+      expect(extensions(calls)).toHaveLength(1)
+
+      setMode('reject')
+      await vi.advanceTimersByTimeAsync(EXTEND_AT_MOST_EVERY_MS - 1_000) // t = 5:00: the trailing extension goes out and fails
+      expect(extensions(calls).map((call) => call.at - startedAt)).toEqual([0, EXTEND_AT_MOST_EVERY_MS])
+
+      setMode('resolve')
+      await vi.advanceTimersByTimeAsync(RETRY_FAILED_EXTENSION_MS) // t = 6:00: the retry
+      expect(extensions(calls).map((call) => call.at - startedAt)).toEqual([
+        0,
+        EXTEND_AT_MOST_EVERY_MS,
+        EXTEND_AT_MOST_EVERY_MS + RETRY_FAILED_EXTENSION_MS,
+      ])
     })
   })
 
