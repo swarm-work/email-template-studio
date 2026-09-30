@@ -6,6 +6,7 @@
  *
  * The browser never sees credentials; it only sees this API. Guards, in order:
  * enabled flag, body validation, recipient policy, body size cap, rate limit.
+ * The [TEST] subject prefix is per environment (STUDIO_TEST_SUBJECT_PREFIX, ADR-41).
  *
  * Who may receive is `config.recipientPolicy`: an allow-list, or any valid
  * address when SES_ALLOWED_RECIPIENTS is "*" (see server/config.ts). The
@@ -46,7 +47,19 @@ export const MAX_HTML_BYTES = 500 * 1024
 export const MAX_REPLY_TO = 5
 /** Friendly cap, applied after de-duplication, so one send is one readable To header. */
 export const MAX_RECIPIENTS_PER_SEND = 10
+/** Put in front of a subject only when the environment's STUDIO_TEST_SUBJECT_PREFIX is on (ADR-41). */
 export const TEST_SUBJECT_PREFIX = '[TEST] '
+
+/**
+ * The one place the subject rule lives. On: "[TEST] " is added unless the
+ * subject already starts with [TEST] in any case or spacing, so it is never
+ * doubled. Off: the subject is sent exactly as typed, even a typed "[TEST] x"
+ * (ADR-41). "As typed" means after the request schema's `.trim()`.
+ */
+export function applyTestSubjectPrefix(subject: string, prefixOn: boolean): string {
+  if (!prefixOn) return subject
+  return /^\[TEST\]/i.test(subject) ? subject : `${TEST_SUBJECT_PREFIX}${subject}`
+}
 /** Custom header the browser must send; browsers only allow it after a CORS preflight, which this server never grants. */
 export const STUDIO_REQUEST_HEADER = 'x-studio-send'
 const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]', '::1'])
@@ -362,6 +375,10 @@ export function createApp({
       from: config.from,
       recipientPolicy: config.recipientPolicy,
       maxRecipientsPerSend: MAX_RECIPIENTS_PER_SEND,
+      // Whether the server puts [TEST] in front of the subject (STUDIO_TEST_SUBJECT_PREFIX,
+      // ADR-41), so the dialog shows the marker only when it will. A browser tab older
+      // than this field simply ignores it.
+      testSubjectPrefix: config.testSubjectPrefix,
       // Kept even when the policy is 'any' (then empty), so a browser tab
       // loaded before this field existed still parses the response.
       allowedRecipients: config.allowedRecipients,
@@ -486,9 +503,7 @@ export function createApp({
       )
     }
 
-    const subject = /^\[TEST\]/i.test(request.subject)
-      ? request.subject
-      : `${TEST_SUBJECT_PREFIX}${request.subject}`
+    const subject = applyTestSubjectPrefix(request.subject, config.testSubjectPrefix)
     const replyTo = dedupe(asList(request.replyTo))
     try {
       const receipt = await sender.send({

@@ -70,9 +70,10 @@
     //   "a@x.io,b@y.io"  only those addresses may receive (today's value)
     //   "*"              anyone signed in may type any valid address
     // Either way the other guards still apply: at most 10 recipients per send,
-    // the forced [TEST] subject prefix, and 5 sends per minute. The IAM policy
-    // on the AWS key (infra/ses-policy.json) and the SES account suppression
-    // list are the real backstops; rolling back is this one value plus a deploy.
+    // the [TEST] subject prefix (STUDIO_TEST_SUBJECT_PREFIX below; on here),
+    // and 5 sends per minute. The IAM policy on the AWS key
+    // (infra/ses-policy.json) and the SES account suppression list are the
+    // real backstops; rolling back is this one value plus a deploy.
     //
     // The AWS keys live on swarm-work-emailer, the account this repo deploys to.
     // docs/HANDOVER.md's "this account must hold no AWS credentials" was written
@@ -99,6 +100,11 @@
     // template opens read-only in Preview mode. Anything else, including
     // absent, is "on".
     "STUDIO_VISUAL_EDITOR": "true",
+    // Whether the server puts "[TEST] " in front of every subject (ADR-41). Only
+    // the literal "false" turns it off; anything else, including absent or a
+    // typo, keeps it on, so a mistake can never take the marker off a test send.
+    // Set in every block below; only env.production says "false".
+    "STUDIO_TEST_SUBJECT_PREFIX": "true",
     "AWS_REGION": "ap-southeast-2",
     "SES_FROM_ADDRESS": "testing@swarm.camp",
     "SES_ALLOWED_RECIPIENTS": "echo@swarm.work",
@@ -145,9 +151,12 @@
     // (`https://<host>/authenticate`) in the Stytch project, or sign-in fails
     // with bad_domain_for_stytch_sdk.
     //
-    // Send posture is deliberately conservative: none of these three sends live
-    // mail yet. `production` goes live in a separate change that sets the AWS
-    // key secrets on it and flips its two STUDIO_SEND_* vars (docs/DEPLOYMENT.md).
+    // Send posture: `dev` has sending off and `staging` is dry-run, so neither
+    // sends real mail, and both keep the [TEST] subject prefix. `production`
+    // sends live since 2026-09-30 (ADR-41), to its one allow-listed address,
+    // without the prefix. Its AWS key pair is a pair of Worker secrets on
+    // email-template-studio-production, never in this file; without them that
+    // Worker boots with sending disabled and says why (worker/index.ts).
     //
     // `preview_database_id` is deliberately absent throughout, for the reason
     // given on the top-level block.
@@ -158,6 +167,7 @@
         "STUDIO_SEND_ENABLED": "false",
         "STUDIO_SEND_DRY_RUN": "true",
         "STUDIO_VISUAL_EDITOR": "true",
+        "STUDIO_TEST_SUBJECT_PREFIX": "true",
         "AWS_REGION": "ap-southeast-2",
         "SES_FROM_ADDRESS": "testing@swarm.camp",
         "SES_ALLOWED_RECIPIENTS": "echo@swarm.work",
@@ -180,6 +190,7 @@
         "STUDIO_SEND_ENABLED": "true",
         "STUDIO_SEND_DRY_RUN": "true",
         "STUDIO_VISUAL_EDITOR": "true",
+        "STUDIO_TEST_SUBJECT_PREFIX": "true",
         "AWS_REGION": "ap-southeast-2",
         "SES_FROM_ADDRESS": "testing@swarm.camp",
         "SES_ALLOWED_RECIPIENTS": "echo@swarm.work",
@@ -199,11 +210,20 @@
       "name": "email-template-studio-production",
       "vars": {
         "STUDIO_ENVIRONMENT": "production",
-        // Dry-run first: flipping these two to true/false, together with the
-        // AWS key secrets, is what makes this Worker send real mail.
-        "STUDIO_SEND_ENABLED": "false",
-        "STUDIO_SEND_DRY_RUN": "true",
+        // Live since 2026-09-30 (ADR-41): real mail through Amazon SES. The AWS key
+        // pair is two Worker secrets on this Worker, never entries in this file.
+        // The allow-list below is still one address, the owner's own inbox, on
+        // purpose: with no [TEST] prefix here, it is what keeps a studio send from
+        // reaching anyone else. Widening it (a list, or "*") is its own decision;
+        // see docs/SENDING.md "Free-form recipients". The sender stays
+        // testing@swarm.camp because the IAM policy pins it, and there is no
+        // SES_CONFIGURATION_SET because swarm.camp's default set applies and the
+        // policy covers it (docs/BUILD_LANES.md section 6, decision 2).
+        "STUDIO_SEND_ENABLED": "true",
+        "STUDIO_SEND_DRY_RUN": "false",
         "STUDIO_VISUAL_EDITOR": "true",
+        // Subjects go out exactly as typed here. dev, staging and e2e keep "[TEST] ".
+        "STUDIO_TEST_SUBJECT_PREFIX": "false",
         "AWS_REGION": "ap-southeast-2",
         "SES_FROM_ADDRESS": "testing@swarm.camp",
         "SES_ALLOWED_RECIPIENTS": "echo@swarm.work",
@@ -225,6 +245,7 @@
         "STUDIO_SEND_ENABLED": "true",
         "STUDIO_SEND_DRY_RUN": "true",
         "STUDIO_VISUAL_EDITOR": "true",
+        "STUDIO_TEST_SUBJECT_PREFIX": "true",
         "AWS_REGION": "us-east-1",
         "SES_FROM_ADDRESS": "studio@example.test",
         "SES_ALLOWED_RECIPIENTS": "qa@example.test,second@example.test",

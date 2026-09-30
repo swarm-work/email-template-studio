@@ -69,7 +69,7 @@ function main(): void {
     const base = `http://127.0.0.1:${info.port}`
     if (config.enabled && sender) {
       console.log(
-        `Send server listening on ${base}\n  mode: ${sender.mode}\n  identity: ${describeAuth(authConfig)}\n  region: ${config.region}\n  from: ${config.from}\n  recipients: ${describeRecipientPolicy(config)}\n  rate limit: ${config.rateLimitPerMinute}/min\n  ${STORAGE_BANNER}`,
+        `Send server listening on ${base}\n  mode: ${sender.mode}\n  identity: ${describeAuth(authConfig)}\n  region: ${config.region}\n  from: ${config.from}\n  recipients: ${describeRecipientPolicy(config)}\n  rate limit: ${config.rateLimitPerMinute}/min\n  subject prefix: ${config.testSubjectPrefix ? '[TEST] (STUDIO_TEST_SUBJECT_PREFIX)' : 'off (STUDIO_TEST_SUBJECT_PREFIX=false)'}\n  ${STORAGE_BANNER}`,
       )
       void sender.preflight(config.from).then((result) => {
         console.log(`  preflight: ${result.ok ? 'OK' : 'PROBLEM'} - ${result.message}`)

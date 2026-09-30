@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { ConfigError, loadConfig, loadFeatures, parseRecipientPolicy, parseRecipients } from './config.ts'
+import {
+  ConfigError,
+  loadConfig,
+  loadFeatures,
+  parseRecipientPolicy,
+  parseRecipients,
+  readTestSubjectPrefix,
+} from './config.ts'
 
 describe('loadConfig', () => {
   it('is disabled by default and never throws for a disabled setup', () => {
@@ -35,6 +42,7 @@ describe('loadConfig', () => {
       allowedRecipients: ['One@Example.com', 'two@example.com'],
       configurationSet: undefined,
       rateLimitPerMinute: 2,
+      testSubjectPrefix: true,
     })
   })
 
@@ -103,5 +111,50 @@ describe('loadFeatures', () => {
   it('switches the visual editor off for the literal "false", however it is typed', () => {
     expect(loadFeatures({ STUDIO_VISUAL_EDITOR: 'false' })).toEqual({ visualEditor: false })
     expect(loadFeatures({ STUDIO_VISUAL_EDITOR: ' FALSE ' })).toEqual({ visualEditor: false })
+  })
+})
+
+describe('STUDIO_TEST_SUBJECT_PREFIX', () => {
+  // A complete enabled dry-run setup; each case adds only the prefix variable.
+  const base = {
+    STUDIO_SEND_ENABLED: 'true',
+    STUDIO_SEND_DRY_RUN: 'true',
+    AWS_REGION: 'us-east-1',
+    SES_FROM_ADDRESS: 'sender@example.com',
+    SES_ALLOWED_RECIPIENTS: 'one@example.com',
+  }
+
+  it('keeps the prefix on when the variable is unset', () => {
+    expect(loadConfig(base)).toMatchObject({ enabled: true, testSubjectPrefix: true })
+  })
+
+  it.each([
+    ['', true],
+    ['true', true],
+    ['false', false],
+    [' FALSE ', false],
+  ])('reads %j as %s', (raw, expected) => {
+    expect(loadConfig({ ...base, STUDIO_TEST_SUBJECT_PREFIX: raw })).toMatchObject({
+      enabled: true,
+      testSubjectPrefix: expected,
+    })
+  })
+
+  it.each(['flase', 'no', '0'])('treats the typo %j as on and never disables sending', (raw) => {
+    let config: ReturnType<typeof loadConfig> | undefined
+    expect(() => {
+      config = loadConfig({ ...base, STUDIO_TEST_SUBJECT_PREFIX: raw })
+    }).not.toThrow()
+    expect(config).toMatchObject({ enabled: true, testSubjectPrefix: true })
+  })
+})
+
+describe('readTestSubjectPrefix', () => {
+  it('is on for unset, empty, "true" and typos', () => {
+    for (const raw of [undefined, '', 'true', 'flase']) expect(readTestSubjectPrefix(raw)).toBe(true)
+  })
+
+  it('is off only for the literal "false", any case, spaces ignored', () => {
+    for (const raw of ['false', ' FALSE ']) expect(readTestSubjectPrefix(raw)).toBe(false)
   })
 })

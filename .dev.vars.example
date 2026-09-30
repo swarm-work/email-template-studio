@@ -29,6 +29,11 @@
 # SES_ALLOWED_RECIPIENTS=*
 # SES_CONFIGURATION_SET=
 
+# The "[TEST] " subject prefix. ON unless this says the literal "false", which only
+# env.production sets (ADR-41). wrangler.jsonc already sets "true" for `npm run dev`,
+# so this line is only for trying production's behaviour locally.
+# STUDIO_TEST_SUBJECT_PREFIX=false
+
 # Who the API runs as locally. Without this (or ACCESS_* below) every /api/* call is 401.
 # STUDIO_DEV_IDENTITY=you@swarm.work
 

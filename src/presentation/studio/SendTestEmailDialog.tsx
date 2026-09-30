@@ -159,6 +159,9 @@ function SendTestEmailForm({
   )
   // 10 only stands in until the status arrives; the field is disabled until then anyway.
   const maxRecipients = status?.connected === true ? status.maxRecipientsPerSend : 10
+  // Until a connected server says false, assume it adds the prefix (loading,
+  // not connected, or an older server that never sent the field).
+  const showTestPrefix = status?.connected === true ? status.testSubjectPrefix : true
   const recipientReason = recipientProblem(list, maxRecipients)
   const subjectReason = subjectText.trim() === '' ? NO_SUBJECT_REASON : null
   // Reply-to is optional, and it is NOT checked against SES_ALLOWED_RECIPIENTS:
@@ -269,8 +272,8 @@ function SendTestEmailForm({
         </dt>
         <dd>
           <div className="flex items-center gap-2">
-            {/* The server adds this prefix whatever is typed here. */}
-            <span className="text-muted-foreground font-mono">[TEST]</span>
+            {/* Shown only when the server will add it (testSubjectPrefix in the status response, ADR-41); the server never doubles a [TEST] that is already typed. */}
+            {showTestPrefix ? <span className="text-muted-foreground font-mono">[TEST]</span> : null}
             <Input
               id="send-test-subject"
               type="text"

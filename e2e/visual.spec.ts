@@ -541,6 +541,8 @@ test('the send dialog carries the reply-to, the resolved subject and both parts'
   const dialog = page.getByRole('dialog', { name: 'Send test email' })
   await expect(dialog.getByLabel('Reply-to')).toHaveValue('support@example.test')
   await expect(dialog.getByLabel('Subject')).toHaveValue('Hello Ada')
+  // The e2e environment keeps STUDIO_TEST_SUBJECT_PREFIX on, so the marker shows.
+  await expect(dialog.getByText('[TEST]', { exact: true })).toBeVisible()
   await expect(dialog.getByText(/Current preview, .* KB HTML \+ .* KB plain text/)).toBeVisible()
 
   await dialog.getByLabel('To', { exact: true }).fill('qa@example.test')
