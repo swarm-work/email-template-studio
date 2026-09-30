@@ -22,6 +22,12 @@ const envSchema = z.object({
   STUDIO_SEND_ENABLED: flag,
   /** true = go through the whole path but never call SES; returns a fake message id. */
   STUDIO_SEND_DRY_RUN: flag,
+  /**
+   * Whether "[TEST] " goes in front of every subject. Only the literal "false"
+   * turns it off; see readTestSubjectPrefix. Deliberately not the `flag` const
+   * above, whose rule ("only "true" enables") is the opposite.
+   */
+  STUDIO_TEST_SUBJECT_PREFIX: z.string().optional(),
   STUDIO_SERVER_PORT: z.coerce.number().int().positive().default(8787),
   STUDIO_SEND_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(5),
   AWS_REGION: z.string().min(1).optional(),
@@ -72,6 +78,8 @@ export type SendServerConfig =
       readonly allowedRecipients: readonly string[]
       readonly configurationSet?: string
       readonly rateLimitPerMinute: number
+      /** Put "[TEST] " in front of each subject (dev, staging, local). false only when STUDIO_TEST_SUBJECT_PREFIX is "false" (production, ADR-41). */
+      readonly testSubjectPrefix: boolean
       /** Absent in dry-run mode, which never calls AWS. Always present for a live sender. */
       readonly credentials?: AwsCredentials
     }
@@ -103,6 +111,17 @@ export const DEFAULT_STUDIO_FEATURES: StudioFeatures = { visualEditor: true }
  */
 export function loadFeatures(env: Record<string, string | undefined>): StudioFeatures {
   return { visualEditor: (env.STUDIO_VISUAL_EDITOR ?? '').trim().toLowerCase() !== 'false' }
+}
+
+/**
+ * Reads STUDIO_TEST_SUBJECT_PREFIX. Only the literal "false" (any case,
+ * surrounding spaces ignored) turns the "[TEST] " prefix off; unset, empty,
+ * "true" or a typo keeps it on, so a mistake can never take the marker off a
+ * test send. Never throws: like loadFeatures, a setting about the subject line
+ * must not be able to switch sending off (ADR-41).
+ */
+export function readTestSubjectPrefix(raw: string | undefined): boolean {
+  return (raw ?? '').trim().toLowerCase() !== 'false'
 }
 
 export class ConfigError extends Error {}
@@ -155,6 +174,7 @@ export function loadConfig(env: Record<string, string | undefined>): SendServerC
     allowedRecipients: recipients.addresses,
     configurationSet: values.SES_CONFIGURATION_SET,
     rateLimitPerMinute: values.STUDIO_SEND_RATE_LIMIT_PER_MINUTE,
+    testSubjectPrefix: readTestSubjectPrefix(values.STUDIO_TEST_SUBJECT_PREFIX),
     credentials: dryRun
       ? undefined
       : {

@@ -93,8 +93,26 @@ describe('HttpTestEmailProvider', () => {
       recipientPolicy: 'allow-list',
       allowedRecipients: ['q@b.co'],
       maxRecipientsPerSend: 10,
+      // A server that predates the field always added the prefix, so absent means on.
+      testSubjectPrefix: true,
       region: 'us-east-1',
     })
+  })
+
+  it.each([true, false])('passes testSubjectPrefix %s through', async (value) => {
+    const provider = new HttpTestEmailProvider(
+      '/api/send-test',
+      fetchReturning(200, {
+        enabled: true,
+        provider: 'amazon-ses',
+        mode: 'live',
+        from: 'a@b.co',
+        allowedRecipients: ['q@b.co'],
+        region: 'us-east-1',
+        testSubjectPrefix: value,
+      }),
+    )
+    expect(await provider.getStatus()).toMatchObject({ connected: true, testSubjectPrefix: value })
   })
 
   it('passes the "any" recipient policy and the cap through', async () => {

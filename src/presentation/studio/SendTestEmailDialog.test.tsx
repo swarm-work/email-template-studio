@@ -4,6 +4,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { DEFAULT_STUDIO_FEATURES } from '@/domain'
 import {
+  HttpTestEmailProvider,
   NoSendEmailProvider,
   type EmailProvider,
   type OutgoingTestEmail,
@@ -20,6 +21,8 @@ interface FakeOptions {
   readonly messageId?: string
   readonly mode?: 'live' | 'dry-run'
   readonly recipientPolicy?: 'any' | 'allow-list'
+  /** What the fake server reports; the real server sends false only on production (ADR-41). */
+  readonly testSubjectPrefix?: boolean
 }
 
 /** Connected provider that records what it was asked to send. */
@@ -43,6 +46,7 @@ class FakeConnectedProvider implements EmailProvider {
       recipientPolicy: this.options.recipientPolicy ?? 'any',
       allowedRecipients: ['qa@example.test'],
       maxRecipientsPerSend: 10,
+      testSubjectPrefix: this.options.testSubjectPrefix ?? true,
       region: 'us-east-1',
     }
   }
@@ -55,7 +59,10 @@ class FakeConnectedProvider implements EmailProvider {
       messageId: this.options.messageId ?? 'dry-run-1',
       to: [...email.to],
       from: 'studio@example.test',
-      subject: `[TEST] ${email.subject}`,
+      // Echoes "[TEST] " only when this fake is set to add it, as the real server
+      // does. Unlike the real server it does not skip a subject that already
+      // starts with [TEST]; no test here types one or reads this subject back.
+      subject: this.options.testSubjectPrefix === false ? email.subject : `[TEST] ${email.subject}`,
       sentAt: new Date().toISOString(),
     }
   }
@@ -246,5 +253,44 @@ describe('SendTestEmailDialog', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Confirm send' }))
     expect(await screen.findByText('Test email sent')).toBeInTheDocument()
     expect(provider.sent[0].to).toEqual(['ada@example.test', 'grace@example.test'])
+  })
+
+  describe('the [TEST] marker next to the subject', () => {
+    it('is shown when the connected server says it adds the prefix', async () => {
+      renderDialog(new FakeConnectedProvider({ testSubjectPrefix: true }))
+      await screen.findByLabelText('To')
+      expect(screen.getByText('[TEST]', { exact: true })).toBeInTheDocument()
+    })
+
+    it('is hidden once a connected server says it does not add the prefix', async () => {
+      renderDialog(new FakeConnectedProvider({ testSubjectPrefix: false }))
+      // Wait for the status first: the marker shows while it is still loading.
+      await screen.findByText('studio@example.test')
+      expect(screen.queryByText('[TEST]', { exact: true })).toBeNull()
+    })
+
+    it('is shown when an older server sends no testSubjectPrefix field', async () => {
+      const stubFetch = (async () =>
+        new Response(
+          JSON.stringify({
+            enabled: true,
+            provider: 'amazon-ses',
+            mode: 'dry-run',
+            from: 'studio@example.test',
+            allowedRecipients: ['qa@example.test'],
+            region: 'us-east-1',
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        )) as typeof fetch
+      renderDialog(new HttpTestEmailProvider('/api/send-test', stubFetch))
+      await screen.findByText('studio@example.test')
+      expect(screen.getByText('[TEST]', { exact: true })).toBeInTheDocument()
+    })
+
+    it('is shown when no server is connected', async () => {
+      renderDialog(new NoSendEmailProvider())
+      await screen.findByText('Sending is unavailable')
+      expect(screen.getByText('[TEST]', { exact: true })).toBeInTheDocument()
+    })
   })
 })

@@ -345,7 +345,7 @@ suppression check in front of every send) and the "real transactional send path"
 | `MessageStore` port and adapters with the contract suite; `SuppressionStore` folded into the same file (two tables, one port)                                                                                                                                      | `server/messageStore.ts`, `server/d1MessageStore.ts`, `server/inMemoryMessageStore.ts` |
 | `sendMessage()` application service: validate → suppression check (`recipient-suppressed`) → insert `queued` row → call `EmailSender.send` with `configurationSet` from the workspace and tags `studio_message`, `studio_workspace` → update to `sent` or `failed` | `server/sendMessage.ts`, `server/sendMessage.test.ts`                                  |
 | `EmailSender.send` gains `tags` and a per-call `configurationSet`; `sesSender` sends `EmailTags`                                                                                                                                                                   | `server/emailSender.ts`, `server/sesSender.ts`                                         |
-| `/api/send-test` moves under the workspace and calls `sendMessage` with `kind: 'test'`; its guards (allow-list, 10 recipients, `[TEST]`, rate limit) stay in the route, in front                                                                                   | `server/app.ts` → `server/sendRoutes.ts`                                               |
+| `/api/send-test` moves under the workspace and calls `sendMessage` with `kind: 'test'`; its guards (allow-list, 10 recipients, the per-environment `[TEST]` prefix of ADR-41, rate limit) stay in the route, in front                                              | `server/app.ts` → `server/sendRoutes.ts`                                               |
 | Messages list and detail routes; the send-test response and status schemas move into `shared/` (they drift today, PRIORITIES section 5)                                                                                                                            | `server/messageRoutes.ts`, `shared/messageContracts.ts`                                |
 | A **Logs** page: table of messages with status badge, recipient search and status filter in URL search params; a detail drawer                                                                                                                                     | `src/presentation/logs/`                                                               |
 
@@ -431,7 +431,7 @@ idempotent on `webhook-id`; `waitUntil`; Cron Triggers and the `scheduled` handl
   webhook, member and workspace mutations (FEATURE_PLAN phase 7).
 - Retention: the same cron prunes `message_events` older than 90 days and dispatches older than 30.
 - An endpoint that is `dead` on its last 20 dispatches is switched inactive, with a banner.
-- Make the `[TEST]` prefix a per-workspace setting once a real transactional workspace exists.
+- The `[TEST]` prefix is per environment since 2026-09-30 (ADR-41: on for dev and staging, off for production). Make it a per-workspace setting as well if a transactional workspace needs one.
 - Move the studio's remaining in-memory limiters to the binding if slice 3 proved it works on the plan.
 
 ## 7. Risks

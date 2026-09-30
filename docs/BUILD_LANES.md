@@ -19,7 +19,7 @@ each slice is; this file says **how the next three weeks of it are sequenced**.
 Total hands-on work is about 55 hours. The longest chain is PR #25, then B2, then the second half of D:
 about 37 hours. With lanes side by side that is roughly 5 to 6 working days; one lane at a time, about 8.
 
-**None of these lanes makes production send real email.** That stays a separate decision (section 7).
+**None of these lanes makes production send real email.** That stays a separate decision (section 7) (taken 2026-09-30, ADR-41).
 
 ## 2. The suppression list, and why there are two
 
@@ -50,7 +50,7 @@ Each step is one bounded action. "See it" is how you can tell it worked.
    `{ "email": {{ member.email_address }} }`, save, then sign in again with Google. See it: Google
    sign-in opens the studio instead of "carries no email address". 5 min.
 3. **Second access key** on the IAM user `email-studio-ses` (profile `swarm-main`), for production's
-   live sending. Only when you decide production goes live. 10 min.
+   live sending. Only when you decide production goes live (decided 2026-09-30, ADR-41). 10 min.
 4. **R2.** Parked as a placeholder until R2 is activated on the account (TECH_DEBT #48).
 5. **SES events destination.** Waits for lane C's spike: then add an event destination (SNS or
    EventBridge) to the existing `my-first-configuration-set`. 20 min.
@@ -111,9 +111,9 @@ The C pull request holds only new files. It can merge any time after PR #25.
 
 ### Lane B2: slice 2, one recorded send path (about 25 h)
 
-1. **Move the send route into its own file, unchanged** (`server/sendRoutes.ts`), and pull the `[TEST]`
-   rule into one function, `applyTestSubjectPrefix`. That function is where the prefix change you asked
-   for will happen later. 2 h. See it: the same tests pass in their new file.
+1. **Move the send route into its own file, unchanged** (`server/sendRoutes.ts`), taking
+   `applyTestSubjectPrefix` with it. That function already exists since ADR-41 and takes the
+   per-environment switch as an argument. 2 h. See it: the same tests pass in their new file.
 2. **Migration 0005 and the message store:** `email_messages` (one row per send: queued, then sent or
    failed) and `suppressions` (the per-workspace list). Store port, two adapters, one shared test suite.
    5 h. See it: `npx vitest run server/messageStore.test.ts` runs the suite on both adapters.
@@ -131,7 +131,7 @@ The C pull request holds only new files. It can merge any time after PR #25.
    (same header file). 4 h. See it: your test send appears as a row.
 8. **Docs and ADR-39.** 2 h.
 9. **Rollout,** per environment: `npm run db:migrate:<env>`, **then** `npm run deploy:<env>`, dev first.
-   Only staging (dry-run) will show a new row, because dev and production have sending off. 2 h.
+   Staging (dry-run) and production (configured live by ADR-41) will show a new row; dev has sending off. 2 h.
 
 ### Lane D: slice 3, API keys (about 19 h, in two halves)
 
@@ -192,13 +192,15 @@ Later, not blocking anyone yet:
 - API sends: are visual templates plus merge fields enough, or does the app backend need code
   templates with fresh data per send (a server-side rendering slice)?
 - API sends need a from address IAM allows (today only `testing@swarm.camp`): widen it?
-- When should production really send? Recommended: after B2 and D run on staging, then one checked,
-  tagged live send.
+- ~~When should production really send?~~ **Decided 2026-09-30: now**, to its one allow-listed address
+  (ADR-41).
 - Open and click tracking is **on** account-wide in SES (VDM engagement metrics), so links in every
   email are rewritten. Keep it, or turn it off for `swarm.camp` transactional mail? This changes which
   events lane C's parser will actually see.
-- When the `[TEST]` prefix goes: for everyone, or as a per-workspace setting? B2 builds the same seam
-  either way.
+- ~~When the `[TEST]` prefix goes: for everyone, or as a per-workspace setting?~~ **Decided 2026-09-30:
+  per environment** (ADR-41). `STUDIO_TEST_SUBJECT_PREFIX` is on for dev and staging and off for
+  production. A per-workspace setting can still come with slice 2, on the same
+  `applyTestSubjectPrefix` seam.
 
 ## 7. What is deliberately not in these lanes
 

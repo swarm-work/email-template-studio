@@ -30,7 +30,7 @@ flowchart TD
   F -.-> D
 ```
 
-GitHub first, because the deploy credentials live on the repository and you only want to create them once. Cloudflare second. **Access before live sending**, because the deployed studio has no authentication of its own: a live Amazon SES key on a public URL is a stranger's send button. Once `SES_ALLOWED_RECIPIENTS` is `*` (ADR-17) there is no allow-list left to bound it: what remains is the password gate, at most 10 recipients per send, the forced `[TEST]` subject, 5 sends a minute and the SES account suppression list.
+GitHub first, because the deploy credentials live on the repository and you only want to create them once. Cloudflare second. **Access before live sending**, because the deployed studio has no authentication of its own: a live Amazon SES key on a public URL is a stranger's send button. Once `SES_ALLOWED_RECIPIENTS` is `*` (ADR-17) there is no allow-list left to bound it: what remains is the password gate, at most 10 recipients per send, the `[TEST]` subject on dev and staging (production sends subjects as typed since ADR-41), 5 sends a minute and the SES account suppression list.
 
 ## Before you start: what you need from other people
 
@@ -229,22 +229,15 @@ Cost: Zero Trust has a free tier that widely published figures put at 50 users. 
 
 ## B6. Switch production on
 
-Only now, with a login in front of it. Follow "Turning live sending on" in `docs/DEPLOYMENT.md` for the IAM policy, then:
+Only now, with a login in front of it. The commands live in one place, "Turning live sending on" in `docs/DEPLOYMENT.md`, so they cannot drift apart. Follow it in order: the IAM policy, the production `vars`, the two AWS secrets, the check that the three DKIM records resolve in DNS, then the deploy. In short:
 
 ```bash
-npx wrangler secret put AWS_ACCESS_KEY_ID --env production
-npx wrangler secret put AWS_SECRET_ACCESS_KEY --env production
+npx wrangler secret put AWS_ACCESS_KEY_ID --name email-template-studio-production
+npx wrangler secret put AWS_SECRET_ACCESS_KEY --name email-template-studio-production
+npm run deploy:production
 ```
 
-Set `STUDIO_SEND_ENABLED` to `"true"` and `STUDIO_SEND_DRY_RUN` to `"false"` in the production `vars`, deploy, and check the preflight:
-
-```bash
-npm run build
-npx wrangler deploy --env production
-curl -s https://studio.swarm.camp/api/send-test/status
-```
-
-Expect `"mode":"live"`, `preflight.ok` true, and `sandbox` false if production access came through. Send one real test to your own address before telling anyone the tool is ready.
+Name the Worker every time (`--name`, not `--env`): a bare or env-guessed command can hit the frozen top-level Worker, and `--env` on deploy alone does not work with the Vite plugin, which is why `npm run deploy:production` exists. Then, signed in (a bare curl answers 401), open `https://email-template-studio-production.swarm-work-emailer.workers.dev/api/send-test/status` in the browser. Expect `"mode":"live"`, `preflight.ok` true, `"testSubjectPrefix":false`, and `sandbox` false if production access came through. Send one real test to your own address before telling anyone the tool is ready.
 
 Secrets are per environment. Staging never gets a key; it stays in dry run.
 

@@ -8,7 +8,7 @@ How the studio is deployed to Cloudflare, where it runs today, and what still ha
 > `email-template-studio-production`) is the real, deployed production Worker (see "Environments"
 > below); the unnamed top-level Worker is the frozen legacy one, not "the real production Worker" as
 > the row below still says. Rewriting this whole table is tracked as follow-up work rather than done
-> here (`docs/TECH_DEBT.md`).
+> here (`docs/TECH_DEBT.md`). `env.production` is configured to send live mail (ADR-41, decided 2026-09-30); it goes live from the first `npm run deploy:production` with the AWS secrets set.
 
 | Item               | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -57,12 +57,12 @@ flowchart LR
 
 ## Environments
 
-| Name                           | Where it is defined                                           | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| ------------------------------ | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| local                          | `.dev.vars` (git-ignored)                                     | `npm run dev`; sending disabled or dry-run. `npm run preview` no longer reads it — `npm run build` deletes `dist/email_template_studio/.dev.vars` (`scripts/clean-dev-vars.mjs`), so a preview of a build runs with only `wrangler.jsonc`'s vars and no local identity or secrets. Use `npm run dev` for anything signed in                                                                                                                                                                                                                                                                                  |
-| `e2e`                          | `wrangler.jsonc` → `env.e2e`                                  | Playwright only: dry-run sending with fake addresses, plus its own local D1 and R2; never deployed. Its `webServer` deletes every template and replays `0002` **and** `0003` before each run, so a run always starts from exactly the four starters at v1                                                                                                                                                                                                                                                                                                                                                    |
-| top level                      | `wrangler.jsonc` top-level keys                               | The **legacy** Worker `email-template-studio`, frozen on its 2026-09-18 build (password gate, live SES sending to one allow-listed address, an empty database). Not deployed to any more: `npm run deploy` refuses on purpose. Retiring it is `docs/PRIORITIES.md` item 3.3. The block stays because `wrangler types` and `npm run dev` read it                                                                                                                                                                                                                                                              |
-| `dev`, `staging`, `production` | `wrangler.jsonc` → `env.dev`, `env.staging`, `env.production` | **The real deployments since 2026-09-28** (PRIORITIES decision 1, option A). Three separate Worker scripts, each with its own D1 database (real ids), Stytch sign-in via the `STYTCH_PROJECT_ID` var, and **no R2 binding yet** (TECH_DEBT #48: R2 is not enabled on the account, and a bound bucket that does not exist blocks the deploy; uploads answer 503 until it is). `production` is `email-template-studio-production.swarm-work-emailer.workers.dev`, in dry-run until the AWS secrets are set on it. `vars` and `d1_databases` are **not** inherited by a named environment — repeat both in each |
+| Name                           | Where it is defined                                           | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ------------------------------ | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| local                          | `.dev.vars` (git-ignored)                                     | `npm run dev`; sending disabled or dry-run. `npm run preview` no longer reads it — `npm run build` deletes `dist/email_template_studio/.dev.vars` (`scripts/clean-dev-vars.mjs`), so a preview of a build runs with only `wrangler.jsonc`'s vars and no local identity or secrets. Use `npm run dev` for anything signed in                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `e2e`                          | `wrangler.jsonc` → `env.e2e`                                  | Playwright only: dry-run sending with fake addresses, plus its own local D1 and R2; never deployed. Its `webServer` deletes every template and replays `0002` **and** `0003` before each run, so a run always starts from exactly the four starters at v1                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| top level                      | `wrangler.jsonc` top-level keys                               | The **legacy** Worker `email-template-studio`, frozen on its 2026-09-18 build (password gate, live SES sending to one allow-listed address, an empty database). Not deployed to any more: `npm run deploy` refuses on purpose. Retiring it is `docs/PRIORITIES.md` item 3.3. The block stays because `wrangler types` and `npm run dev` read it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `dev`, `staging`, `production` | `wrangler.jsonc` → `env.dev`, `env.staging`, `env.production` | **The real deployments since 2026-09-28** (PRIORITIES decision 1, option A). Three separate Worker scripts, each with its own D1 database (real ids), Stytch sign-in via the `STYTCH_PROJECT_ID` var, and **no R2 binding yet** (TECH_DEBT #48: R2 is not enabled on the account, and a bound bucket that does not exist blocks the deploy; uploads answer 503 until it is). `production` is `email-template-studio-production.swarm-work-emailer.workers.dev` and is configured to send live (ADR-41, decided 2026-09-30; live from the first `npm run deploy:production` with the AWS secrets set), to its one allow-listed address and without the `[TEST]` prefix; `dev` has sending off and `staging` is dry-run, both with the prefix. `vars` and `d1_databases` are **not** inherited by a named environment — repeat both in each |
 
 Rule: `vars` in `wrangler.jsonc` are for non-secret settings and are committed. Secrets go through `wrangler secret put` (or `.dev.vars` locally) and never into the file.
 
@@ -230,7 +230,7 @@ in `.dev.vars` (see `.dev.vars.example`). Without it, the local API answers 401 
 
 The Worker can reach Amazon SES (ADR-16). Whether it _does_ is one variable plus two secrets, per environment.
 
-> **Read this first.** Do the Access setup above before turning sending on. A live SES key on a public Worker means anyone with the URL can trigger a send. Four further guards contain the damage: `SES_ALLOWED_RECIPIENTS` decides who may receive (a list, or `*` for any typed address), at most 10 recipients go out per send, every subject is prefixed `[TEST]`, and the rate limit is 5 sends per minute. Those are a backstop, not a substitute for authentication. Before using `*`, do two things in this order: turn the SES account suppression list on (`docs/SENDING.md`, "Free-form recipients"), and apply the widened IAM policy from step 1 below. A key whose attached policy still pins `ses:Recipients` refuses every new address with a 502 `AccessDeniedException`, which reads like a code regression rather than a policy one.
+> **Read this first.** Do the Access setup above before turning sending on. A live SES key on a public Worker means anyone with the URL can trigger a send. Further guards contain the damage: `SES_ALLOWED_RECIPIENTS` decides who may receive (a list, or `*` for any typed address), at most 10 recipients go out per send, the rate limit is 5 sends per minute, and on dev and staging every subject is prefixed `[TEST]` (`STUDIO_TEST_SUBJECT_PREFIX`; production turns it off, ADR-41). Those are a backstop, not a substitute for authentication. Before using `*`, do two things in this order: turn the SES account suppression list on (`docs/SENDING.md`, "Free-form recipients"), and apply the widened IAM policy from step 1 below. A key whose attached policy still pins `ses:Recipients` refuses every new address with a 502 `AccessDeniedException`, which reads like a code regression rather than a policy one.
 
 **1. Make the IAM user.** One user, no console access, one inline policy. The tracked copy is `infra/ses-policy.json`; apply it with `aws iam put-user-policy --user-name <user> --policy-name <name> --policy-document file://infra/ses-policy.json` after replacing `<account-id>` (and the region, identity and from-address if yours differ from this studio's). The policy is the real backstop: it is what stops a mistake or a stolen key from sending as anyone but the studio.
 
@@ -262,7 +262,7 @@ The Worker can reach Amazon SES (ADR-16). Whether it _does_ is one variable plus
 
 Replace the region, account id, identity, from-address and configuration-set name. There is deliberately no `ses:Recipients` condition: recipients are typed in the studio (ADR-17), so what the policy pins down is the sender. If you do want to pin recipients as well, add `"ForAllValues:StringEquals": { "ses:Recipients": [...] }` back to the first statement — and remember that it must then list every address in `SES_ALLOWED_RECIPIENTS`.
 
-The configuration set is a second **resource**, not a condition. SES authorises a send against the identity and against whichever configuration set applies: the one named by `SES_CONFIGURATION_SET`, or, when that is unset, the account's default configuration set if one is marked as default in the SES console. If the set's ARN is missing from `Resource`, every send fails with `AccessDeniedException: ... is not authorized to perform 'ses:SendEmail' on resource '...:configuration-set/<name>'`, even though recipients and the sender are allowed. Keep the two names in step: the set in the policy and the value of `SES_CONFIGURATION_SET` (or the account default) must match, and set `SES_CONFIGURATION_SET` explicitly in `wrangler.jsonc` so the choice is visible in code rather than hidden in an account default.
+The configuration set is a second **resource**, not a condition. SES authorises a send against the identity and against whichever configuration set applies: the one named by `SES_CONFIGURATION_SET`, or, when that is unset, the account's default configuration set if one is marked as default in the SES console. If the set's ARN is missing from `Resource`, every send fails with `AccessDeniedException: ... is not authorized to perform 'ses:SendEmail' on resource '...:configuration-set/<name>'`, even though recipients and the sender are allowed. Keep the two names in step: the set in the policy and the value of `SES_CONFIGURATION_SET` (or the account default) must match. Production leaves `SES_CONFIGURATION_SET` unset on purpose: `swarm.camp`'s default set (`my-first-configuration-set`) applies, and it is the one the policy names (`docs/BUILD_LANES.md` section 6, decision 2). Name a set only if the policy lists it too.
 
 **2. Set the non-secret variables** in `wrangler.jsonc` for that environment:
 
@@ -275,27 +275,42 @@ The configuration set is a second **resource**, not a condition. SES authorises 
   "SES_FROM_ADDRESS": "testing@swarm.camp",
   // a comma-separated list, or "*" for any address typed in the studio
   "SES_ALLOWED_RECIPIENTS": "you@swarm.camp,teammate@swarm.camp",
-  "SES_CONFIGURATION_SET": "studio-events"
+  // "false" only where subjects should go out as typed (production); anything else keeps [TEST]
+  "STUDIO_TEST_SUBJECT_PREFIX": "false"
+  // leave SES_CONFIGURATION_SET unset unless the IAM policy lists that set too
 }
 ```
 
 **3. Put the key in as secrets**, never in the file:
 
 ```bash
-npx wrangler secret put AWS_ACCESS_KEY_ID
-npx wrangler secret put AWS_SECRET_ACCESS_KEY
+npx wrangler secret put AWS_ACCESS_KEY_ID --name email-template-studio-production
+npx wrangler secret put AWS_SECRET_ACCESS_KEY --name email-template-studio-production
 # only for temporary STS credentials, which expire and will break the Worker:
-# npx wrangler secret put AWS_SESSION_TOKEN
+# npx wrangler secret put AWS_SESSION_TOKEN --name email-template-studio-production
 ```
 
-**4. Deploy and check the preflight**, which asks SES directly and needs no send:
+Name the Worker every time. A bare `wrangler secret put` can land on the frozen top-level Worker, or follow the redirect that the last `npm run build` left behind. It is the same trap the Rollback table names for `wrangler rollback`. Check the result with `npx wrangler secret list --name email-template-studio-production`.
+
+**4. Check that DKIM resolves in DNS, before the first live send.** The preflight in step 5 cannot catch a broken DKIM setup: SES can keep reporting DKIM as `SUCCESS` for a while after the DNS records have gone, so `identityVerified` and `preflight.ok` still pass while receivers cannot verify the signature. Get the three tokens, then look each one up:
+
+```bash
+aws sesv2 get-email-identity --email-identity swarm.camp --profile swarm-main --region ap-southeast-2 --query DkimAttributes.Tokens
+dig +short CNAME <token>._domainkey.swarm.camp   # once per token
+```
+
+Each lookup must return `<token>.dkim.amazonses.com`. Do not do the first live send until all three do. (On 2026-09-30 all three returned nothing, so this check comes first.) `swarm.camp` also has no DMARC record; publishing one (a `_dmarc.swarm.camp` TXT record, starting with `p=none`) is worth doing before real volume.
+
+**Merging to main can be the go-live.** The CI deploy job deploys `env.production` on every push to `main` when `CLOUDFLARE_API_TOKEN` is set, so do this check, and put the AWS secrets in place, **before** merging the change that turns sending on, not after.
+
+**5. Deploy and check the preflight**, which asks SES directly and needs no send:
 
 ```bash
 npm run deploy:production
 curl -s https://<hostname>/api/send-test/status
 ```
 
-Expect `"mode":"live"` and a `preflight.ok` of `true`. If `identityVerified` is false the sender is not verified in that region; if `sandbox` is true you can still only reach verified addresses.
+Run it signed in. Under Stytch the status answers 401 to a bare curl, so read the response from the browser's network tab instead. Expect `"mode":"live"` and a `preflight.ok` of `true`. On production also expect `"testSubjectPrefix":false`. If `identityVerified` is false the sender is not verified in that region; if `sandbox` is true you can still only reach verified addresses.
 
 **Rehearsal.** Setting `STUDIO_SEND_DRY_RUN=true` exercises the whole path, returns `dry-run-N` message ids and needs no credentials at all. Deploy that way first: it proves the config plumbing without any AWS risk.
 
@@ -303,10 +318,13 @@ Expect `"mode":"live"` and a `preflight.ok` of `true`. If `identityVerified` is 
 
 Opening sending up is one variable, and so is closing it again. In increasing severity:
 
-1. Set `SES_ALLOWED_RECIPIENTS` back to a comma-separated list in `wrangler.jsonc` and `npm run deploy:production`. Anything off the list is refused again with `recipient-not-allowed`, and open tabs pick it up on their next status check.
-2. `npx wrangler rollback <deployment-id> --name email-template-studio-production` to go back to the previous Worker version entirely.
-3. `STUDIO_SEND_ENABLED: "false"` and `npm run deploy:production`: the API answers `sending-disabled` and the dialog says so.
-4. On the AWS side, `aws iam delete-access-key` for the Worker's key. Nothing can send until a new key is put in as a secret.
+1. Set `SES_ALLOWED_RECIPIENTS` back to a comma-separated list in `wrangler.jsonc` and `npm run deploy:production`. Anything off the list is refused again with `recipient-not-allowed`, and open tabs pick it up on their next status check. To put `[TEST]` back on production subjects, set `STUDIO_TEST_SUBJECT_PREFIX` to `"true"` (or delete it) and `npm run deploy:production`.
+2. Back to rehearsal: `STUDIO_SEND_DRY_RUN: "true"` and redeploy. The whole path runs, but nothing reaches AWS.
+3. `npx wrangler rollback <deployment-id> --name email-template-studio-production` to go back to the previous Worker version entirely.
+4. `STUDIO_SEND_ENABLED: "false"` and `npm run deploy:production`: the API answers `sending-disabled` and the dialog says so.
+5. On the AWS side, `aws iam delete-access-key` for the Worker's key. Nothing can send until a new key is put in as a secret.
+
+Every lever above is a local edit plus a deploy from your machine, and `main` still says production is live without the prefix. Land the same `wrangler.jsonc` change on `main` (a PR) straight after. Otherwise the next CI deploy from `main` puts production back to live sending without the prefix.
 
 **Rotation.** Long-lived IAM keys should be rotated on a schedule. `wrangler secret put` with the same name overwrites in place, and the next request picks it up. There is no downtime and no code change.
 

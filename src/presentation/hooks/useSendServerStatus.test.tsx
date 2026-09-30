@@ -24,6 +24,7 @@ const CONNECTED: ProviderStatus = {
   recipientPolicy: 'any',
   allowedRecipients: [],
   maxRecipientsPerSend: 10,
+  testSubjectPrefix: true,
   region: 'eu-west-1',
 }
 

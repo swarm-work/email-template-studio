@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  applyTestSubjectPrefix,
   createApp,
   createRateLimiter,
   LOGIN_ATTEMPTS_PER_MINUTE,
@@ -31,6 +32,7 @@ const enabledConfig: SendServerConfig = {
   recipientPolicy: 'allow-list',
   allowedRecipients: ['qa@example.com', 'second@example.com'],
   rateLimitPerMinute: 2,
+  testSubjectPrefix: true,
 }
 
 /** The same server with SES_ALLOWED_RECIPIENTS="*": any valid address is acceptable. */
@@ -128,8 +130,21 @@ describe('send server API', () => {
       allowedRecipients: ['qa@example.com', 'second@example.com'],
       region: 'us-east-1',
       rateLimitPerMinute: 2,
+      testSubjectPrefix: true,
       preflight: { ok: true, message: 'Dry run: no AWS calls are made.' },
     })
+  })
+
+  it('reports testSubjectPrefix false when the environment turns the prefix off', async () => {
+    const app = createApp({
+      authenticator: testAuth,
+      config: { ...enabledConfig, testSubjectPrefix: false },
+      sender: createDryRunSender(() => {}),
+    })
+    const body = await (
+      await app.request('/api/send-test/status', { headers: { host: 'localhost:8787' } })
+    ).json()
+    expect(body).toMatchObject({ enabled: true, testSubjectPrefix: false })
   })
 
   it('reports the visual editor as switched off when the flag says so', async () => {
@@ -509,6 +524,30 @@ describe('same-machine guards', () => {
     expect(sent).toEqual(['[TEST]Already', '[test] lower'])
   })
 
+  it('sends the subject exactly as typed when the prefix is off', async () => {
+    const sent: unknown[] = []
+    const app = createApp({
+      authenticator: testAuth,
+      config: { ...enabledConfig, testSubjectPrefix: false },
+      sender: recordingSender(sent),
+    })
+    const response = await post(app, { ...validBody, subject: 'Verify your email' })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ subject: 'Verify your email' })
+    expect(sent).toMatchObject([{ subject: 'Verify your email' }])
+  })
+
+  it('leaves a typed [TEST] alone when the prefix is off: not stripped, not doubled', async () => {
+    const sent: unknown[] = []
+    const app = createApp({
+      authenticator: testAuth,
+      config: { ...enabledConfig, testSubjectPrefix: false },
+      sender: recordingSender(sent),
+    })
+    await post(app, { ...validBody, subject: '[TEST] x' })
+    expect(sent).toMatchObject([{ subject: '[TEST] x' }])
+  })
+
   it('rejects subjects with control characters', async () => {
     const response = await post(app(), { ...validBody, subject: 'Hi\r\nBcc: x@y.z' })
     expect(response.status).toBe(400)
@@ -864,5 +903,18 @@ describe('the password sign-in route', () => {
     const app = createApp({ authenticator: testAuth, config: enabledConfig, sender })
     const response = await signIn(app, PASSWORD)
     expect(response.status).toBe(404)
+  })
+})
+
+describe('applyTestSubjectPrefix', () => {
+  it('adds the prefix when on, unless it is already there in any case or spacing', () => {
+    expect(applyTestSubjectPrefix('Hello', true)).toBe('[TEST] Hello')
+    expect(applyTestSubjectPrefix('[TEST]x', true)).toBe('[TEST]x')
+    expect(applyTestSubjectPrefix('[test] y', true)).toBe('[test] y')
+  })
+
+  it('sends the subject verbatim when off', () => {
+    expect(applyTestSubjectPrefix('Hello', false)).toBe('Hello')
+    expect(applyTestSubjectPrefix('[TEST] x', false)).toBe('[TEST] x')
   })
 })

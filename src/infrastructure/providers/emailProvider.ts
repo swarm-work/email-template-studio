@@ -57,6 +57,8 @@ export type ProviderStatus =
       /** Empty when the policy is 'any'; there is nothing to list. */
       readonly allowedRecipients: readonly string[]
       readonly maxRecipientsPerSend: number
+      /** Whether the server adds "[TEST] " to the subject (ADR-41). The parser fills in true when an older server omits it. */
+      readonly testSubjectPrefix: boolean
       readonly region: string
       readonly preflight?: ProviderPreflight
     }
@@ -119,6 +121,9 @@ const statusSchema = z.union([
     recipientPolicy: z.enum(['any', 'allow-list']).default('allow-list'),
     allowedRecipients: z.array(z.string()),
     maxRecipientsPerSend: z.number().int().positive().default(10),
+    // Default keeps an older server (which sends no field) working, and true is
+    // the safe reading: that server always added the prefix.
+    testSubjectPrefix: z.boolean().default(true),
     region: z.string(),
     preflight: z
       .object({
@@ -186,6 +191,7 @@ export class HttpTestEmailProvider implements EmailProvider {
       recipientPolicy,
       allowedRecipients,
       maxRecipientsPerSend,
+      testSubjectPrefix,
       region,
       preflight,
     } = parsed.data
@@ -198,6 +204,7 @@ export class HttpTestEmailProvider implements EmailProvider {
       recipientPolicy,
       allowedRecipients,
       maxRecipientsPerSend,
+      testSubjectPrefix,
       region,
       preflight,
     }
