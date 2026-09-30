@@ -26,12 +26,13 @@
  *   (`stytchClient.ts` explains why the SDK's own `keepSessionAlive` option is
  *   not used for this instead). It does this AT MOST once every
  *   `EXTEND_AT_MOST_EVERY_MS`, so a session stays alive for as long as the
- *   member keeps working and ends 55-65 minutes after their last input -
- *   never merely because a tab was left open and untouched. Input that is
- *   still waiting to be credited (a trailing extension, or a failed one being
- *   retried) is dropped, not sent, once it is older than the throttle window
- *   plus one retry - so a laptop that slept mid-wait cannot turn an old click
- *   into a fresh hour.
+ *   member keeps working and ends 55-65 minutes after their last input (up to
+ *   66 if that last extension fails and its retry succeeds) - never merely
+ *   because a tab was left open and untouched. Input that is still waiting to
+ *   be credited (a trailing extension, or a failed one being retried) is
+ *   dropped, not sent, once it is older than the throttle window plus one
+ *   retry - so a laptop that slept mid-wait cannot turn an old click into a
+ *   fresh hour.
  *
  * `PasswordGate.tsx` reaches this file through a dynamic `import()`, only once
  * the gate is open in Stytch mode - never in developer, password or Access
@@ -102,8 +103,10 @@ const MIN_MS_SINCE_LAST_REFRESH = 2 * 60 * 1000
  * The leading call happens on the member's first input and extends right
  * away; a trailing call credits whatever they did in the final stretch before
  * they stop. Together those give the 55-65 minute bound described in the
- * module comment - N minutes of slack in either direction, in exchange for at
- * most one extra network call every N minutes from an actively used tab. See
+ * module comment (one minute more when a failed extension is retried, see
+ * RETRY_FAILED_EXTENSION_MS) - N minutes of slack in either direction, in
+ * exchange for at most one extra network call every N minutes from an
+ * actively used tab. See
  * docs/STYTCH_LOG.md decision 1 for why N is 5.
  */
 export const EXTEND_AT_MOST_EVERY_MS = 5 * 60_000
