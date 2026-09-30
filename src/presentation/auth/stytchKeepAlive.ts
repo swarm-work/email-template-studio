@@ -13,7 +13,11 @@
  *   (mobile Safari backgrounding, laptop sleep), so a long-asleep tab can wake
  *   up with a JWT older than the SDK thinks it is - `onVisible` below catches
  *   that case with a plain refresh, no different from what the SDK's own
- *   timer would have done if it had been running.
+ *   timer would have done if it had been running. That wake-up call is itself
+ *   throttled (`MIN_HIDDEN_MS_TO_REFRESH`, `MIN_MS_SINCE_LAST_REFRESH`): an
+ *   ordinary quick alt-tab is almost certainly still covered by the SDK's own
+ *   three-minute timer underneath, so calling again on every one of those
+ *   would just be noise the SDK is already handling.
  * - EXTEND: a plain refresh never changes when the session itself expires -
  *   see `SESSION_IDLE_TIMEOUT_MINUTES`'s own comment on `stytchClient.ts`. So
  *   after the member's first real click, key press or scroll, this module
@@ -23,7 +27,11 @@
  *   not used for this instead). It does this AT MOST once every
  *   `EXTEND_AT_MOST_EVERY_MS`, so a session stays alive for as long as the
  *   member keeps working and ends 55-65 minutes after their last input -
- *   never merely because a tab was left open and untouched.
+ *   never merely because a tab was left open and untouched. Input that is
+ *   still waiting to be credited (a trailing extension, or a failed one being
+ *   retried) is dropped, not sent, once it is older than the throttle window
+ *   plus one retry - so a laptop that slept mid-wait cannot turn an old click
+ *   into a fresh hour.
  *
  * `PasswordGate.tsx` reaches this file through a dynamic `import()`, only once
  * the gate is open in Stytch mode - never in developer, password or Access
@@ -38,7 +46,8 @@ import { isStytchSignOutInProgress } from './stytchSignOut'
 /** The parts of the Stytch client this module actually touches. */
 interface KeepAliveClient {
   readonly session: {
-    getSync(): unknown
+    /** `last_accessed_at` (an RFC 3339 timestamp) is what the visibility throttle below reads. */
+    getSync(): { readonly last_accessed_at?: unknown } | null
     /** Called with no argument for a plain refresh, or a duration to extend the session. */
     authenticate(options?: { readonly session_duration_minutes: number }): Promise<unknown>
     onChange(callback: (session: unknown) => void): () => void
@@ -67,6 +76,27 @@ export const ACTIVITY_EVENTS = ['pointerdown', 'keydown', 'wheel'] as const
 const LISTENER_OPTIONS: AddEventListenerOptions = { capture: true, passive: true }
 
 /**
+ * A tab must have been hidden at least this long before waking it is worth an
+ * extra plain `authenticate()` call. An ordinary backgrounded tab - switched
+ * away from, not suspended - keeps its timers running (throttled, not
+ * stopped), so the SDK's own three-minute interval (`SessionManager.mjs`) is
+ * almost certainly still doing its job underneath anything shorter; calling
+ * again on every quick alt-tab would just be noise the SDK already covers.
+ */
+const MIN_HIDDEN_MS_TO_REFRESH = 2 * 60 * 1000
+
+/**
+ * Skip the wake-up refresh, even after a long-enough sleep, if the session
+ * was refreshed more recently than this. Read from the SDK's own
+ * `last_accessed_at` (`MemberSession`) rather than from a timestamp this
+ * module keeps itself, so it also sees the SDK's OWN three-minute interval
+ * landing while the tab was hidden - a background tab's timers are
+ * throttled, not stopped, so that interval keeps a real chance of firing on
+ * its own even through a sleep just over the threshold above.
+ */
+const MIN_MS_SINCE_LAST_REFRESH = 2 * 60 * 1000
+
+/**
  * How often an extension is allowed to go out, at most, per tab.
  *
  * The leading call happens on the member's first input and extends right
@@ -80,10 +110,13 @@ export const EXTEND_AT_MOST_EVERY_MS = 5 * 60_000
 
 /**
  * How long to wait before trying an extension again after one fails (a
- * network blip, most likely). The member's input is not lost while this
+ * network blip, most likely). The member's input stays credited while this
  * waits - `usedSinceExtension` below stays `true` until an extension actually
- * succeeds, so the very next attempt (this timer, or the member's next
- * keystroke) tries again automatically.
+ * succeeds - but a fresh keystroke does NOT bring the retry forward: the next
+ * attempt goes out when this timer fires (or later still, if the five-minute
+ * throttle is also running). `maybeExtend`'s own age check drops that credit
+ * instead of retrying forever once it is old enough that spending it would
+ * stretch the session well past the member's actual last input.
  */
 export const RETRY_FAILED_EXTENSION_MS = 60_000
 
@@ -140,10 +173,21 @@ export function keepStytchSessionFresh(
   let busy = false
   // Set by real input, cleared once an extension actually succeeds for it.
   let usedSinceExtension = false
+  // When `usedSinceExtension` was last set. Used only to tell a credit that is
+  // still fresh from one that has gone stale - see `maybeExtend`'s age check.
+  let lastInputAt = Number.NEGATIVE_INFINITY
   let lastExtensionAt = Number.NEGATIVE_INFINITY
   let retryAt = Number.NEGATIVE_INFINITY
   let extendTimer: number | undefined
   let confirmTimer: number | undefined
+  // A tab suspended (laptop sleep, a backgrounded mobile tab) while a trailing
+  // extension is pending, or while a failed one keeps retrying, wakes up with
+  // `usedSinceExtension` still `true` for input that may be long past - and
+  // becoming visible triggers `maybeExtend` too, through `refresh`'s own
+  // `settle` call below. Past this age, the credit is no longer worth
+  // spending: it derives from the same throttle window a retry already uses,
+  // so it stays one constant, not a second number to keep in sync.
+  const MAX_CREDIT_AGE_MS = EXTEND_AT_MOST_EVERY_MS + RETRY_FAILED_EXTENSION_MS
 
   /**
    * Runs `request`, turns a rejection into `false` instead of letting it
@@ -186,6 +230,24 @@ export function keepStytchSessionFresh(
     if (isStytchSignOutInProgress()) return
 
     const now = Date.now()
+
+    // A credit this old is not worth spending: whatever throttle window or
+    // retry could have used it has already passed, so sending it now would
+    // extend the session well past 55-65 minutes since the member's ACTUAL
+    // last input. This is how a laptop sleeping mid-throttle, or a long run
+    // of failed retries, would otherwise turn "the member stopped an hour
+    // ago" into "the member is still here" the moment the tab wakes up. Drop
+    // it and wait for the next real input to ask again - clearing
+    // `extendTimer` too, the same as the real send below does, so a fresh
+    // input right after this is never left waiting on a timer that was
+    // scheduled for a credit that no longer exists.
+    if (now - lastInputAt > MAX_CREDIT_AGE_MS) {
+      window.clearTimeout(extendTimer)
+      extendTimer = undefined
+      usedSinceExtension = false
+      return
+    }
+
     const dueAt = Math.max(lastExtensionAt + EXTEND_AT_MOST_EVERY_MS, retryAt)
     if (now < dueAt) {
       if (extendTimer === undefined) {
@@ -213,8 +275,11 @@ export function keepStytchSessionFresh(
           refresh()
         }, CONFIRM_AFTER_EXTENSION_MS)
       } else {
-        // Credit the input again so the very next attempt - this retry, or
-        // the member's next keystroke, whichever comes first - picks it up.
+        // Credit the input again - but a fresh keystroke does NOT bring the
+        // next attempt forward, it still goes out when this retry timer fires
+        // (or later still, if the five-minute throttle is also running). The
+        // age check above is what stops this from retrying forever: once the
+        // credited input is old enough, the credit is dropped instead.
         usedSinceExtension = true
         retryAt = Date.now() + RETRY_FAILED_EXTENSION_MS
       }
@@ -223,6 +288,7 @@ export function keepStytchSessionFresh(
 
   const onActivity = () => {
     usedSinceExtension = true
+    lastInputAt = Date.now()
     maybeExtend()
   }
 
@@ -231,8 +297,35 @@ export function keepStytchSessionFresh(
   // only the member's first real click or key press after that does. This
   // keeps its `onVisible` job from before this module could extend anything
   // at all: a plain refresh, nothing more.
+  //
+  // That refresh is itself throttled: skipped unless the tab has been hidden
+  // for at least `MIN_HIDDEN_MS_TO_REFRESH` AND the SDK's own
+  // `last_accessed_at` is at least `MIN_MS_SINCE_LAST_REFRESH` old. An
+  // ordinary quick alt-tab is almost certainly still covered by the SDK's own
+  // three-minute background refresh underneath, so calling again on every one
+  // of those would just be noise it is already handling.
+  //
+  // Seeded from the CURRENT state, not left `undefined`, so a keep-alive that
+  // starts while the tab is already hidden (this is reached once the gate
+  // opens, which a background tab can already be) still measures from a real
+  // moment instead of never being able to clear the threshold at all.
+  let hiddenSince: number | undefined = doc.visibilityState === 'hidden' ? Date.now() : undefined
+
   const onVisible = () => {
-    if (doc.visibilityState === 'visible') refresh()
+    if (doc.visibilityState !== 'visible') {
+      hiddenSince = Date.now()
+      return
+    }
+    const hiddenForMs = hiddenSince === undefined ? 0 : Date.now() - hiddenSince
+    hiddenSince = undefined
+    if (hiddenForMs < MIN_HIDDEN_MS_TO_REFRESH) return
+
+    const cached = session.getSync()
+    if (!cached) return
+    const lastAccessedAt = Date.parse(String(cached.last_accessed_at ?? ''))
+    if (Number.isFinite(lastAccessedAt) && Date.now() - lastAccessedAt < MIN_MS_SINCE_LAST_REFRESH) return
+
+    refresh()
   }
 
   for (const type of ACTIVITY_EVENTS) doc.addEventListener(type, onActivity, LISTENER_OPTIONS)

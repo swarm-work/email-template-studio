@@ -59,6 +59,16 @@ function fakeDoc(initial: 'visible' | 'hidden' = 'hidden') {
     listenerTypes(): string[] {
       return [...new Set(registered.map((entry) => entry.type))].sort()
     },
+    /**
+     * The number of listeners actually registered right now, counting
+     * duplicates. `listenerTypes()` alone cannot catch a leak: it runs every
+     * entry through `new Set(...)`, so a leftover instance's four listeners
+     * sitting alongside a fresh instance's four still report the same four
+     * type names either way.
+     */
+    listenerCount(): number {
+      return registered.length
+    },
   }
 }
 
@@ -106,9 +116,12 @@ type AuthMode = 'resolve' | 'reject' | 'hold'
  * bug survived its first round of tests). Call counts and arguments are
  * tracked by hand instead of through `mock.calls`.
  */
-function fakeClient(options: { hasSession?: boolean } = {}) {
+/** What `getSync()` returns: an object shaped like the SDK's cached `MemberSession`, or `null`. */
+type CachedSession = { readonly last_accessed_at?: unknown } | null
+
+function fakeClient(options: { hasSession?: boolean; getSync?: () => CachedSession } = {}) {
   let mode: AuthMode = 'resolve'
-  const hasSession = options.hasSession ?? true
+  const getSync = options.getSync ?? ((): CachedSession => ((options.hasSession ?? true) ? {} : null))
   const calls: AuthenticateCall[] = []
   const pendingQueue: Array<{ resolve: () => void; reject: (error: Error) => void }> = []
   let maxPending = 0
@@ -130,7 +143,7 @@ function fakeClient(options: { hasSession?: boolean } = {}) {
   return {
     client: {
       session: {
-        getSync: (): unknown => (hasSession ? {} : null),
+        getSync,
         authenticate,
         onChange: (callback: (session: unknown) => void) => {
           onChangeCallback = callback
@@ -217,6 +230,96 @@ describe('keepStytchSessionFresh', () => {
     expect(extensions(calls)).toHaveLength(0)
   })
 
+  describe('the visibility throttle', () => {
+    // Matches `MIN_HIDDEN_MS_TO_REFRESH` and `MIN_MS_SINCE_LAST_REFRESH`
+    // inside the module - both two minutes. Not exported: only `onVisible`
+    // needs them, so a literal here is the tripwire if either ever drifts
+    // (the "at most once every five minutes" test below pins the exported
+    // throttle the same way).
+    const THROTTLE_MS = 2 * 60_000
+
+    it('refreshes once when the tab becomes visible after being hidden long enough, and hiding again does nothing more', async () => {
+      const { client, calls } = fakeClient() // no `last_accessed_at` - see the "older SDK shape" case below
+      keepStytchSessionFresh(client, doc as unknown as Document)
+
+      // `doc` starts hidden (fakeDoc's default), so the keep-alive already
+      // seeded `hiddenSince` from this moment when it was constructed above.
+      await vi.advanceTimersByTimeAsync(THROTTLE_MS)
+      doc.setVisibility('visible')
+      doc.fire('visibilitychange')
+      await vi.advanceTimersByTimeAsync(0)
+      expect(plainRefreshes(calls)).toHaveLength(1)
+
+      doc.setVisibility('hidden')
+      doc.fire('visibilitychange')
+      await vi.advanceTimersByTimeAsync(0)
+      expect(plainRefreshes(calls)).toHaveLength(1) // hiding is not itself a refresh
+    })
+
+    it('does not refresh when the tab was hidden only briefly (under the two-minute threshold)', async () => {
+      const { client, calls } = fakeClient()
+      keepStytchSessionFresh(client, doc as unknown as Document)
+
+      await vi.advanceTimersByTimeAsync(30_000)
+      doc.setVisibility('visible')
+      doc.fire('visibilitychange')
+      await vi.advanceTimersByTimeAsync(0)
+      expect(calls).toHaveLength(0)
+    })
+
+    it('does not refresh on becoming visible when there is no cached session, even after a long sleep', async () => {
+      const { client, calls } = fakeClient({ hasSession: false })
+      keepStytchSessionFresh(client, doc as unknown as Document)
+
+      await vi.advanceTimersByTimeAsync(3 * THROTTLE_MS)
+      doc.setVisibility('visible')
+      doc.fire('visibilitychange')
+      await vi.advanceTimersByTimeAsync(0)
+      expect(calls).toHaveLength(0)
+    })
+
+    it('does not refresh when the session was accessed recently, even after a long-enough sleep', async () => {
+      // Read from the SDK's own `last_accessed_at`, not a timestamp this
+      // module keeps itself - so it also sees the SDK's OWN three-minute
+      // interval having landed while the tab was hidden, not only a refresh
+      // this module made itself.
+      const { client, calls } = fakeClient({
+        getSync: () => ({ last_accessed_at: new Date(Date.now() - 30_000).toISOString() }),
+      })
+      keepStytchSessionFresh(client, doc as unknown as Document)
+
+      await vi.advanceTimersByTimeAsync(3 * THROTTLE_MS)
+      doc.setVisibility('visible')
+      doc.fire('visibilitychange')
+      await vi.advanceTimersByTimeAsync(0)
+      expect(calls).toHaveLength(0)
+    })
+
+    it('refreshes when both the hidden duration and the time since last access clear their thresholds', async () => {
+      const { client, calls } = fakeClient({
+        getSync: () => ({ last_accessed_at: new Date(Date.now() - 10 * 60_000).toISOString() }),
+      })
+      keepStytchSessionFresh(client, doc as unknown as Document)
+
+      await vi.advanceTimersByTimeAsync(3 * THROTTLE_MS)
+      doc.setVisibility('visible')
+      doc.fire('visibilitychange')
+      await vi.advanceTimersByTimeAsync(0)
+      expect(plainRefreshes(calls)).toHaveLength(1)
+    })
+
+    it('refreshes anyway when the session carries no last_accessed_at at all (an older SDK shape)', async () => {
+      const { client, calls } = fakeClient({ getSync: () => ({}) })
+      keepStytchSessionFresh(client, doc as unknown as Document)
+
+      await vi.advanceTimersByTimeAsync(3 * THROTTLE_MS)
+      doc.setVisibility('visible')
+      doc.fire('visibilitychange')
+      await vi.advanceTimersByTimeAsync(0)
+      expect(plainRefreshes(calls)).toHaveLength(1)
+    })
+  })
+
   it.each(ACTIVITY_EVENTS)(
     'extends to 60 minutes from now on the first "%s" after the studio opens',
     async (type) => {
@@ -231,7 +334,16 @@ describe('keepStytchSessionFresh', () => {
     },
   )
 
+  // Pins the three timing constants to literal values, not just to each
+  // other: comparing `extensions(calls)` against multiples of
+  // `EXTEND_AT_MOST_EVERY_MS` alone would still pass for almost any N between
+  // 4 and just over 5 minutes, silently changing the "ends 55-65 minutes
+  // after the member's last input" promise every doc in this repo makes.
   it('extends at most once every five minutes while the member keeps working', async () => {
+    expect(EXTEND_AT_MOST_EVERY_MS).toBe(5 * 60_000)
+    expect(CONFIRM_AFTER_EXTENSION_MS).toBe(10_000)
+    expect(RETRY_FAILED_EXTENSION_MS).toBe(60_000)
+
     const startedAt = Date.now()
     const { client, calls } = fakeClient()
     keepStytchSessionFresh(client, doc as unknown as Document)
@@ -243,12 +355,7 @@ describe('keepStytchSessionFresh', () => {
       await vi.advanceTimersByTimeAsync(stepMs)
     }
 
-    expect(extensions(calls).map((call) => call.at - startedAt)).toEqual([
-      0,
-      EXTEND_AT_MOST_EVERY_MS,
-      2 * EXTEND_AT_MOST_EVERY_MS,
-      3 * EXTEND_AT_MOST_EVERY_MS,
-    ])
+    expect(extensions(calls).map((call) => call.at - startedAt)).toEqual([0, 300_000, 600_000, 900_000])
   })
 
   it('credits the last burst of work with one trailing extension, then stops', async () => {
@@ -353,6 +460,45 @@ describe('keepStytchSessionFresh', () => {
     }
   })
 
+  it('retries a failed extension even with no further input at all, not just no NEW input', async () => {
+    // The test above still clicks at +10s and +30s. Those clicks set
+    // `usedSinceExtension` back to `true` themselves, so they never actually
+    // prove the failure branch's OWN re-credit (`usedSinceExtension = true`
+    // on the `else` at stytchKeepAlive.ts) does anything - delete that line
+    // and the test above still passes. This one gives it exactly one input
+    // and nothing more.
+    const { client, calls, setMode } = fakeClient()
+    setMode('reject')
+    keepStytchSessionFresh(client, doc as unknown as Document)
+
+    const nodeProcess = (
+      globalThis as unknown as {
+        process: {
+          on(event: 'unhandledRejection', listener: (reason: unknown) => void): void
+          off(event: 'unhandledRejection', listener: (reason: unknown) => void): void
+        }
+      }
+    ).process
+    const unhandled = vi.fn()
+    nodeProcess.on('unhandledRejection', unhandled)
+    try {
+      doc.fire('pointerdown') // the one and only input this test ever gives
+      await vi.advanceTimersByTimeAsync(0)
+      expect(extensions(calls)).toHaveLength(1) // fails
+
+      setMode('resolve')
+      await vi.advanceTimersByTimeAsync(RETRY_FAILED_EXTENSION_MS)
+      expect(extensions(calls)).toHaveLength(2) // retried on its own, no new input
+
+      await vi.advanceTimersByTimeAsync(CONFIRM_AFTER_EXTENSION_MS)
+      expect(plainRefreshes(calls)).toHaveLength(1) // its confirm
+
+      expect(unhandled).not.toHaveBeenCalled()
+    } finally {
+      nodeProcess.off('unhandledRejection', unhandled)
+    }
+  })
+
   it('swallows a rejected visibility refresh with no unhandled rejection, and never retries it by itself', async () => {
     const { client, calls, setMode } = fakeClient()
     setMode('reject')
@@ -369,6 +515,10 @@ describe('keepStytchSessionFresh', () => {
     const unhandled = vi.fn()
     nodeProcess.on('unhandledRejection', unhandled)
     try {
+      // Spend at least two minutes hidden first, so the visibility throttle
+      // (`MIN_HIDDEN_MS_TO_REFRESH`) does not itself account for the "no
+      // call" outcome this test is actually about.
+      await vi.advanceTimersByTimeAsync(2 * 60_000)
       doc.setVisibility('visible')
       doc.fire('visibilitychange')
       await vi.advanceTimersByTimeAsync(0)
@@ -391,6 +541,7 @@ describe('keepStytchSessionFresh', () => {
     setMode('hold')
     keepStytchSessionFresh(client, doc as unknown as Document)
 
+    await vi.advanceTimersByTimeAsync(2 * 60_000) // clear the visibility throttle
     doc.setVisibility('visible')
     doc.fire('visibilitychange') // the refresh goes out and hangs
     expect(calls).toHaveLength(1)
@@ -406,7 +557,7 @@ describe('keepStytchSessionFresh', () => {
     expect(maxPendingAtOnce()).toBe(1) // never more than one call in flight at once
   })
 
-  it('adds no refresh when the tab becomes visible while an extension is already in flight', () => {
+  it('adds no refresh when the tab becomes visible while an extension is already in flight', async () => {
     const { client, calls, setMode } = fakeClient()
     setMode('hold')
     keepStytchSessionFresh(client, doc as unknown as Document)
@@ -414,6 +565,9 @@ describe('keepStytchSessionFresh', () => {
     doc.fire('pointerdown') // the extension goes out and hangs
     expect(calls).toHaveLength(1)
 
+    // The visibility throttle alone would already block this; clearing it too
+    // means this test is really about `busy`, not a coincidence of timing.
+    await vi.advanceTimersByTimeAsync(2 * 60_000)
     doc.setVisibility('visible')
     doc.fire('visibilitychange')
     expect(calls).toHaveLength(1)
@@ -430,6 +584,68 @@ describe('keepStytchSessionFresh', () => {
     doc.setVisibility('visible')
     doc.fire('visibilitychange')
     expect(calls).toHaveLength(0)
+  })
+
+  describe('a credit that has gone stale', () => {
+    it('is dropped instead of extending when the tab wakes from a long sleep with a trailing credit pending', async () => {
+      // The leading click extends right away (nothing stale about that yet).
+      // A second click shortly after is the one left "pending": it is
+      // credited (`usedSinceExtension = true`) but the five-minute throttle
+      // has not cleared, so it just arms a timer and waits. If the laptop
+      // then sleeps - a real browser suspends that timer, so it never fires
+      // on schedule - the credit is still sitting there, however long ago the
+      // click that earned it actually happened. Becoming visible reaches
+      // `maybeExtend` too (through `refresh`'s own `settle`), which is
+      // exactly how a stale credit could otherwise go out with no new input
+      // at all.
+      const { client, calls } = fakeClient()
+      keepStytchSessionFresh(client, doc as unknown as Document)
+
+      doc.fire('pointerdown') // t = 0: leading extension
+      await vi.advanceTimersByTimeAsync(30_000) // t = 0:30
+      doc.fire('pointerdown') // credited, but the throttle keeps it waiting
+      expect(extensions(calls)).toHaveLength(1)
+
+      // The laptop sleeps for 50 minutes: the system clock jumps, but no
+      // timer (the pending extend timer, the confirm timer) actually fires -
+      // exactly what a suspended tab's timers do.
+      vi.setSystemTime(new Date(Date.now() + 50 * 60_000))
+
+      doc.setVisibility('visible')
+      doc.fire('visibilitychange') // the tab waking up
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(extensions(calls)).toHaveLength(1) // no new extension - the credit was too old to spend
+      // One plain refresh already went out ten seconds after the leading
+      // extension (its own confirm); this is the second, the wake-up itself.
+      expect(plainRefreshes(calls)).toHaveLength(2)
+    })
+
+    it('stops retrying once the credited input is too old, and needs a fresh one to try again', async () => {
+      const { client, calls, setMode } = fakeClient()
+      setMode('reject')
+      keepStytchSessionFresh(client, doc as unknown as Document)
+
+      doc.fire('pointerdown') // t = 0: fails, and is retried every minute from here
+      await vi.advanceTimersByTimeAsync(0)
+      expect(extensions(calls)).toHaveLength(1)
+
+      // Ten minutes of nothing but failures, and no new input. Retries keep
+      // going every minute at first, but taper off on their own once the
+      // original click is older than `EXTEND_AT_MOST_EVERY_MS +
+      // RETRY_FAILED_EXTENSION_MS` (six minutes) - well before this ends.
+      await vi.advanceTimersByTimeAsync(10 * 60_000)
+      const attemptsWhileStale = extensions(calls).length
+
+      setMode('resolve')
+      await vi.advanceTimersByTimeAsync(10 * 60_000) // give it every chance to retry on its own
+      expect(extensions(calls)).toHaveLength(attemptsWhileStale) // no new attempt - the stale credit was dropped
+
+      // A real, fresh click still works normally.
+      doc.fire('pointerdown')
+      await vi.advanceTimersByTimeAsync(0)
+      expect(extensions(calls)).toHaveLength(attemptsWhileStale + 1)
+    })
   })
 
   it('calls onEnded when the SDK reports the session is gone', () => {
@@ -533,5 +749,10 @@ describe('keepStytchSessionFresh', () => {
     doc.fire('pointerdown')
     expect(extensions(calls)).toHaveLength(1) // not 2 - A's listeners are really gone
     expect(doc.listenerTypes()).toEqual(['keydown', 'pointerdown', 'visibilitychange', 'wheel'])
+    // `listenerTypes()` alone would pass even if A's four listeners were still
+    // sitting alongside B's: `new Set(...)` collapses both down to the same
+    // four type names. Counting registrations is what actually proves A is
+    // gone, not just that B is present.
+    expect(doc.listenerCount()).toBe(4)
   })
 })
