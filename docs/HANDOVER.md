@@ -1,12 +1,14 @@
 # Handover: moving the studio to the company accounts
 
-Today the studio lives on the `swarm-work` GitHub organisation and on the Cloudflare account **swarm-work-emailer** (`d0fa6b3d72170539438800a907ec5323`), which `wrangler.jsonc` pins. Part A below is done. What is left of this runbook is a custom domain, a login in front of the live sender, ending the production naming inversion, and retiring the one stale Worker still served from a personal account.
+Today the studio lives on the `swarm-work` GitHub organisation and on the Cloudflare account **swarm-work-emailer** (`d0fa6b3d72170539438800a907ec5323`), which `wrangler.jsonc` pins. Part A below is done. Production has run on `env.production` since 2026-09-28, and the legacy top-level Worker was deleted on 2026-09-30. What is left of this runbook is a custom domain, Access (Stytch is in front today), and retiring the one stale Worker still served from a personal account.
 
 Companion documents: `docs/DEPLOYMENT.md` (how deploys work and how to switch live sending on), `docs/PLAN.md` (what gets built next), `docs/DECISIONS.md` (why things are the way they are).
 
 Facts about GitHub and Cloudflare below were verified against the official documentation on 2026-09-10. Where a claim could not be confirmed it says so instead of guessing.
 
 ## Do it now — and the cheap window has closed
+
+**Superseded 2026-09-28:** remote D1 databases now exist and hold data; the cheap window has closed for real.
 
 **Corrected, 2026-09-22.** A previous revision of this section said "there is data now" and that
 moving accounts had become a data migration with a freeze window. **That was wrong.** D1 and R2 are
@@ -116,9 +118,9 @@ The deploy job runs on every push to `main`, so `main` is production. Add a rule
 
 # Part B. Cloudflare
 
-Today: Worker `email-template-studio` on the account **swarm-work-emailer** `d0fa6b3d72170539438800a907ec5323` (the id `wrangler.jsonc` pins), at `https://email-template-studio.swarm-work-emailer.workers.dev`. That is the real production: live SES sending, and `401 {"mode":"password"}` to an anonymous API caller. Three more Workers on the same account — `email-template-studio-dev`, `-staging` and `-production` — hold no secrets and answer `401 {"mode":"disabled"}`, so the naming is inverted (`docs/PRIORITIES.md` item 3.3). Separately, a stale, fully unauthenticated pre-auth build is still served from a **different, personal** account at `https://email-template-studio.jerichodelrosario35.workers.dev` (HTTP 200 with no credential); retiring it is PRIORITIES item 4.3 and B7 below.
+Today: production is the Worker `email-template-studio-production` on the account **swarm-work-emailer** `d0fa6b3d72170539438800a907ec5323` (the id `wrangler.jsonc` pins), at `https://email-template-studio-production.swarm-work-emailer.workers.dev`. It has live-sent to the allow-list `echo@swarm.work` since 2026-09-30, and it sits behind Stytch (an anonymous caller gets `401` with mode `stytch`). `email-template-studio-dev` and `-staging` run the same code with sending off and dry-run. The old top-level Worker `email-template-studio` was deleted on 2026-09-30 together with its D1 database `f270cbc3`; its IAM key `AKIAXTOJWDT75W2H53HC` is inactive and the inline policy `ses-send-scoped` is gone. Separately, a stale, fully unauthenticated pre-auth build is still served from a **different, personal** account at `https://email-template-studio.jerichodelrosario35.workers.dev` (HTTP 200 with no credential); retiring it is PRIORITIES item 4.3 and B7 below.
 
-**There is no remote data yet, but there is now a place to put it.** The production D1 database `email-template-studio` (`f270cbc3-4b5e-457b-af43-ea3130904e2b`) was created on 2026-09-22 and is wired into `wrangler.jsonc`; it is empty until the migrations are applied. R2 is not enabled on the account at all, so `STUDIO_ASSETS` has no bucket behind it and uploads cannot work until someone enables R2 in the dashboard. The `env.*` databases are still placeholders. Everything the studio has stored lives in local D1 under `.wrangler/state/v3`. Moving accounts is therefore still free, and stays free only until the first remote database exists — which is why `docs/PRIORITIES.md` item 3.2 says to settle the account first. The export/import path in "Moving to the production account" (`docs/DEPLOYMENT.md`) is what to follow once there IS data.
+**Superseded 2026-09-28/30.** Each environment has its own D1 database with migrations applied (production holds 5 templates on 2026-09-30). The top-level database `f270cbc3` was deleted while still empty. R2 is not enabled on the account, so uploads cannot work until someone enables R2 in the dashboard. A move to another account is now a data migration with a freeze window (`docs/DEPLOYMENT.md`, "Moving to the production account").
 
 ## B1. Get into the company account
 
@@ -237,7 +239,7 @@ npx wrangler secret put AWS_SECRET_ACCESS_KEY --name email-template-studio-produ
 npm run deploy:production
 ```
 
-Name the Worker every time (`--name`, not `--env`): a bare or env-guessed command can hit the frozen top-level Worker, and `--env` on deploy alone does not work with the Vite plugin, which is why `npm run deploy:production` exists. Then, signed in (a bare curl answers 401), open `https://email-template-studio-production.swarm-work-emailer.workers.dev/api/send-test/status` in the browser. Expect `"mode":"live"`, `preflight.ok` true, `"testSubjectPrefix":false`, and `sandbox` false if production access came through. Send one real test to your own address before telling anyone the tool is ready.
+Name the Worker every time (`--name`, not `--env`): a bare or env-guessed command can target the deleted top-level name `email-template-studio`, and `--env` on deploy alone does not work with the Vite plugin, which is why `npm run deploy:production` exists. Then, signed in (a bare curl answers 401), open `https://email-template-studio-production.swarm-work-emailer.workers.dev/api/send-test/status` in the browser. Expect `"mode":"live"`, `preflight.ok` true, `"testSubjectPrefix":false`, and `sandbox` false if production access came through. Send one real test to your own address before telling anyone the tool is ready.
 
 Secrets are per environment. Staging never gets a key; it stays in dry run.
 
@@ -289,6 +291,8 @@ Confirm by pushing a trivial commit to `main` and watching the run. A green **ch
 - [ ] The personal Worker is deleted and the personal Cloudflare account holds nothing.
 - [ ] `docs/DEPLOYMENT.md` and `README.md` name the new URL and account.
 - [ ] A second person can deploy: they have Cloudflare access, repository access, and have done it once.
+
+Status 2026-09-30: staging exists in dry run with no AWS credentials, and `/api/send-test/status` on production reports live. See `docs/BUILD_LANES.md` section 8 for what is next.
 
 # Part E. If it goes wrong
 

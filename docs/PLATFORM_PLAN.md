@@ -26,6 +26,8 @@ all feeding the same SNS topic.
 
 ## 2. Where things stand (verified on `d9c01e8`)
 
+Historical snapshot. For today's status see the slice status lines in section 6 and `docs/BUILD_LANES.md` section 8.
+
 - **Tenancy.** None. `migrations/0001` says "single tenant for now"; `templates.slug` is unique
   globally; the header shows the constants `WORKSPACE = 'meridian-platform'` and
   `ENVIRONMENT = 'Local'` (`src/App.tsx:15-16`).
@@ -283,6 +285,8 @@ slice 1 carries `workspace_id`, and slices 4 and 5 attach to rows slice 2 create
 
 ### Slice 0: AWS and Cloudflare prerequisites (S, operations, no code)
 
+_Status 2026-09-30: partly done: 0.1 and 0.2 done; steps 3 to 5 superseded, because production uses swarm.camp's default set `my-first-configuration-set`; the SNS topic, event destination and alarms are round 2 lane S0._
+
 Blocks slices 2 and 4. All of it is PRIORITIES 3.3 and 3.6 restated; do it in one AWS session.
 
 1. Settle **which Worker is production** (PRIORITIES decision 1). SNS needs one stable HTTPS URL
@@ -293,7 +297,7 @@ Blocks slices 2 and 4. All of it is PRIORITIES 3.3 and 3.6 restated; do it in on
 2. `aws sesv2 put-account-suppression-attributes --suppressed-reasons BOUNCE COMPLAINT`.
 3. Create configuration set `studio-swarm-camp` (and `studio-swarm-camp-staging`) with reputation
    metrics on. Create SNS topic `studio-ses-events` (SignatureVersion 2, so the Worker verifies with
-   SHA-256, not SHA-1). Add an event destination on each set for all nine event types to that topic.
+   SHA-256, not SHA-1). Add an event destination on each set for all nine event types (AWS has ten including `Subscription`, which is ignored; round 2 captures six deliverability types, see ADR-36) to that topic.
    The HTTPS subscription itself is created in slice 4, once the route exists.
 4. IAM: add `ses:SendEmail` on `configuration-set/studio-swarm-camp*` (PRIORITIES 4.9) and widen
    `ses:FromAddress` from the single `testing@swarm.camp` to the addresses production will use
@@ -306,6 +310,8 @@ Blocks slices 2 and 4. All of it is PRIORITIES 3.3 and 3.6 restated; do it in on
 topic shows one undelivered message per event.
 
 ### Slice 1: workspaces (M)
+
+_Status 2026-09-30: built (#24, #29, #30)._
 
 > **Built 2026-09-25** on the branch `feat/workspaces` (ADR-32, ADR-33). Two deviations from the
 > table below: members are read from the Stytch organisation _slug_ rather than the id, because the
@@ -336,6 +342,8 @@ in library mode.
 
 ### Slice 2: one recorded send path (M)
 
+_Status 2026-09-30: not started; round 2 lane B2._
+
 Every send, test or API, goes through one function and leaves a row. This is PRIORITIES 4.10 (one
 suppression check in front of every send) and the "real transactional send path" from its section 5.
 
@@ -357,6 +365,8 @@ workspace's configuration set; the Logs page lists the sends made in the Playwri
 message id is ours and the SES id is a column; what a message tag is for.
 
 ### Slice 3: API keys and `POST /api/v1/emails` (M)
+
+_Status 2026-09-30: not started; round 2 lanes D-1 and D-2._
 
 The slice that unblocks the app backend and Attio.
 
@@ -382,6 +392,8 @@ by index needs no constant-time comparison.
 
 ### Slice 4: SES events in (M)
 
+_Status 2026-09-30: parser built (#28); rest in round 2 lanes E1 and E2._
+
 **First verifiable step, before anything else in the slice:** a ten-line route in a scratch
 Worker that does `new X509Certificate(pem).publicKey` under `nodejs_compat` and verifies one
 recorded SNS message. If workerd refuses, switch decision 36 to EventBridge before writing the store.
@@ -390,7 +402,7 @@ recorded SNS message. If workerd refuses, switch decision 36 to EventBridge befo
 | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
 | Migration `0007`: `message_events`                                                                                                                                                                                                                                                                                                                                                | `migrations/`                                                      |
 | `verifySnsMessage(body, fetchCert)`: checks `SigningCertURL` is `https://sns.<region>.amazonaws.com/….pem`, caches the certificate one hour, builds the canonical string per message type, verifies with `crypto.verify('sha256', …)`                                                                                                                                             | `server/sns.ts`, `server/sns.test.ts` with a recorded real message |
-| `parseSesEvent(json)`: Zod schema for the nine event types → `{ type, providerMessageId, tags, occurredAt, detail }`                                                                                                                                                                                                                                                              | `server/sesEvents.ts`, tests with one fixture per type             |
+| `parseSesEvent(json)`: Zod schema for the nine event types (AWS has ten including `Subscription`, which is ignored; round 2 captures six deliverability types, see ADR-36) → `{ type, providerMessageId, tags, occurredAt, detail }`                                                                                                                                              | `server/sesEvents.ts`, tests with one fixture per type             |
 | `POST /api/webhooks/ses`: verify → confirm subscription if the topic matches → look up the message by `provider_message_id` (fall back to the `studio_message` tag) → insert event (`source_id` unique, replay is a `200` no-op) → update `current_status` → insert suppression on permanent bounce or complaint → enqueue dispatches (slice 5 fills this in; until then a no-op) | `server/sesWebhookRoute.ts`                                        |
 | Studio: the message detail shows its events as a timeline; the Logs status badges become real                                                                                                                                                                                                                                                                                     | `src/presentation/logs/`                                           |
 | Subscribe the SNS topic to the production URL, confirm, send one test email, watch the row appear                                                                                                                                                                                                                                                                                 | operations, `docs/DEPLOYMENT.md`                                   |
@@ -404,6 +416,8 @@ that address is refused in the studio.
 idempotent consumers; why the route answers `200` for messages it does not know.
 
 ### Slice 5: webhooks out (L)
+
+_Status 2026-09-30: signer built (#28); rest in round 2 lanes W1 and W2._
 
 | Task                                                                                                                                                                                                            | Where                                                                                 |
 | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
@@ -426,6 +440,8 @@ event from workspace B (a unit test asserts this by construction of `enqueue`).
 idempotent on `webhook-id`; `waitUntil`; Cron Triggers and the `scheduled` handler; backoff.
 
 ### Slice 6: hardening (S, continuous, starts after slice 3)
+
+_Status 2026-09-30: round 2 lane H; `audit_log` is migration 0009._
 
 - Audit table `audit_log(workspace_id, actor, action, subject_id, at, ip)` written by key,
   webhook, member and workspace mutations (FEATURE_PLAN phase 7).
@@ -460,7 +476,7 @@ idempotent on `webhook-id`; `waitUntil`; Cron Triggers and the `scheduled` handl
    its own between 3 and 4.
 4. **Which event types matter to the app backend and Attio first?** Delivered, bounced and
    complained are enough for suppression and invoices; opens and clicks need tracking turned on in
-   the configuration set, which rewrites links in every email. The plan leaves tracking off.
+   the configuration set, which rewrites links in every email. VDM engagement tracking is ON account-wide (checked 2026-09-30); round 2 does not capture Open or Click.
 5. **The alarm mailbox** (PRIORITIES decision 10) is still unanswered and slice 4 needs it.
 
 ## 9. Documents to keep in step

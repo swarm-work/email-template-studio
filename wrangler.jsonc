@@ -7,12 +7,12 @@
  * its own D1 database: `npm run deploy:<env>`. `env.production` is production
  * (email-template-studio-production.swarm-work-emailer.workers.dev).
  *
- * The TOP-LEVEL block is the legacy Worker `email-template-studio`. It is frozen
- * on its 2026-09-18 build (password gate, live SES sending to one allow-listed
- * address, no D1 tables) and is not deployed to any more; retiring it is
- * docs/PRIORITIES.md item 3.3. Its block stays because `wrangler types`
+ * The TOP-LEVEL block no longer deploys anything. The Worker it used to deploy,
+ * `email-template-studio`, was DELETED on 2026-09-30 together with its D1
+ * database (docs/DEPLOYMENT.md). The block stays because `wrangler types`
  * derives `Env` from it and because `.dev.vars` + `npm run dev` run against it
- * locally. `env.e2e` is only used by the Playwright suite.
+ * locally. `npm run deploy` without an environment refuses on purpose.
+ * `env.e2e` is only used by the Playwright suite.
  */
 {
   "$schema": "node_modules/wrangler/config-schema.json",
@@ -33,29 +33,27 @@
     "not_found_handling": "single-page-application",
     "run_worker_first": ["/api/*", "/media/*"],
   },
-  // Templates and their versions live in D1 (SQLite). One-time setup:
-  //   npx wrangler d1 create email-template-studio
-  // and paste the id it prints over the placeholder below. See docs/DEPLOYMENT.md.
+  // Templates and their versions live in D1 (SQLite).
+  // Local only: no remote database sits behind this top-level block any more.
+  // See docs/DEPLOYMENT.md.
   // `preview_database_id` is deliberately absent: local dev, `vite preview` and
   // `wrangler d1 ... --local` then all share one SQLite file under .wrangler/state/v3.
   "d1_databases": [
     {
       "binding": "STUDIO_DB",
       "database_name": "email-template-studio",
-      // The real production database, created 2026-09-22 on swarm-work-emailer.
-      // Not a secret: a database id names a resource, and reaching it still needs
-      // an authenticated API token or this Worker's binding.
-      //
-      // It is EMPTY until `npm run db:migrate:prod` has been run against it once.
-      // A deploy without that leaves every template route answering
-      // "no such table: templates" rather than the 503 an absent binding gives,
-      // which is the more confusing of the two failures.
+      // The remote database this id named was DELETED on 2026-09-30 (it was
+      // empty). The id stays ONLY because local D1 state under
+      // .wrangler/state/v3 is keyed by it: changing it would orphan every
+      // developer's local templates (TECH_DEBT #53). Never run a --remote
+      // command against this block; always pass --env.
       "database_id": "f270cbc3-4b5e-457b-af43-ea3130904e2b",
       "migrations_dir": "migrations",
     },
   ],
-  // Images pasted or uploaded into a visual template. One-time setup:
-  //   npx wrangler r2 bucket create email-template-studio-assets
+  // Images pasted or uploaded into a visual template.
+  // Local only. R2 is not enabled on the account (TECH_DEBT #48); the env
+  // blocks carry no binding.
   "r2_buckets": [
     {
       "binding": "STUDIO_ASSETS",
@@ -64,7 +62,10 @@
   ],
   "observability": { "enabled": true },
   "vars": {
-    // Live Amazon SES sending, on this account, deliberately (docs/DEPLOYMENT.md).
+    // These vars now apply only to local `npm run dev` (and are what
+    // `wrangler types` reads). They still say sending is enabled and not a dry
+    // run, so AWS keys in .dev.vars make a local server a live sender to
+    // SES_ALLOWED_RECIPIENTS (TECH_DEBT #54; round 2 S.1 changes the default).
     //
     // SES_ALLOWED_RECIPIENTS takes one of two forms:
     //   "a@x.io,b@y.io"  only those addresses may receive (today's value)
@@ -77,16 +78,11 @@
     //
     // The AWS keys live on swarm-work-emailer, the account this repo deploys to.
     // docs/HANDOVER.md's "this account must hold no AWS credentials" was written
-    // about a personal account and does not apply here. Sending is deliberately
-    // narrow all the same: a test sender (testing@swarm.camp) behind the shared
-    // password gate, to SES_ALLOWED_RECIPIENTS only. Revisit the blast radius
-    // before anyone outside the team can reach the studio.
+    // about a personal account and does not apply here.
     //
-    // THREE SECRETS ARE REQUIRED before deploying with this on. They never belong
-    // in this file, and without them the Worker answers 500 on every /api/* route:
-    //   npx wrangler secret put STUDIO_PASSWORD        (the shared password gate)
-    //   npx wrangler secret put AWS_ACCESS_KEY_ID
-    //   npx wrangler secret put AWS_SECRET_ACCESS_KEY
+    // For a local live test, put AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in
+    // .dev.vars. Deployed secrets live on each env Worker
+    // (`wrangler secret put ... --name email-template-studio-<env>`), never here.
     //
     // Use long-lived IAM user keys, not SSO/STS ones: temporary credentials expire
     // within the hour and the Worker cannot refresh them, so sending would simply
@@ -153,9 +149,8 @@
     //
     // Send posture: `dev` has sending off and `staging` is dry-run, so neither
     // sends real mail, and both keep the [TEST] subject prefix. `production`
-    // is configured to send live (ADR-41, decided 2026-09-30; live from the first
-    // deploy with the AWS secrets set), to its one allow-listed address, without
-    // the prefix. Its AWS key pair is a pair of Worker secrets on
+    // sends live since 2026-09-30 (ADR-41), to its one allow-listed address,
+    // without the prefix. Its AWS key pair is a pair of Worker secrets on
     // email-template-studio-production, never in this file; without them that
     // Worker boots with sending disabled and says why (worker/index.ts).
     //
