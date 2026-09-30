@@ -59,7 +59,9 @@ class FakeConnectedProvider implements EmailProvider {
       messageId: this.options.messageId ?? 'dry-run-1',
       to: [...email.to],
       from: 'studio@example.test',
-      // Like the real server: the prefix is echoed only when the server adds it.
+      // Echoes "[TEST] " only when this fake is set to add it, as the real server
+      // does. Unlike the real server it does not skip a subject that already
+      // starts with [TEST]; no test here types one or reads this subject back.
       subject: this.options.testSubjectPrefix === false ? email.subject : `[TEST] ${email.subject}`,
       sentAt: new Date().toISOString(),
     }
