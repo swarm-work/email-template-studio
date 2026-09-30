@@ -485,8 +485,9 @@ the SDK's own three-minute refresh is already doing. On real input, the module c
 })`, which both refreshes the JWT and pushes the session's expiry to 60 minutes from that moment - but
 at most once every 5 minutes per tab, with one trailing call at the end of a burst of activity so the
 last few minutes of work are not lost. Together this means a session ends 55 to 65 minutes after the
-member's last click, key press or scroll: the five-minute spread is the price of not asking Stytch on
-every single keystroke. One gap is inherent, not a bug: clicking or scrolling **inside the rendered
+member's last click, key press or scroll, or up to 66 minutes if that last extension fails and its
+one-minute retry succeeds: the five-minute spread is the price of not asking Stytch on every single
+keystroke. One gap is inherent, not a bug: clicking or scrolling **inside the rendered
 email preview** does not count, because that preview renders in a sandboxed iframe
 (`sandbox=""`, `PreviewWorkspace.tsx`, `PreviewThumbnail.tsx`) and a sandboxed iframe's events never
 reach the parent document `stytchKeepAlive.ts` listens on. A member who only scrolls the preview for an
