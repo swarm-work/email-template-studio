@@ -118,7 +118,7 @@ time the request is made, while what is SAVED with the template keeps its tokens
 - **Live sends ask twice.** The dialog shows the addresses and waits for **Confirm send**.
 - **Turn the SES account suppression list on first** (`aws sesv2 put-account-suppression-attributes --suppressed-reasons BOUNCE COMPLAINT`). Once strangers can be typed, bounces and complaints are what protect the domain's reputation, and nothing in this code can do that job.
 - **IAM is the real gate.** `infra/ses-policy.json` allows `ses:SendEmail` only as the studio's own identity and from-address; it no longer lists recipients. A stolen key still cannot send as anyone else. Apply it **before** setting `SES_ALLOWED_RECIPIENTS=*`: if the attached policy still pins `ses:Recipients`, sends to new addresses come back as a 502 `AccessDeniedException` even though the app allowed them.
-- **The audit line names the gate, not a person.** Under the shared password the log reads `by shared-password`, because that is all the server knows until Cloudflare Access lands.
+- **The audit line names the signed-in person on every deployed Worker** (Stytch). Only the shared-password mode, which no deployed Worker uses any more, logs `by shared-password`, because that is all the server knows in that mode.
 
 Rolling back is one variable: set `SES_ALLOWED_RECIPIENTS` back to a list and deploy. Anything not on the list is then refused with `recipient-not-allowed`.
 
@@ -155,5 +155,5 @@ Errors are reported with the AWS error type as the name, so the message reads li
 
 ## What this is not
 
-- Not a production sending pipeline. The production Worker is configured to send real mail through this route (ADR-41, decided 2026-09-30; live from its first deploy with the AWS secrets set), but it is still the studio's test-send path: no queue, retries, templates-as-a-service or tracking.
-- Not fully authenticated yet. The Node adapter relies on binding to loopback; the deployed Worker is behind a shared password gate until Cloudflare Access lands (`docs/PLAN.md` phase 1, TECH_DEBT #19), so its audit line names `shared-password` rather than a person.
+- Not a production sending pipeline. The production Worker is configured to send real mail through this route (ADR-41, decided 2026-09-30; live since its first deploy that day), but it is still the studio's test-send path: no queue, retries, templates-as-a-service or tracking.
+- Not fully authenticated locally. The Node adapter relies on binding to loopback. Every deployed Worker signs in through Stytch and is limited to the Swarm team (#30), so its audit line names the signed-in person; no deployed Worker uses the shared password any more (TECH_DEBT #19, paid down).

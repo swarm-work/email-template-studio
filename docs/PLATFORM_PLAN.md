@@ -285,19 +285,19 @@ slice 1 carries `workspace_id`, and slices 4 and 5 attach to rows slice 2 create
 
 ### Slice 0: AWS and Cloudflare prerequisites (S, operations, no code)
 
-_Status 2026-09-30: partly done: 0.1 and 0.2 done; steps 3 to 5 superseded, because production uses swarm.camp's default set `my-first-configuration-set`; the SNS topic, event destination and alarms are round 2 lane S0._
+_Status 2026-09-30: partly done: 0.1 and 0.2 done; steps 3 and 5, and the configuration-set half of step 4, are superseded by swarm.camp's default set `my-first-configuration-set`; the FromAddress widening in step 4 is round 2 SND.2; the SNS topic, event destination and alarms are round 2 lane S0._
 
 Blocks slices 2 and 4. All of it is PRIORITIES 3.3 and 3.6 restated; do it in one AWS session.
 
 1. Settle **which Worker is production** (PRIORITIES decision 1). SNS needs one stable HTTPS URL
    and it must be the Worker that sends. **Settled 2026-09-28, option A:** `env.production`
    (`email-template-studio-production.swarm-work-emailer.workers.dev`) is production; the
-   unnamed top-level Worker is frozen and awaits retirement. The SNS subscription URL in slice 4
+   unnamed top-level Worker is frozen and awaits retirement (**deleted 2026-09-30**, with its D1 database). The SNS subscription URL in slice 4
    is therefore `https://email-template-studio-production.swarm-work-emailer.workers.dev/api/webhooks/ses`.
 2. `aws sesv2 put-account-suppression-attributes --suppressed-reasons BOUNCE COMPLAINT`.
 3. Create configuration set `studio-swarm-camp` (and `studio-swarm-camp-staging`) with reputation
    metrics on. Create SNS topic `studio-ses-events` (SignatureVersion 2, so the Worker verifies with
-   SHA-256, not SHA-1). Add an event destination on each set for all nine event types (AWS has ten including `Subscription`, which is ignored; round 2 captures six deliverability types, see ADR-36) to that topic.
+   SHA-256, not SHA-1). Add an event destination on each set for all nine event types (AWS has ten including `Subscription`, which is ignored; round 2 recommends six deliverability types: BUILD_LANES 8.7 R2, recorded in ADR-36 once S0.7 writes it) to that topic.
    The HTTPS subscription itself is created in slice 4, once the route exists.
 4. IAM: add `ses:SendEmail` on `configuration-set/studio-swarm-camp*` (PRIORITIES 4.9) and widen
    `ses:FromAddress` from the single `testing@swarm.camp` to the addresses production will use
@@ -342,7 +342,7 @@ in library mode.
 
 ### Slice 2: one recorded send path (M)
 
-_Status 2026-09-30: not started; round 2 lane B2._
+_Status 2026-09-30: not started; round 2 lane B2. Round 2 changes two things below: B2 sends no configuration set (decided 2026-09-29), and the recipient allow-list moves into `sendMessage()` if BUILD_LANES 8.7 R4 is yes._
 
 Every send, test or API, goes through one function and leaves a row. This is PRIORITIES 4.10 (one
 suppression check in front of every send) and the "real transactional send path" from its section 5.
@@ -402,7 +402,7 @@ recorded SNS message. If workerd refuses, switch decision 36 to EventBridge befo
 | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
 | Migration `0007`: `message_events`                                                                                                                                                                                                                                                                                                                                                | `migrations/`                                                      |
 | `verifySnsMessage(body, fetchCert)`: checks `SigningCertURL` is `https://sns.<region>.amazonaws.com/….pem`, caches the certificate one hour, builds the canonical string per message type, verifies with `crypto.verify('sha256', …)`                                                                                                                                             | `server/sns.ts`, `server/sns.test.ts` with a recorded real message |
-| `parseSesEvent(json)`: Zod schema for the nine event types (AWS has ten including `Subscription`, which is ignored; round 2 captures six deliverability types, see ADR-36) → `{ type, providerMessageId, tags, occurredAt, detail }`                                                                                                                                              | `server/sesEvents.ts`, tests with one fixture per type             |
+| `parseSesEvent(json)`: Zod schema for the nine event types (AWS has ten including `Subscription`, which is ignored; round 2 recommends six deliverability types: BUILD_LANES 8.7 R2, recorded in ADR-36 once S0.7 writes it) → `{ type, providerMessageId, tags, occurredAt, detail }`                                                                                            | `server/sesEvents.ts`, tests with one fixture per type             |
 | `POST /api/webhooks/ses`: verify → confirm subscription if the topic matches → look up the message by `provider_message_id` (fall back to the `studio_message` tag) → insert event (`source_id` unique, replay is a `200` no-op) → update `current_status` → insert suppression on permanent bounce or complaint → enqueue dispatches (slice 5 fills this in; until then a no-op) | `server/sesWebhookRoute.ts`                                        |
 | Studio: the message detail shows its events as a timeline; the Logs status badges become real                                                                                                                                                                                                                                                                                     | `src/presentation/logs/`                                           |
 | Subscribe the SNS topic to the production URL, confirm, send one test email, watch the row appear                                                                                                                                                                                                                                                                                 | operations, `docs/DEPLOYMENT.md`                                   |
@@ -476,7 +476,7 @@ _Status 2026-09-30: round 2 lane H; `audit_log` is migration 0009._
    its own between 3 and 4.
 4. **Which event types matter to the app backend and Attio first?** Delivered, bounced and
    complained are enough for suppression and invoices; opens and clicks need tracking turned on in
-   the configuration set, which rewrites links in every email. VDM engagement tracking is ON account-wide (checked 2026-09-30); round 2 does not capture Open or Click.
+   the configuration set, which rewrites links in every email. VDM engagement tracking is ON account-wide (checked 2026-09-30); round 2 recommends not capturing Open or Click (BUILD_LANES 8.7 R2).
 5. **The alarm mailbox** (PRIORITIES decision 10) is still unanswered and slice 4 needs it.
 
 ## 9. Documents to keep in step

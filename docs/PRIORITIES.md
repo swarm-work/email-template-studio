@@ -81,7 +81,7 @@ Answer these first; the first one gates the whole environments block, and the th
 3. ~~**Whose account is `d0fa6b3d72170539438800a907ec5323`?**~~ **Answered 2026-09-22**: it is **`swarm-work-emailer`**, per `npx wrangler whoami`. Section 1 of this file was right and the two runbooks were wrong; both are corrected. Creating the remote database there is therefore the right next step, not a migration — and nothing has been created yet, so it is still free (`npx wrangler d1 list` returned nothing on 2026-09-22).
 4. **Can you still log in to the personal Cloudflare account `0f95923f…`?** The retired Worker there is online and unauthenticated. The current wrangler login cannot see that account. If it is unreachable, that is a bigger finding than the Worker and belongs in HANDOVER.
 5. ~~**Three deployed environments, or two?**~~ **Answered 2026-09-28: three.** Each one you keep needs its own password or Access policy, its own sender configuration and a place in the rollback runbook. For one developer, dev plus production may be enough.
-6. **What is the production sender address?** Suggested: `no-reply@mail.swarm.camp` with a custom MAIL FROM subdomain, keeping `testing@swarm.camp` for staging. This needs DNS records and takes days to verify, so decide early. Round 2 recommends `Swarm <no-reply@swarm.camp>` on the already-verified swarm.camp identity, with no DNS wait, and custom MAIL FROM later (BUILD_LANES 8.7 decision 6).
+6. **What is the production sender address?** Suggested: `no-reply@mail.swarm.camp` with a custom MAIL FROM subdomain, keeping `testing@swarm.camp` for staging. This needs DNS records and takes days to verify, so decide early. Round 2 recommends `Swarm <no-reply@swarm.camp>` on the already-verified swarm.camp identity, with no DNS wait, and custom MAIL FROM later (BUILD_LANES 8.7 R6).
 7. **Long-lived IAM user keys for the Worker, yes or no?** HANDOVER says "ask before creating a static key". The Worker cannot refresh temporary STS credentials, so the options are a long-lived key with 90-day rotation, or accepting that sending stops when a token expires. If yes, who owns and rotates it? Round 2 recommends: you own it, rotate every 90 days with two keys overlapping, and the next rotation is due by 2026-12-29 for `AKIAXTOJWDT7VYPBK545`.
 8. **Is there a second repository admin?** Branch protection with "require 1 approval" deadlocks a solo maintainer. Without one, require the `check` status and block force pushes only.
 9. **Which swarm.camp email is the first real template?** Invitation, billing notice, contract, or engagement update. Start with the one sent most often.
@@ -93,19 +93,7 @@ The full round-2 decision list, with what each one blocks, is `docs/BUILD_LANES.
 
 ### 3.0 Round 2 order (2026-09-30)
 
-| Order | Item                                                                                 | Size   | Lane       |
-| ----- | ------------------------------------------------------------------------------------ | ------ | ---------- |
-| 1     | SES alarms, events topic and inbox visibility (4.11, 3.6)                            | S      | S0         |
-| 2     | Free GitHub protections, main ruleset, CI account variable (4.13, 4.15, 4.6)         | S      | SEC        |
-| 3     | Local dry-run default, backup scripts, restore rehearsal, remote D1 check (3.5, 3.7) | S      | S          |
-| 4     | One recorded send path with suppression and allow-list in sendMessage (4.10)         | M      | B2         |
-| 5     | API keys, first half                                                                 | S      | D-1        |
-| 6     | SES events in: POST /api/webhooks/ses                                                | M      | E1, E2     |
-| 7     | Real sender identity and sending policy (4.12, 4.8, 4.9 remainder)                   | M      | SND        |
-| 8     | API keys and POST /api/v1/emails                                                     | M      | D-2        |
-| 9     | Per-workspace webhooks                                                               | L      | W1, W2     |
-| 10    | Hardening                                                                            | S      | H          |
-| 11    | Stytch Live, CI deploys (4.14), R2                                                   | S each | ST, CI, R2 |
+The one round-2 order is `docs/BUILD_LANES.md` section 8.5 (merge order) with the waves in 8.3. Follow that, not a list here. Two lists drifted apart once already (SND and ST sit before E2 and H there; CIH and HDR are lanes there).
 
 **The 2026-09-19 list, kept for history** (the notes on each row say what is done):
 
