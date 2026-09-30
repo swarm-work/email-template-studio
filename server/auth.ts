@@ -61,9 +61,52 @@ export interface Identity {
 /**
  * The result of trying to identify a caller. A failure carries a sentence the
  * API can return, so a 401 explains itself instead of being a bare status code.
+ *
+ * `session` is set only by the Stytch authenticator, and only on failure, to
+ * tell apart three situations the browser must handle differently (ADR-31,
+ * update 2026-09-29):
+ *   - 'absent': no Stytch cookie at all - the ordinary "not signed in yet" state.
+ *   - 'stale': a cookie WAS presented but it is a problem the browser's own
+ *     background refresh can fix on its own - an expired or not-yet-valid JWT
+ *     (the token lives about five minutes; see the authenticator), a JWKS
+ *     fetch that failed, or a key id this Worker has not seen yet (a rotation
+ *     mid-flight). None of these mean the visitor is a stranger, so the gate
+ *     must route them back to the ordinary Stytch sign-in screen, not the
+ *     "you are not on the team" panel (ADR-31, update 2026-09-29, second
+ *     revision - this is the bug that update fixed).
+ *   - 'refused': a cookie was presented and this server said no to it for a
+ *     reason reloading cannot fix - a bad signature, a claim the token will
+ *     never gain back (no email, no subject), or a real member of an
+ *     organisation that is not on STYTCH_ALLOWED_ORGANIZATIONS.
+ *
+ * `refusal` is set only alongside `session: 'refused'`, and only says WHICH
+ * kind of permanent refusal it was, so the browser can pick the right wording
+ * (PasswordGate.tsx): 'organization' is a real, verified Stytch member of
+ * some OTHER organisation - genuinely on a team, just not this one, so
+ * "only for the Swarm team" is literally true. 'claims' is everything else
+ * (a malformed or unverifiable token, a session with no email or no subject)
+ * - a Swarm member can hit that too (a Google-only sign-in with no email
+ * claim, for instance), so it keeps the older, less presumptuous wording.
+ *
+ * `staleReason` is set only alongside `session: 'stale'`, and says WHY this
+ * reading is stale, so the browser can decide whether the reason is worth
+ * showing a member (PasswordGate.tsx): 'expired' is the ORDINARY case - the
+ * five-minute JWT has simply timed out, or (the `nbf` half of the same check)
+ * has not started yet - which the SDK's own background refresh fixes within
+ * seconds on every sleeping tab, every few minutes, forever. Showing a
+ * sentence about it would read as an error on every routine reload. 'keys' is
+ * an actual operational hiccup on THIS server (a JWKS fetch failed, or a key
+ * id it has not seen yet) - rarer, and worth a word while it clears up.
  */
 export type AuthResult =
-  { readonly ok: true; readonly identity: Identity } | { readonly ok: false; readonly reason: string }
+  | { readonly ok: true; readonly identity: Identity }
+  | {
+      readonly ok: false
+      readonly reason: string
+      readonly session?: 'absent' | 'stale' | 'refused'
+      readonly refusal?: 'organization' | 'claims'
+      readonly staleReason?: 'expired' | 'keys'
+    }
 
 /** What the API calls on every `/api/*` request. */
 export interface Authenticator {
@@ -113,7 +156,12 @@ const CLOCK_SKEW_SECONDS = 60
  */
 export type AuthConfig =
   | { readonly mode: 'cloudflare-access'; readonly teamDomain: string; readonly aud: string }
-  | { readonly mode: 'stytch'; readonly projectId: string }
+  | {
+      readonly mode: 'stytch'
+      readonly projectId: string
+      /** Trimmed, lower-cased Stytch organisation slugs. Never empty - see loadAuthConfig. */
+      readonly allowedOrganizations: readonly string[]
+    }
   | { readonly mode: 'password'; readonly password: string }
   | { readonly mode: 'developer'; readonly email: string }
   | { readonly mode: 'none'; readonly reason: string }
@@ -167,7 +215,24 @@ export function loadAuthConfig(env: Record<string, string | undefined>): AuthCon
           `"project-test-00000000-0000-0000-0000-000000000000", got "${stytchProjectId}".`,
       }
     }
-    return { mode: 'stytch', projectId: stytchProjectId }
+    // Fail CLOSED, same reasoning as the malformed project id above: a Stytch
+    // session proves nothing about WHICH organisation someone belongs to, and
+    // Stytch's own dashboard lets a stranger create their own organisation
+    // during sign-in (create_organization_enabled). Without an allow-list, a
+    // valid Stytch session would be enough to get in, which is the exact
+    // opposite of "team only". A forgotten variable must read as "nobody", not
+    // "everybody" - so a missing or empty value refuses every sign-in rather
+    // than silently accepting one (ADR-31, update 2026-09-29).
+    const allowedOrganizations = parseAllowedOrganizations(env.STYTCH_ALLOWED_ORGANIZATIONS)
+    if (allowedOrganizations.length === 0) {
+      return {
+        mode: 'none',
+        reason:
+          'STYTCH_ALLOWED_ORGANIZATIONS is not set. Set it to a comma-separated list of the Stytch ' +
+          'organisation slugs allowed to sign in, for example "swarm".',
+      }
+    }
+    return { mode: 'stytch', projectId: stytchProjectId, allowedOrganizations }
   }
   if (password) {
     // A short password is worse than none, because it invites the belief that
@@ -199,6 +264,21 @@ function clean(value: string | undefined): string | undefined {
   return trimmed === '' ? undefined : trimmed
 }
 
+/**
+ * Parses STYTCH_ALLOWED_ORGANIZATIONS: a comma-separated list of Stytch
+ * organisation SLUGS (not ids - see IdentityOrganization; the slug is what
+ * survives the Test-to-Live project switch). Each entry is trimmed and
+ * lower-cased, so "Swarm, swarm " and "swarm,swarm" mean the same thing, and
+ * a stray comma or blank variable drops out rather than becoming an entry
+ * that can never match a real slug.
+ */
+function parseAllowedOrganizations(value: string | undefined): readonly string[] {
+  return (value ?? '')
+    .split(',')
+    .map((entry) => entry.trim().toLowerCase())
+    .filter((entry) => entry !== '')
+}
+
 /** "https://team.cloudflareaccess.com/" and "team.cloudflareaccess.com" both give the host. */
 function hostOf(value: string): string {
   const withScheme = value.includes('://') ? value : `https://${value}`
@@ -226,7 +306,7 @@ export function createAuthenticator(config: AuthConfig, options: AuthenticatorOp
     case 'cloudflare-access':
       return createAccessAuthenticator(config.teamDomain, config.aud, options)
     case 'stytch':
-      return createStytchAuthenticator(config.projectId, options)
+      return createStytchAuthenticator(config.projectId, config.allowedOrganizations, options)
     case 'password':
       return createPasswordAuthenticator(config.password, options)
     case 'developer':
@@ -578,11 +658,17 @@ function createKeyring(url: string, label: string, options: AuthenticatorOptions
  *
  *   1. The token arrives in a COOKIE, not a header, because the browser SDK put
  *      it there. It is not HttpOnly - the SDK has to read it too.
- *   2. It lives about FIVE MINUTES. The SDK silently refreshes it in the
- *      background, so this Worker will legitimately see expired tokens from
- *      tabs that were asleep, and must refuse them and let the browser retry.
- *      Do not widen CLOCK_SKEW_SECONDS to hide that: 60 seconds was nothing
- *      against a long Access token but is a fifth of this one.
+ *   2. It lives about FIVE MINUTES. The SDK refreshes it in the background, but
+ *      ONLY while a client instance actually exists in the tab - which is
+ *      exactly what `src/presentation/auth/stytchKeepAlive.ts` is for, loaded
+ *      once the studio is open in Stytch mode (ADR-31, update 2026-09-29,
+ *      third revision; before that fix, the SDK was never resident once the
+ *      sign-in screen unmounted, and this refresh simply did not happen). This
+ *      Worker still legitimately sees an expired token from a tab that slept
+ *      through the keep-alive's own three-minute cadence, and must refuse it
+ *      and let the browser retry. Do not widen CLOCK_SKEW_SECONDS to hide
+ *      that: 60 seconds was nothing against a long Access token but is a
+ *      fifth of this one.
  *   3. There are TWO expiries and mixing them up is a real bug. The outer `exp`
  *      is the five-minute one and is the one to check. The `expires_at` nested
  *      inside the session claim is the SESSION's end, hours away; trusting it
@@ -591,9 +677,18 @@ function createKeyring(url: string, label: string, options: AuthenticatorOptions
  * Both the issuer and the JWKS host are derived from the project id rather than
  * configured separately, so there is exactly one source of truth and no second
  * literal to get wrong.
+ *
+ * `allowedOrganizations` is the second lock (ADR-31, update 2026-09-29). Stytch
+ * proves the token is a real, current session; it says nothing about whether
+ * this deployment wants that person in. Stytch's own discovery flow lets a
+ * stranger mint their own organisation during sign-in, so a verified signature
+ * alone is not "team only" - a member of any OTHER organisation, however
+ * genuinely signed in, is refused here, by slug (never the id - see
+ * IdentityOrganization).
  */
 export function createStytchAuthenticator(
   projectId: string,
+  allowedOrganizations: readonly string[],
   options: AuthenticatorOptions = {},
 ): Authenticator {
   const now = options.now ?? (() => Date.now())
@@ -606,14 +701,23 @@ export function createStytchAuthenticator(
   return {
     mode: 'stytch',
     async authenticate(headers) {
+      // No cookie at all is the ordinary "not signed in yet" state, not a
+      // refusal: the browser should offer the sign-in screen, not a "you are
+      // not welcome here" one. Every OTHER return below carries a cookie that
+      // WAS presented and this server said no to, which is `session: 'refused'`.
       const token = readCookie(headers.get('cookie'), STYTCH_SESSION_COOKIE)
       if (!token) {
-        return { ok: false, reason: 'No Stytch session cookie on the request.' }
+        return { ok: false, reason: 'No Stytch session cookie on the request.', session: 'absent' }
       }
 
       const parts = token.split('.')
       if (parts.length !== 3) {
-        return { ok: false, reason: 'Stytch session token is not a well formed JWT.' }
+        return {
+          ok: false,
+          reason: 'Stytch session token is not a well formed JWT.',
+          session: 'refused',
+          refusal: 'claims',
+        }
       }
       const [headerPart, payloadPart, signaturePart] = parts
 
@@ -623,26 +727,60 @@ export function createStytchAuthenticator(
         header = JSON.parse(decodeBase64Url(headerPart)) as { alg?: string; kid?: string }
         claims = JSON.parse(decodeBase64Url(payloadPart)) as StytchClaims
       } catch {
-        return { ok: false, reason: 'Stytch session token header or payload is not valid JSON.' }
+        return {
+          ok: false,
+          reason: 'Stytch session token header or payload is not valid JSON.',
+          session: 'refused',
+          refusal: 'claims',
+        }
       }
 
       // Same reason as Access: pinning the algorithm is what stops "alg: none"
       // and "HS256 signed with the public key" forgeries.
       if (header.alg !== 'RS256') {
-        return { ok: false, reason: `Unsupported Stytch token algorithm: ${header.alg ?? 'none'}.` }
+        return {
+          ok: false,
+          reason: `Unsupported Stytch token algorithm: ${header.alg ?? 'none'}.`,
+          session: 'refused',
+          refusal: 'claims',
+        }
       }
       if (!header.kid) {
-        return { ok: false, reason: 'Stytch session token does not name a signing key.' }
+        return {
+          ok: false,
+          reason: 'Stytch session token does not name a signing key.',
+          session: 'refused',
+          refusal: 'claims',
+        }
       }
 
       let key: VerifyKey | undefined
       try {
         key = await keyFor(header.kid)
       } catch (error) {
-        return { ok: false, reason: `Could not load the Stytch signing keys: ${messageOf(error)}` }
+        // 'stale', not 'refused': a JWKS outage says nothing about who this
+        // visitor is, and refusing the whole team's session over it is worse
+        // than a moment on the ordinary sign-in screen while it clears up.
+        // `staleReason: 'keys'` (not 'expired') is what tells the browser this
+        // one is actually worth a sentence, unlike an ordinary five-minute
+        // timeout (PasswordGate.tsx).
+        return {
+          ok: false,
+          reason: `Could not load the Stytch signing keys: ${messageOf(error)}`,
+          session: 'stale',
+          staleReason: 'keys',
+        }
       }
       if (!key) {
-        return { ok: false, reason: 'Stytch session token was signed by an unknown key.' }
+        // Same reasoning: a key id this Worker has not fetched yet is what a
+        // rotation looks like mid-flight, not a forged token - the ordinary
+        // sign-in screen will pick up the new key on its own refresh.
+        return {
+          ok: false,
+          reason: 'Stytch session token was signed by an unknown key.',
+          session: 'stale',
+          staleReason: 'keys',
+        }
       }
 
       const signed = new TextEncoder().encode(`${headerPart}.${payloadPart}`)
@@ -650,38 +788,82 @@ export function createStytchAuthenticator(
       try {
         signature = decodeBase64UrlBytes(signaturePart)
       } catch {
-        return { ok: false, reason: 'Stytch session token signature is not valid base64url.' }
+        return {
+          ok: false,
+          reason: 'Stytch session token signature is not valid base64url.',
+          session: 'refused',
+          refusal: 'claims',
+        }
       }
       const verified = await crypto.subtle.verify('RSASSA-PKCS1-v1_5', key, signature, signed)
       if (!verified) {
-        return { ok: false, reason: 'Stytch session token signature did not verify.' }
+        return {
+          ok: false,
+          reason: 'Stytch session token signature did not verify.',
+          session: 'refused',
+          refusal: 'claims',
+        }
       }
 
       const problem = checkStytchClaims(claims, projectId, Math.floor(now() / 1000))
-      if (problem) return { ok: false, reason: problem }
+      if (problem) {
+        return {
+          ok: false,
+          reason: problem.reason,
+          session: problem.session,
+          // Only meaningful when `session` is 'refused' (see checkStytchClaims):
+          // 'stale' claim problems (expired, not-yet-valid) carry no refusal
+          // kind, because PasswordGate never looks at it for those.
+          ...(problem.session === 'refused' ? { refusal: 'claims' as const } : {}),
+          // Only meaningful when `session` is 'stale' - see checkStytchClaims.
+          ...(problem.staleReason ? { staleReason: problem.staleReason } : {}),
+        }
+      }
 
       const email = emailFromStytchClaims(claims)
       if (!email) {
         // Naming the claims we DID find turns "nobody can sign in and the error
         // says the signature is fine" into a one-line fix. The keys of a token
-        // that has already verified are not a secret.
+        // that has already verified are not a secret. 'claims', not
+        // 'organization': a Swarm member whose sign-in is Google-only (no email
+        // claim) can hit this too, so the panel must not tell them they are on
+        // the wrong team.
         return {
           ok: false,
           reason:
             'Stytch session token carries no email address. Claims present: ' +
             `${Object.keys(claims).join(', ') || '(none)'}. ` +
             'No email-based authentication factor either (a Google-only sign-in). Add a top-level email claim via the project’s custom claim template, or extend STYTCH_EMAIL_CLAIM_PATHS.',
+          session: 'refused',
+          refusal: 'claims',
         }
       }
+
+      // The second lock (ADR-31, update 2026-09-29). The token is genuinely
+      // Stytch's and genuinely current - that only answers WHO signed in, not
+      // whether this deployment wants them. Matched by slug, lower-cased on
+      // both sides, so a dashboard slug's casing can never cause a mismatch.
       const organization = organizationFromStytchClaims(claims)
+      const memberOfAllowedOrganization =
+        organization !== undefined && allowedOrganizations.includes(organization.slug.toLowerCase())
+      if (!memberOfAllowedOrganization) {
+        const allowedList = allowedOrganizations.join(' or ')
+        return {
+          ok: false,
+          session: 'refused',
+          // The one case the "only for the Swarm team" wording is actually
+          // true for: a real, verified Stytch session that names some OTHER
+          // organisation (or none at all).
+          refusal: 'organization',
+          reason: organization
+            ? `This studio is only for the ${allowedList} organisation. You signed in as ${email} in organisation '${organization.slug}'.`
+            : `This studio is only for the ${allowedList} organisation. You signed in as ${email}, but the session names no organisation.`,
+        }
+      }
+
       return {
         ok: true,
-        identity: {
-          email,
-          origin: 'directory',
-          ...(organization ? { organization } : {}),
-          roles: rolesFromStytchClaims(claims),
-        },
+        identity: { email, origin: 'directory', organization, roles: rolesFromStytchClaims(claims) },
       }
     },
   }
@@ -710,30 +892,60 @@ function stytchIssuers(projectId: string): readonly string[] {
   return [`stytch.com/${projectId}`, `https://stytch.com/${projectId}`]
 }
 
-/** Returns a reason to refuse, or null when every claim is acceptable. */
-function checkStytchClaims(claims: StytchClaims, projectId: string, nowSeconds: number): string | null {
+/** A claim problem, tagged with which `AuthResult.session` value it should carry. */
+interface StytchClaimProblem {
+  readonly reason: string
+  readonly session: 'refused' | 'stale'
+  /** Only meaningful when `session` is 'stale' - see `AuthResult.staleReason`. */
+  readonly staleReason?: 'expired' | 'keys'
+}
+
+/**
+ * Returns a reason to refuse, or null when every claim is acceptable.
+ *
+ * Expiry and not-yet-valid are tagged 'stale' rather than 'refused': the token
+ * lives about five minutes and the browser SDK refreshes it in the background
+ * for as long as the studio stays open (`stytchKeepAlive.ts`), so an honest
+ * team member sees exactly this on a tab that slept past that refresh, or on
+ * the first load after the SDK's very first refresh landed - it is not
+ * evidence of a stranger. Everything else here (wrong issuer, wrong audience,
+ * no subject) is a real, permanent problem, so it stays 'refused'.
+ */
+function checkStytchClaims(
+  claims: StytchClaims,
+  projectId: string,
+  nowSeconds: number,
+): StytchClaimProblem | null {
   const accepted = stytchIssuers(projectId)
   if (!claims.iss || !accepted.includes(claims.iss)) {
     // Quoting what arrived next to what was expected is the difference between
     // a thirty-second fix and a lost day.
-    return `Stytch token was issued by ${claims.iss ?? 'nobody'}, not ${accepted.join(' or ')}.`
+    return {
+      session: 'refused',
+      reason: `Stytch token was issued by ${claims.iss ?? 'nobody'}, not ${accepted.join(' or ')}.`,
+    }
   }
   const audiences = typeof claims.aud === 'string' ? [claims.aud] : (claims.aud ?? [])
   if (!audiences.includes(projectId)) {
-    return 'Stytch token was issued for a different project.'
+    return { session: 'refused', reason: 'Stytch token was issued for a different project.' }
   }
   // The OUTER exp, deliberately - see the note on the authenticator.
+  // `staleReason: 'expired'` (not 'keys') is what tells PasswordGate this is
+  // the ORDINARY five-minute timeout - never worth a sentence, since the
+  // SDK's own background refresh fixes it within seconds, on every sleeping
+  // tab, every few minutes, forever.
   if (typeof claims.exp !== 'number' || claims.exp + CLOCK_SKEW_SECONDS < nowSeconds) {
-    return 'Stytch session token has expired.'
+    return { session: 'stale', staleReason: 'expired', reason: 'Stytch session token has expired.' }
   }
   if (typeof claims.nbf === 'number' && claims.nbf - CLOCK_SKEW_SECONDS > nowSeconds) {
-    return 'Stytch session token is not valid yet.'
+    return { session: 'stale', staleReason: 'expired', reason: 'Stytch session token is not valid yet.' }
   }
   // Stytch's own SDK reads `sub: payload.sub || ""`. An empty subject would
   // sail through every check above and then write a blank author into the send
-  // log and into D1's NOT NULL created_by column.
+  // log and into D1's NOT NULL created_by column. Not something a refresh can
+  // fix, so it stays 'refused'.
   if (typeof claims.sub !== 'string' || claims.sub.trim() === '') {
-    return 'Stytch session token has no subject.'
+    return { session: 'refused', reason: 'Stytch session token has no subject.' }
   }
   return null
 }
@@ -824,14 +1036,25 @@ function emailFromStytchClaims(claims: StytchClaims): string | undefined {
  */
 const STYTCH_ORGANIZATION_CLAIM = 'https://stytch.com/organization'
 
-/** Both fields, or nothing: a half-present organisation is not one a workspace can match. */
+/**
+ * Both fields, or nothing: a half-present organisation is not one a workspace
+ * can match.
+ *
+ * The slug is lower-cased HERE, once, rather than at each place that later
+ * compares it. Two callers rely on that: the allow-list check just below in
+ * this file, and `workspaceAccess.roleFor`, which compares
+ * `identity.organization.slug` to a workspace's stored `stytchOrganizationSlug`
+ * with `===` and does no case-folding of its own. Doing it once at the source
+ * means both stay in agreement even if a Stytch project ever sends a slug with
+ * different casing than the dashboard shows.
+ */
 function organizationFromStytchClaims(claims: StytchClaims): IdentityOrganization | undefined {
   const value = claims[STYTCH_ORGANIZATION_CLAIM]
   if (typeof value !== 'object' || value === null) return undefined
   const { organization_id: id, slug } = value as Record<string, unknown>
   if (typeof id !== 'string' || typeof slug !== 'string') return undefined
   if (id.trim() === '' || slug.trim() === '') return undefined
-  return { id: id.trim(), slug: slug.trim() }
+  return { id: id.trim(), slug: slug.trim().toLowerCase() }
 }
 
 /**

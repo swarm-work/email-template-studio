@@ -30,6 +30,29 @@ const NOW_MS = 1_760_000_000_000
 const NOW_SECONDS = Math.floor(NOW_MS / 1000)
 const EMAIL = 'person@swarm.work'
 
+/**
+ * Every token minted by `makeToken` below carries this organisation by
+ * default, and every helper in this file allows exactly its slug - so a test
+ * that only cares about the signature, the issuer, the expiry or the email
+ * claim never has to think about the organisation allow-list (STYTCH_PLAN
+ * ADR-31, update 2026-09-29) to keep passing. Tests ABOUT the allow-list
+ * override one side or the other explicitly - see "organisation allow-list"
+ * below.
+ *
+ * Two shapes on purpose: the CLAIM (`organization_id`/`slug`) is what goes
+ * INTO a token, the IDENTITY (`id`/`slug`) is what `organizationFromStytchClaims`
+ * maps it to and what comes back OUT on `identity.organization`.
+ */
+const DEFAULT_ORGANIZATION_CLAIM = {
+  organization_id: 'organization-test-00000000-0000-4000-8000-000000000001',
+  slug: 'swarm',
+}
+const DEFAULT_ORGANIZATION = {
+  id: DEFAULT_ORGANIZATION_CLAIM.organization_id,
+  slug: DEFAULT_ORGANIZATION_CLAIM.slug,
+}
+const ALLOWED_ORGANIZATIONS: readonly string[] = ['swarm']
+
 let keyPair: TestKeyPair
 let otherKeyPair: TestKeyPair
 let publicJwk: TestJwk
@@ -74,6 +97,9 @@ async function makeToken(
       started_at: '2026-09-22T00:00:00Z',
       expires_at: '2026-09-22T12:00:00Z',
     },
+    // Every allow-list check in this file allows this by default - see the
+    // constant's own comment. A test about the allow-list overrides it.
+    'https://stytch.com/organization': DEFAULT_ORGANIZATION_CLAIM,
     ...claims,
   }
   const headerPart = base64Url(JSON.stringify(fullHeader))
@@ -88,8 +114,12 @@ function jwksFetch(jwks?: unknown) {
   return vi.fn(async () => new Response(JSON.stringify(body), { status: 200 }))
 }
 
-function authenticatorWith(fetchImpl: ReturnType<typeof jwksFetch>, now: () => number = () => NOW_MS) {
-  return createStytchAuthenticator(PROJECT_ID, { fetch: fetchImpl, now })
+function authenticatorWith(
+  fetchImpl: ReturnType<typeof jwksFetch>,
+  now: () => number = () => NOW_MS,
+  allowedOrganizations: readonly string[] = ALLOWED_ORGANIZATIONS,
+) {
+  return createStytchAuthenticator(PROJECT_ID, allowedOrganizations, { fetch: fetchImpl, now })
 }
 
 function cookieHeaders(token: string, name = STYTCH_SESSION_COOKIE): Headers {
@@ -97,10 +127,11 @@ function cookieHeaders(token: string, name = STYTCH_SESSION_COOKIE): Headers {
 }
 
 describe('loadAuthConfig with Stytch', () => {
-  it('selects Stytch when a project id is set', () => {
-    expect(loadAuthConfig({ STYTCH_PROJECT_ID: PROJECT_ID })).toEqual({
+  it('selects Stytch when a project id and an allow-list are both set', () => {
+    expect(loadAuthConfig({ STYTCH_PROJECT_ID: PROJECT_ID, STYTCH_ALLOWED_ORGANIZATIONS: 'swarm' })).toEqual({
       mode: 'stytch',
       projectId: PROJECT_ID,
+      allowedOrganizations: ['swarm'],
     })
   })
 
@@ -130,6 +161,7 @@ describe('loadAuthConfig with Stytch', () => {
   it('lets Stytch win over the shared password, so removing it is the rollback', () => {
     const config = loadAuthConfig({
       STYTCH_PROJECT_ID: PROJECT_ID,
+      STYTCH_ALLOWED_ORGANIZATIONS: 'swarm',
       STUDIO_PASSWORD: 'a-long-enough-password',
     })
     expect(config.mode).toBe('stytch')
@@ -141,20 +173,100 @@ describe('loadAuthConfig with Stytch', () => {
   })
 
   it('is wired into createAuthenticator', () => {
-    const authenticator = createAuthenticator({ mode: 'stytch', projectId: PROJECT_ID })
+    const authenticator = createAuthenticator({
+      mode: 'stytch',
+      projectId: PROJECT_ID,
+      allowedOrganizations: ['swarm'],
+    })
     expect(authenticator.mode).toBe('stytch')
+  })
+
+  // Fail CLOSED (ADR-31, update 2026-09-29): Stytch's own discovery flow lets a
+  // stranger mint their OWN organisation during sign-in, so a valid project id
+  // alone is not "team only". A forgotten allow-list must read as "nobody",
+  // never "everybody", the same reasoning as the malformed-project-id case
+  // above.
+  describe('STYTCH_ALLOWED_ORGANIZATIONS, the second lock', () => {
+    it('refuses to mode none when the variable is missing entirely', () => {
+      const config = loadAuthConfig({ STYTCH_PROJECT_ID: PROJECT_ID })
+      expect(config.mode).toBe('none')
+      expect(config.mode === 'none' && config.reason).toContain('STYTCH_ALLOWED_ORGANIZATIONS')
+    })
+
+    it('refuses to mode none when the variable is blank', () => {
+      const config = loadAuthConfig({
+        STYTCH_PROJECT_ID: PROJECT_ID,
+        STYTCH_ALLOWED_ORGANIZATIONS: '   ',
+      })
+      expect(config.mode).toBe('none')
+      expect(config.mode === 'none' && config.reason).toContain('STYTCH_ALLOWED_ORGANIZATIONS')
+    })
+
+    it('refuses to mode none when the variable is only commas and blanks', () => {
+      const config = loadAuthConfig({
+        STYTCH_PROJECT_ID: PROJECT_ID,
+        STYTCH_ALLOWED_ORGANIZATIONS: ' , , ',
+      })
+      expect(config.mode).toBe('none')
+    })
+
+    it('trims whitespace, lower-cases, and drops empty entries from a list of slugs', () => {
+      const config = loadAuthConfig({
+        STYTCH_PROJECT_ID: PROJECT_ID,
+        STYTCH_ALLOWED_ORGANIZATIONS: '  Swarm ,ACME, , swarm-partners ',
+      })
+      expect(config).toEqual({
+        mode: 'stytch',
+        projectId: PROJECT_ID,
+        allowedOrganizations: ['swarm', 'acme', 'swarm-partners'],
+      })
+    })
+
+    it('accepts a single slug with no comma at all', () => {
+      const config = loadAuthConfig({
+        STYTCH_PROJECT_ID: PROJECT_ID,
+        STYTCH_ALLOWED_ORGANIZATIONS: 'swarm',
+      })
+      expect(config.mode === 'stytch' && config.allowedOrganizations).toEqual(['swarm'])
+    })
+
+    // The property most likely to break in a future reorder of
+    // `loadAuthConfig`: a missing allow-list must win over EVERY weaker mode
+    // that happens to also be configured, not just fall through past Stytch
+    // toward whichever one is checked next. Both cases below set a mode that
+    // `loadAuthConfig` would otherwise pick.
+    it('still refuses to mode none, not password, when a password is also set', () => {
+      const config = loadAuthConfig({
+        STYTCH_PROJECT_ID: PROJECT_ID,
+        STUDIO_PASSWORD: 'a-long-enough-password',
+      })
+      expect(config.mode).toBe('none')
+      expect(config.mode === 'none' && config.reason).toContain('STYTCH_ALLOWED_ORGANIZATIONS')
+    })
+
+    it('still refuses to mode none, not developer, when a dev identity is also set', () => {
+      const config = loadAuthConfig({
+        STYTCH_PROJECT_ID: PROJECT_ID,
+        STUDIO_DEV_IDENTITY: EMAIL,
+      })
+      expect(config.mode).toBe('none')
+      expect(config.mode === 'none' && config.reason).toContain('STYTCH_ALLOWED_ORGANIZATIONS')
+    })
   })
 })
 
 describe('createStytchAuthenticator', () => {
   it('accepts a correctly signed token and returns the email', async () => {
     const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(await makeToken()))
-    expect(result).toEqual({ ok: true, identity: { email: EMAIL, origin: 'directory', roles: [] } })
+    expect(result).toEqual({
+      ok: true,
+      identity: { email: EMAIL, origin: 'directory', organization: DEFAULT_ORGANIZATION, roles: [] },
+    })
   })
 
-  it('refuses a request with no Stytch cookie', async () => {
+  it('refuses a request with no Stytch cookie, and says so is "absent" rather than "refused"', async () => {
     const result = await authenticatorWith(jwksFetch()).authenticate(new Headers())
-    expect(result).toMatchObject({ ok: false })
+    expect(result).toMatchObject({ ok: false, session: 'absent' })
   })
 
   it('ignores an unrelated cookie of another name', async () => {
@@ -165,54 +277,72 @@ describe('createStytchAuthenticator', () => {
 
   it('refuses a token that is not three parts', async () => {
     const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders('not.a-jwt'))
-    expect(result).toMatchObject({ ok: false })
+    // A malformed token is a permanent problem, not one the SDK's own refresh
+    // could ever fix - 'refused', and 'claims' rather than 'organization'
+    // because a genuine Swarm member can send a malformed token too.
+    expect(result).toMatchObject({ ok: false, session: 'refused', refusal: 'claims' })
   })
 
   it('refuses a token whose payload is not JSON', async () => {
     const junk = `${base64Url('{"alg":"RS256","kid":"stytch-key-1"}')}.${base64Url('not json')}.sig`
     const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(junk))
-    expect(result).toMatchObject({ ok: false })
+    expect(result).toMatchObject({ ok: false, session: 'refused', refusal: 'claims' })
   })
 
   it('refuses alg none', async () => {
     const token = await makeToken({}, { alg: 'none' })
     const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-    expect(result).toMatchObject({ ok: false })
+    expect(result).toMatchObject({ ok: false, session: 'refused', refusal: 'claims' })
     expect(result.ok === false && result.reason).toContain('algorithm')
   })
 
   it('refuses a symmetric algorithm', async () => {
     const token = await makeToken({}, { alg: 'HS256' })
     const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-    expect(result).toMatchObject({ ok: false })
+    expect(result).toMatchObject({ ok: false, session: 'refused', refusal: 'claims' })
   })
 
   it('refuses a token that names no signing key', async () => {
     const token = await makeToken({}, { kid: undefined })
     const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-    expect(result).toMatchObject({ ok: false })
+    expect(result).toMatchObject({ ok: false, session: 'refused', refusal: 'claims' })
   })
 
   it('refuses a token signed by the wrong key', async () => {
     const token = await makeToken({}, {}, otherKeyPair.privateKey)
     const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-    expect(result).toMatchObject({ ok: false })
+    expect(result).toMatchObject({ ok: false, session: 'refused', refusal: 'claims' })
     expect(result.ok === false && result.reason).toContain('signature')
   })
 
-  it('refuses a token whose key id is not in the published set', async () => {
+  it('refuses a token whose key id is not in the published set, marking the session "stale" not "refused"', async () => {
+    // A rotation mid-flight looks exactly like this, and is not evidence of a
+    // stranger - 'refused' would send a genuine Swarm member to the "not on
+    // the team" panel (ADR-31, update 2026-09-29, second revision).
     const token = await makeToken({}, { kid: OTHER_KID })
     const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-    expect(result).toMatchObject({ ok: false })
+    expect(result).toMatchObject({ ok: false, session: 'stale', staleReason: 'keys' })
     expect(result.ok === false && result.reason).toContain('unknown key')
   })
 
-  it('refuses when the JWKS endpoint cannot be reached, and says so', async () => {
+  it('refuses when the JWKS endpoint cannot be reached, marking the session "stale" not "refused"', async () => {
+    // An outage says nothing about who the visitor is, so it must not read as
+    // "you are not on the team" either.
     const failing = vi.fn(async () => new Response('nope', { status: 500 }))
-    const authenticator = createStytchAuthenticator(PROJECT_ID, { fetch: failing, now: () => NOW_MS })
+    const authenticator = createStytchAuthenticator(PROJECT_ID, ALLOWED_ORGANIZATIONS, {
+      fetch: failing,
+      now: () => NOW_MS,
+    })
     const result = await authenticator.authenticate(cookieHeaders(await makeToken()))
-    expect(result).toMatchObject({ ok: false })
+    expect(result).toMatchObject({ ok: false, session: 'stale', staleReason: 'keys' })
     expect(result.ok === false && result.reason).toContain('Stytch signing keys')
+  })
+
+  it('never sets staleReason on a "refused" result - it is only meaningful alongside "stale"', async () => {
+    const token = await makeToken({ sub: undefined })
+    const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
+    expect(result).toMatchObject({ ok: false, session: 'refused' })
+    expect(result.ok === false && 'staleReason' in result).toBe(false)
   })
 
   describe('the issuer, which is the easiest thing to get wrong', () => {
@@ -231,7 +361,7 @@ describe('createStytchAuthenticator', () => {
     it('still refuses another project, and names what it received', async () => {
       const token = await makeToken({ iss: 'stytch.com/project-test-someone-else-0000' })
       const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-      expect(result).toMatchObject({ ok: false })
+      expect(result).toMatchObject({ ok: false, session: 'refused', refusal: 'claims' })
       // Quoting both sides is what makes a wrong literal a 30 second fix.
       expect(result.ok === false && result.reason).toContain('someone-else')
       expect(result.ok === false && result.reason).toContain(PROJECT_ID)
@@ -240,7 +370,7 @@ describe('createStytchAuthenticator', () => {
     it('refuses a token with no issuer at all', async () => {
       const token = await makeToken({ iss: undefined })
       const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-      expect(result).toMatchObject({ ok: false })
+      expect(result).toMatchObject({ ok: false, session: 'refused', refusal: 'claims' })
     })
   })
 
@@ -254,16 +384,22 @@ describe('createStytchAuthenticator', () => {
     it('refuses a token minted for a different project', async () => {
       const token = await makeToken({ aud: [LIVE_PROJECT_ID] })
       const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-      expect(result).toMatchObject({ ok: false })
+      expect(result).toMatchObject({ ok: false, session: 'refused', refusal: 'claims' })
       expect(result.ok === false && result.reason).toContain('different project')
     })
   })
 
   describe('expiry, where there are two and only one is right', () => {
-    it('refuses an expired token', async () => {
+    it('refuses an expired token, but marks the session "stale" rather than "refused"', async () => {
+      // The whole point of ADR-31's 2026-09-29 update, second revision: the
+      // JWT lives about five minutes and the SDK refreshes it in the
+      // background, so an honest team member's sleeping tab hits exactly
+      // this path. `session !== 'refused'` is what stops PasswordGate from
+      // showing them the "not on the Swarm team" panel over it.
       const token = await makeToken({ exp: NOW_SECONDS - 120 })
       const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-      expect(result).toMatchObject({ ok: false })
+      expect(result).toMatchObject({ ok: false, session: 'stale', staleReason: 'expired' })
+      expect(result.ok === false && result.session).not.toBe('refused')
       expect(result.ok === false && result.reason).toContain('expired')
     })
 
@@ -273,10 +409,10 @@ describe('createStytchAuthenticator', () => {
       expect(result).toMatchObject({ ok: true })
     })
 
-    it('refuses a token that is not valid yet', async () => {
+    it('refuses a token that is not valid yet, also marked "stale" for the same reason as expiry', async () => {
       const token = await makeToken({ nbf: NOW_SECONDS + 600 })
       const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-      expect(result).toMatchObject({ ok: false })
+      expect(result).toMatchObject({ ok: false, session: 'stale', staleReason: 'expired' })
     })
 
     it('does NOT accept an expired token because the session is still open', async () => {
@@ -295,14 +431,14 @@ describe('createStytchAuthenticator', () => {
     it('refuses an empty subject rather than logging a blank author', async () => {
       const token = await makeToken({ sub: '   ' })
       const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-      expect(result).toMatchObject({ ok: false })
+      expect(result).toMatchObject({ ok: false, session: 'refused', refusal: 'claims' })
       expect(result.ok === false && result.reason).toContain('subject')
     })
 
     it('refuses a missing subject', async () => {
       const token = await makeToken({ sub: undefined })
       const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-      expect(result).toMatchObject({ ok: false })
+      expect(result).toMatchObject({ ok: false, session: 'refused', refusal: 'claims' })
     })
   })
 
@@ -310,7 +446,10 @@ describe('createStytchAuthenticator', () => {
     it('reads a top-level email_address claim', async () => {
       const token = await makeToken({ email: undefined, email_address: EMAIL })
       const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-      expect(result).toEqual({ ok: true, identity: { email: EMAIL, origin: 'directory', roles: [] } })
+      expect(result).toEqual({
+        ok: true,
+        identity: { email: EMAIL, origin: 'directory', organization: DEFAULT_ORGANIZATION, roles: [] },
+      })
     })
 
     it('reads a namespaced member claim', async () => {
@@ -319,25 +458,31 @@ describe('createStytchAuthenticator', () => {
         'https://stytch.com/member': { email_address: EMAIL },
       })
       const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-      expect(result).toEqual({ ok: true, identity: { email: EMAIL, origin: 'directory', roles: [] } })
+      expect(result).toEqual({
+        ok: true,
+        identity: { email: EMAIL, origin: 'directory', organization: DEFAULT_ORGANIZATION, roles: [] },
+      })
     })
 
     it('trims surrounding whitespace', async () => {
       const token = await makeToken({ email: `  ${EMAIL}  ` })
       const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-      expect(result).toEqual({ ok: true, identity: { email: EMAIL, origin: 'directory', roles: [] } })
+      expect(result).toEqual({
+        ok: true,
+        identity: { email: EMAIL, origin: 'directory', organization: DEFAULT_ORGANIZATION, roles: [] },
+      })
     })
 
     it('ignores a non-string value rather than writing "[object Object]" into the log', async () => {
       const token = await makeToken({ email: { address: EMAIL } })
       const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-      expect(result).toMatchObject({ ok: false })
+      expect(result).toMatchObject({ ok: false, session: 'refused', refusal: 'claims' })
     })
 
     it('refuses when no email is present, and lists the claims that ARE', async () => {
       const token = await makeToken({ email: undefined })
       const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-      expect(result).toMatchObject({ ok: false })
+      expect(result).toMatchObject({ ok: false, session: 'refused', refusal: 'claims' })
       // This message is the whole point: it turns a total lockout that reads
       // like a signature failure into a one-line fix.
       expect(result.ok === false && result.reason).toContain('iss')
@@ -365,7 +510,12 @@ describe('createStytchAuthenticator', () => {
       const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
       expect(result).toEqual({
         ok: true,
-        identity: { email: EMAIL, origin: 'directory', roles: ['stytch_member'] },
+        identity: {
+          email: EMAIL,
+          origin: 'directory',
+          organization: DEFAULT_ORGANIZATION,
+          roles: ['stytch_member'],
+        },
       })
     })
 
@@ -377,7 +527,12 @@ describe('createStytchAuthenticator', () => {
       const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
       expect(result).toEqual({
         ok: true,
-        identity: { email: 'template@swarm.work', origin: 'directory', roles: ['stytch_member'] },
+        identity: {
+          email: 'template@swarm.work',
+          origin: 'directory',
+          organization: DEFAULT_ORGANIZATION,
+          roles: ['stytch_member'],
+        },
       })
     })
 
@@ -401,12 +556,20 @@ describe('createStytchAuthenticator', () => {
       })
     })
 
-    it('drops a half-present organisation rather than matching a workspace on a blank slug', async () => {
+    it('refuses a half-present organisation rather than treating a blank slug as a member of none', async () => {
+      // A half-present organisation (blank slug) is treated as NO organisation
+      // at all (organizationFromStytchClaims), and since ADR-31's 2026-09-29
+      // update "no organisation" can never pass the allow-list - it fails
+      // closed rather than quietly matching a workspace on an empty string.
       const token = await makeToken({
         'https://stytch.com/organization': { organization_id: 'organization-test-1', slug: '' },
       })
       const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-      expect(result.ok && result.identity.organization).toBeUndefined()
+      // Treated as NO organisation at all, so this is the allow-list refusal,
+      // not a claims problem - 'organization', the same as a token that omits
+      // the claim entirely.
+      expect(result).toMatchObject({ ok: false, session: 'refused', refusal: 'organization' })
+      expect(result.ok === false && result.reason).toContain(EMAIL)
     })
 
     it('still refuses a Google-only sign-in, whose factor carries no address', async () => {
@@ -428,13 +591,80 @@ describe('createStytchAuthenticator', () => {
         },
       })
       const result = await authenticatorWith(jwksFetch()).authenticate(cookieHeaders(token))
-      expect(result).toMatchObject({ ok: false })
+      expect(result).toMatchObject({ ok: false, session: 'refused', refusal: 'claims' })
       expect(result.ok === false && result.reason).toContain('claim template')
     })
 
     it('keeps the search list ordered from most to least specific', () => {
       expect(STYTCH_EMAIL_CLAIM_PATHS[0]).toEqual(['email'])
       expect(STYTCH_EMAIL_CLAIM_PATHS.every((path) => path.length >= 1)).toBe(true)
+    })
+  })
+
+  // The second lock (ADR-31, update 2026-09-29): a verified Stytch signature
+  // only proves the token is real and current, never that this deployment
+  // wants that person in. Stytch's own discovery flow lets a stranger mint
+  // their own organisation during sign-in, so these are what actually keeps a
+  // stranger out.
+  describe('organisation allow-list', () => {
+    it('accepts a member of an allowed organisation', async () => {
+      const token = await makeToken({
+        'https://stytch.com/organization': { organization_id: 'organization-test-1', slug: 'swarm' },
+      })
+      const result = await authenticatorWith(jwksFetch(), () => NOW_MS, ['swarm']).authenticate(
+        cookieHeaders(token),
+      )
+      expect(result).toMatchObject({ ok: true, identity: { organization: { slug: 'swarm' } } })
+    })
+
+    it('accepts any of several allowed organisations', async () => {
+      const token = await makeToken({
+        'https://stytch.com/organization': { organization_id: 'organization-test-1', slug: 'acme' },
+      })
+      const result = await authenticatorWith(jwksFetch(), () => NOW_MS, ['swarm', 'acme']).authenticate(
+        cookieHeaders(token),
+      )
+      expect(result).toMatchObject({ ok: true })
+    })
+
+    it('matches a slug case-insensitively, and lower-cases it on the identity too', async () => {
+      // Lower-cased ONCE, on the identity itself (organizationFromStytchClaims)
+      // - not just at this comparison - so workspaceAccess.roleFor, which
+      // compares identity.organization.slug with plain `===` and does no
+      // case-folding of its own, agrees with the allow-list about who 'Swarm'
+      // is.
+      const token = await makeToken({
+        'https://stytch.com/organization': { organization_id: 'organization-test-1', slug: 'Swarm' },
+      })
+      const result = await authenticatorWith(jwksFetch(), () => NOW_MS, ['swarm']).authenticate(
+        cookieHeaders(token),
+      )
+      expect(result).toMatchObject({ ok: true, identity: { organization: { slug: 'swarm' } } })
+    })
+
+    it('refuses a member of another organisation, naming their email and that organisation', async () => {
+      const token = await makeToken({
+        'https://stytch.com/organization': { organization_id: 'organization-test-acme', slug: 'acme' },
+      })
+      const result = await authenticatorWith(jwksFetch(), () => NOW_MS, ['swarm']).authenticate(
+        cookieHeaders(token),
+      )
+      expect(result).toMatchObject({ ok: false, session: 'refused', refusal: 'organization' })
+      // The whole point: whoever reads this knows who tried and where they are
+      // a real member, without grepping a log.
+      expect(result.ok === false && result.reason).toContain(EMAIL)
+      expect(result.ok === false && result.reason).toContain('acme')
+      expect(result.ok === false && result.reason).toContain('swarm')
+    })
+
+    it('refuses a token with no organisation claim at all, naming the email', async () => {
+      const token = await makeToken({ 'https://stytch.com/organization': undefined })
+      const result = await authenticatorWith(jwksFetch(), () => NOW_MS, ['swarm']).authenticate(
+        cookieHeaders(token),
+      )
+      expect(result).toMatchObject({ ok: false, session: 'refused', refusal: 'organization' })
+      expect(result.ok === false && result.reason).toContain(EMAIL)
+      expect(result.ok === false && result.reason).toContain('swarm')
     })
   })
 
@@ -466,7 +696,10 @@ describe('createStytchAuthenticator', () => {
       let clock = NOW_MS
       let served: unknown = { keys: [{ ...publicJwk, kid: KID, alg: 'RS256', use: 'sig' }] }
       const fetchImpl = vi.fn(async () => new Response(JSON.stringify(served), { status: 200 }))
-      const authenticator = createStytchAuthenticator(PROJECT_ID, { fetch: fetchImpl, now: () => clock })
+      const authenticator = createStytchAuthenticator(PROJECT_ID, ALLOWED_ORGANIZATIONS, {
+        fetch: fetchImpl,
+        now: () => clock,
+      })
 
       const first = await authenticator.authenticate(cookieHeaders(await makeToken()))
       expect(first).toMatchObject({ ok: true })
@@ -512,17 +745,19 @@ describe('createStytchAuthenticator', () => {
   describe('test and live are separate worlds', () => {
     it('asks test.stytch.com for a test project', async () => {
       const fetchImpl = jwksFetch()
-      await createStytchAuthenticator(PROJECT_ID, { fetch: fetchImpl, now: () => NOW_MS }).authenticate(
-        cookieHeaders(await makeToken()),
-      )
+      await createStytchAuthenticator(PROJECT_ID, ALLOWED_ORGANIZATIONS, {
+        fetch: fetchImpl,
+        now: () => NOW_MS,
+      }).authenticate(cookieHeaders(await makeToken()))
       expect(fetchImpl).toHaveBeenCalledWith(`https://test.stytch.com/v1/b2b/sessions/jwks/${PROJECT_ID}`)
     })
 
     it('asks api.stytch.com for a live project', async () => {
       const fetchImpl = jwksFetch()
-      await createStytchAuthenticator(LIVE_PROJECT_ID, { fetch: fetchImpl, now: () => NOW_MS }).authenticate(
-        cookieHeaders(await makeToken()),
-      )
+      await createStytchAuthenticator(LIVE_PROJECT_ID, ALLOWED_ORGANIZATIONS, {
+        fetch: fetchImpl,
+        now: () => NOW_MS,
+      }).authenticate(cookieHeaders(await makeToken()))
       expect(fetchImpl).toHaveBeenCalledWith(`https://api.stytch.com/v1/b2b/sessions/jwks/${LIVE_PROJECT_ID}`)
     })
   })

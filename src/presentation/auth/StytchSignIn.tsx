@@ -1,11 +1,14 @@
 /**
  * The Stytch sign-in screen.
  *
- * **This is the one module allowed to import `@stytch/react`** — the build guard
- * in `scripts/check-worker-bundle.mjs` enforces that, and `npm run build` fails
- * if anything else does. It exists as a separate file for exactly that reason:
- * it is reached only through `React.lazy`, so the SDK is downloaded and its side
- * effects run ONLY in a build that is actually using Stytch.
+ * **This is one of three modules allowed to name the Stytch SDK** - the build
+ * guard in `scripts/check-worker-bundle.mjs` enforces that, and `npm run build`
+ * fails if anything else does. The other two are `stytchClient.ts` (the one
+ * place the client is actually built - this file just imports it, so sign-in
+ * and the keep-alive share one session manager) and `stytchSignOut.ts`. This
+ * file exists separately because it is reached only through `React.lazy`, so
+ * the SDK is downloaded and its side effects run ONLY in a build that is
+ * actually using Stytch.
  *
  * That is not a size optimisation, it is what keeps the Playwright suite green.
  * The e2e build runs on `STUDIO_DEV_IDENTITY` with no Stytch configured, and all
@@ -21,12 +24,12 @@
  * are `AuthScreen.tsx`, drawn by `PasswordGate` around this component. This
  * file only makes the prebuilt form fit inside that card.
  */
+import { useEffect, useState } from 'react'
 import {
   B2BProducts,
   StytchB2B,
   StytchB2BProvider,
   StytchEventType,
-  createStytchB2BClient,
   shadcnTheme,
   type Callbacks,
   type PresentationConfig,
@@ -34,27 +37,12 @@ import {
   type StytchEvent,
   type Theme,
 } from '@stytch/react/b2b'
-
-/**
- * One hour, for now - and an open decision (docs/STYTCH_LOG.md, decision 1).
- *
- * It was twelve hours, to match the shared-password session it replaces. On
- * 2026-09-24 the first sign-in that ever completed did so with this lowered to
- * 60, in the same change that fixed the double Stytch client; twelve has not
- * been re-tried since. Stytch sends this value on the discovery exchange, and
- * the project has a maximum session duration in its dashboard. Whether that
- * ceiling rejects a larger request or silently truncates it was never
- * observed either way, so: raise the ceiling first, then raise this, and
- * watch the exchange call once.
- *
- * This is the SESSION length, not the token's. The JWT itself lives about five
- * minutes and the SDK refreshes it in the background; see `server/auth.ts`.
- */
-const SESSION_DURATION_MINUTES = 60
+import { AUTHENTICATE_PATH } from './authenticatePath'
+import { SESSION_IDLE_TIMEOUT_MINUTES, stytchClient as client } from './stytchClient'
 
 /** Where Stytch sends the browser back to. Must match a Redirect URL exactly. */
 function redirectUrl(): string {
-  return `${window.location.origin}/authenticate`
+  return `${window.location.origin}${AUTHENTICATE_PATH}`
 }
 
 /**
@@ -119,32 +107,6 @@ const strings: Strings = {
 }
 
 /**
- * The Stytch client, created ONCE, at module scope.
- *
- * Not inside the component, and not in a `useMemo`: React's StrictMode calls
- * `useMemo` initialisers twice in development, which built two clients, each
- * with its own session manager and bootstrap fetch. Stytch warns about exactly
- * this ("multiple copies of the Stytch client ... unintended side effects"),
- * and a session exchange racing against a second session manager is the kind
- * of side effect it means. Module scope runs once per page load, full stop.
- *
- * This is still safe for the lazy seam: this module is only ever imported
- * through `React.lazy` from PasswordGate, in stytch mode, so "module scope"
- * here means "the moment sign-in is actually needed", not app start-up.
- *
- * `createStytchB2BClient` reads the PUBLIC token. It is public by design and
- * ships in the bundle; the project SECRET is a different credential and lives
- * nowhere in this repository.
- *
- * Vite inlines the token at BUILD time, so an unset variable is baked in as
- * `undefined` and cannot be fixed by a Worker `var`. That is why the build
- * step sets it from a repository variable, and why the null branch below
- * exists: Stytch's own token check only logs a warning, which is easy to miss.
- */
-const PUBLIC_TOKEN = import.meta.env.VITE_STYTCH_PUBLIC_TOKEN
-const client = PUBLIC_TOKEN ? createStytchB2BClient(PUBLIC_TOKEN) : null
-
-/**
  * The SDK events after which a real Stytch session exists.
  *
  * A Discovery sign-in ends in one of two places: the member picked an existing
@@ -166,18 +128,96 @@ const SIGNED_IN_EVENTS: ReadonlySet<StytchEventType> = new Set([
   StytchEventType.B2BSSOAuthenticate,
 ])
 
+/**
+ * How long the "Restoring your session…" message is shown before giving up on
+ * the background refresh and falling back to the ordinary Discovery form.
+ *
+ * This screen is reached with a cached-but-stale session (the gate's probe
+ * said 'stale' - see PasswordGate.tsx) more often than with no session at
+ * all, now that `stytchKeepAlive.ts` keeps the JWT fresh for as long as the
+ * studio stays open: the case left here is a tab that was asleep long enough
+ * for the keep-alive's own refresh to miss, or the moment right after this
+ * chunk finishes downloading. The SDK's constructor already kicked off
+ * `performBackgroundRefresh()` (`StytchB2BClient.mjs`) before this component
+ * had a chance to render, so this is usually seconds, not minutes - but a
+ * genuinely dead session (signed out elsewhere, an hour without use) must
+ * not leave a member staring at this sentence forever.
+ */
+const RESTORE_TIMEOUT_MS = 5_000
+
 interface StytchSignInProps {
   /** Called once Stytch holds a full session, so the gate can ask the API again. */
   readonly onSignedIn?: () => void
 }
 
 export default function StytchSignIn({ onSignedIn }: StytchSignInProps) {
+  // A cached session (the SDK keeps the last one in `localStorage`) means the
+  // background refresh from the client constructor might resolve it into a
+  // real session before the member ever needs to see the Discovery form - see
+  // `RESTORE_TIMEOUT_MS`. `useState`'s lazy initialiser reads this once, at
+  // mount, which is exactly when it is useful: later renders keep whatever
+  // this component decided the first time.
+  //
+  // On the `/authenticate` callback specifically, this ALWAYS starts false,
+  // even when an older session cookie makes `getSync()` truthy: "restoring"
+  // renders the placeholder text below instead of `<StytchB2B>`, which is the
+  // ONE component that actually consumes the magic-link/OAuth token sitting in
+  // this URL. Starting "restoring" here would hide it behind that text for up
+  // to `RESTORE_TIMEOUT_MS`, and unless the earlier session happens to end
+  // first, the token in the URL is never consumed at all - the round trip
+  // silently does nothing.
+  const [restoring, setRestoring] = useState(() => {
+    if (typeof window !== 'undefined' && window.location.pathname === AUTHENTICATE_PATH) return false
+    return Boolean(client?.session.getSync())
+  })
+
+  // Not from `onEvent` below: a background refresh is not a UI mutation, so it
+  // fires no Stytch UI event at all (`ui/b2b/utils.mjs`). `session.onChange`
+  // is the one hook that also sees THAT kind of update.
+  //
+  // No `fromCache` check here: the SDK marks its cache refreshed BEFORE it
+  // notifies `onChange` (`SessionManager.mjs`), so by the time this callback
+  // runs, `getInfo().fromCache` already reads `false` for every notification -
+  // checking it here always passed and caught nothing. Any non-null session
+  // notification - a completed background refresh, a fresh sign-in - is real
+  // enough to ask the API again.
+  useEffect(() => {
+    if (!client) return undefined
+    // A local alias so the callback below closes over a binding TypeScript
+    // knows is non-null, rather than the imported one (which it treats as
+    // possibly reassigned across the closure boundary).
+    const activeClient = client
+    return activeClient.session.onChange((session) => {
+      if (session) {
+        onSignedIn?.()
+      } else {
+        // The cached session turned out to be gone for real (revoked, or the
+        // refresh failed outright) - stop waiting and show the sign-in form.
+        setRestoring(false)
+      }
+    })
+  }, [onSignedIn])
+
+  useEffect(() => {
+    if (!restoring) return undefined
+    const timer = window.setTimeout(() => setRestoring(false), RESTORE_TIMEOUT_MS)
+    return () => window.clearTimeout(timer)
+  }, [restoring])
+
   // Rebuilt per render on purpose: it closes over `onSignedIn`, and the SDK
   // reads `callbacks` on each event rather than caching the first one.
   const callbacks: Callbacks = {
     onEvent: (event: StytchEvent) => {
       if (SIGNED_IN_EVENTS.has(event.type)) onSignedIn?.()
     },
+  }
+
+  if (client && restoring) {
+    return (
+      <div className="text-muted-foreground px-9 pt-10 pb-10 text-center text-sm">
+        Restoring your session…
+      </div>
+    )
   }
 
   if (!client) {
@@ -202,11 +242,16 @@ export default function StytchSignIn({ onSignedIn }: StytchSignInProps) {
           // Discovery: the member types their address and Stytch works out
           // which organisation they belong to. The organisation's
           // `email_allowed_domains` plus RESTRICTED JIT provisioning is what
-          // keeps this to swarm.work addresses (ADR-31) - there is no
-          // allow-list in the Worker doing that job.
+          // is SUPPOSED to keep this to swarm.work addresses, but the Stytch
+          // project also has `create_organization_enabled` on, which lets a
+          // stranger mint their own organisation with no domain restriction at
+          // all. The actual lock is server-side: `STYTCH_ALLOWED_ORGANIZATIONS`
+          // in the Worker (ADR-31, update 2026-09-29), checked in
+          // `server/auth.ts` against the token's organisation slug after this
+          // form has already handed back a session.
           authFlowType: 'Discovery',
           products: [B2BProducts.emailMagicLinks, B2BProducts.oauth],
-          sessionOptions: { sessionDurationMinutes: SESSION_DURATION_MINUTES },
+          sessionOptions: { sessionDurationMinutes: SESSION_IDLE_TIMEOUT_MINUTES },
           emailMagicLinksOptions: {
             discoveryRedirectURL: redirectUrl(),
             loginRedirectURL: redirectUrl(),

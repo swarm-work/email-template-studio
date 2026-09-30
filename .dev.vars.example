@@ -32,6 +32,17 @@
 # Who the API runs as locally. Without this (or ACCESS_* below) every /api/* call is 401.
 # STUDIO_DEV_IDENTITY=you@swarm.work
 
+# Stytch sign-in (docs/STYTCH_PLAN.md). wrangler.jsonc already sets a Test project id on
+# env.dev/staging/production; set your own here to run Stytch locally instead of the
+# developer identity above.
+# STYTCH_PROJECT_ID=project-test-...
+#
+# Required whenever STYTCH_PROJECT_ID is set, in EITHER place: a comma-separated list of
+# the Stytch organisation slugs allowed to sign in. Missing or blank fails CLOSED (mode
+# "none", nobody gets in) rather than letting anyone with a valid Stytch session through -
+# see server/auth.ts and docs/DECISIONS.md ADR-31.
+# STYTCH_ALLOWED_ORGANIZATIONS=swarm
+
 # Production only: verify a real Cloudflare Access JWT instead of trusting the line above.
 # Both are required together; setting only one refuses all requests on purpose.
 # ACCESS_TEAM_DOMAIN=yourteam.cloudflareaccess.com

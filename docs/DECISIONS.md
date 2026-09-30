@@ -367,6 +367,147 @@ a fifth of this token's life. And the issuer literal is accepted in both its sch
 spellings, both derived from the project id, because a wrong literal there is a total lockout whose
 error message reads like a broken signature.
 
+**Update 2026-09-29.** A verified Stytch session turned out to prove less than it looked like it
+proved. The Stytch project has `create_organization_enabled` on, which is what discovery sign-in
+needs to let a _known_ member land in the right place — but it also means a complete stranger can
+type any email address, receive a magic link for it, and mint their **own** organisation on the
+spot. That stranger now holds a session this Worker's signature check happily verifies: real
+signature, real project, real (five-minute) expiry, just not anyone the studio meant to admit. Before
+this update `createStytchAuthenticator` asked only "is this token genuinely Stytch's and genuinely
+current", never "whose team is it for" — so the answer was yes, and they landed on "You are not in
+any workspace" only because ADR-33's directory check happened to fail next. That second check was
+never the intended lock; it was a side effect of workspaces existing at all.
+
+The fix is a second lock at the same layer as the first: `STYTCH_ALLOWED_ORGANIZATIONS`, a
+comma-separated list of organisation **slugs**, checked against the token's own
+`https://stytch.com/organization` claim before the identity is ever handed to a route. It fails
+CLOSED the same way a malformed `STYTCH_PROJECT_ID` already did — a missing or blank list means mode
+`none`, nobody gets in, rather than a forgotten setting quietly meaning "everyone may". Turning off
+`create_organization_enabled` in the Stytch dashboard is the first lock and still the right thing to
+do; this is the second, and the one this repository's own code can guarantee without trusting a
+dashboard toggle nobody here can see change.
+
+**Consequence for ADR-33.** "A member of the workspace's Stytch organisation is an admin" (ADR-33
+decision 3) already assumed the organisation was `swarm`. This update makes that assumption load
+bearing for sign-in itself: a real, named member of a **different** Stytch organisation - genuinely
+signed in, genuinely themselves - is now refused at the Worker before ADR-33's directory check ever
+runs. The named-member-row path (ADR-33 decision 1) is unaffected and is now the ONLY door for
+someone outside `swarm`: invite them into the `swarm` organisation first (so they can sign in at
+all), then hold them to `editor` with a named row in `workspace_members` if the organisation-wide
+`admin` default is more than that collaboration should have.
+
+**Update 2026-09-29, second revision: "nothing changes for the team" was not true.** The PR that
+added the organisation allow-list said exactly that in its description, and it was wrong. The
+allow-list check (`session: 'refused'`) was, at first, given to every way a Stytch session could
+fail verification - including an **expired** or **not-yet-valid** JWT, a JWKS fetch that failed, and
+a key id this Worker had not seen yet. The token lives about five minutes (see the authenticator
+above) and the browser SDK refreshes it silently in the background, but only while that SDK is
+actually loaded - and it is loaded **only** for sign-in or sign-out, never while the studio itself is
+open. So a real Swarm member who left a tab asleep for anywhere from five to sixty minutes (the
+SDK sets the session cookie to expire with the _session_, not the token) reopened it to the "This
+studio is only for the Swarm team" panel, with Sign out as the only way out. A JWKS outage or a mid-
+flight key rotation would have told the **whole team** the same lie. On the password-gate's
+predecessor screen, the same 401 rendered the ordinary Stytch sign-in, whose module-scope client
+refreshes the session on construction - so a reload was enough. The refusal panel had no such
+refresh path behind it.
+
+The fix separates "genuinely not on the team" from "a problem the browser's own refresh already
+knows how to fix": `AuthResult.session` gained a third value, `'stale'`, covering exactly the four
+cases above, and `PasswordGate.tsx` routes `'stale'` to the ordinary Stytch sign-in screen - which is
+also what loads the SDK and lets the refresh happen - never to the refusal panel. `'refused'` now
+means only a genuinely permanent problem: the organisation allow-list, or a claim the token will
+never gain back (no email, no subject, a malformed or unverifiable token). The refusal panel's title
+followed the same split: only an organisation mismatch is told "only for the Swarm team" - a claims
+problem (a Google-only sign-in with no email claim, say) can hit a real Swarm member too, so it keeps
+the plainer wording the password gate used before this feature existed. See `server/auth.ts`
+(`AuthResult`, `checkStytchClaims`) and `PasswordGate.tsx` for the code; `stytchAuth.test.ts` and
+`PasswordGate.test.tsx` cover both directions - an expired token no longer reads `session: 'refused'`,
+and a `'stale'` 401 renders the sign-in screen, not the panel.
+
+**A slug allow-list is only as strong as the team's hold on that slug in each Stytch project.** While
+`create_organization_enabled` is on, a stranger can claim the `swarm` slug in a project the team has
+not created it in yet - a future Live project stood up before anyone signs into it, for instance - or
+after the `swarm` organisation's slug is renamed and the old value is still sitting in
+`STYTCH_ALLOWED_ORGANIZATIONS` in some deployed environment. (ADR-33's own 2026-09-29 update raises
+the same cross-environment slug-collision risk for workspace membership; here it controls sign-in
+itself.) Two things follow: create or claim the `swarm` slug in any new project **before** pointing an
+environment's `STYTCH_PROJECT_ID` at it, and if the organisation's slug is ever renamed, update every
+environment's `STYTCH_ALLOWED_ORGANIZATIONS` the same day - turning off `create_organization_enabled`
+first, so the old slug cannot be claimed by someone else in the gap.
+
+**Update 2026-09-29, third revision: the refresh the second revision routed to did not exist.** "The
+browser SDK refreshes it silently in the background" (second revision, above) was aspirational for
+anyone who had actually reloaded the page: `StytchSignIn.tsx`'s module-scope client is built only
+while that component is mounted, and it is reached only through `React.lazy` and unmounted the moment
+the gate opens - so once a member was past sign-in, no Stytch client existed anywhere in the tab, and
+nothing ran the SDK's three-minute refresh loop `SessionManager.mjs` provides. Routing `'stale'` to
+the ordinary sign-in screen was the right fix for the refusal-panel bug the second revision found; it
+just assumed a refresh was happening underneath, when the true state was "the JWT counts down once at
+sign-in and is never touched again." The member experience: the studio opens after a reload, then
+every request 401s three to six minutes later (five-minute JWT plus 60 seconds of skew, minus its age
+at reload) with "Stytch session token has expired," and "Sign in again" reloads into the very same
+trap, because the session itself is still alive - only its JWT is not.
+
+`stytchClient.ts` now holds the one client instance at module scope, imported by `StytchSignIn.tsx`
+and `stytchSignOut.ts` rather than each building their own, and by a new `stytchKeepAlive.ts`, which
+`PasswordGate.tsx` imports once the gate is open AND `authMode` is `stytch` - never in developer,
+password or Access mode. Importing `stytchKeepAlive.ts` is enough to start the SDK's own refresh:
+its constructor call to `performBackgroundRefresh()` already runs the moment `stytchClient.ts` is
+first evaluated, whenever the `stytch_session` cookie exists (`StytchB2BClient.mjs`), and
+`SessionManager.mjs` then repeats it every three minutes on its own for as long as the client instance
+is alive - which is now for as long as the studio tab is open, not just for the moment sign-in took.
+`stytchKeepAlive.ts` additionally re-authenticates on `visibilitychange` (a suspended tab's timers do
+not fire while it sleeps) and tells the gate when the session ends for real. The SDK is still never in
+the first download of any build: the keep-alive module names no package itself, reaching
+`stytchClient.ts` only through the same dynamic `import()` `stytchSignOut.ts` already used, and
+`scripts/check-worker-bundle.mjs` now also checks that `stytchClient.ts` itself is reached only by
+these three modules. See `docs/STYTCH_LOG.md` section 2 and `docs/STYTCH_PLAN.md` risk 3.
+
+**Update 2026-09-29, fourth revision: an hour without use, not an hour after sign-in.** The third
+revision kept the session's JWT fresh, but the session itself still expired a fixed 60 minutes after
+sign-in, whether or not anyone was at the keyboard. Stytch never extends a session on its own: the
+SDK's background refresh (`SessionManager.mjs`) sends no duration unless the client was built with
+`keepSessionAlive`, and without one the API leaves `expires_at` untouched. Turning `keepSessionAlive`
+on was rejected on purpose - it would extend the session on **every** three-minute background refresh,
+so any tab left open and untouched, with nobody at the keyboard, would keep a session alive forever.
+`stytchClient.ts` documents this choice next to where the client is built, so the reasoning survives
+a future edit.
+
+Instead, `stytchKeepAlive.ts` treats a `pointerdown`, `keydown` or `wheel` event on the document -
+each listened for in the capture phase and passively, so neither the rich-text editor nor a UI
+library underneath it can hide the event by calling `stopPropagation()` - as "the member is using the
+studio." The tab becoming visible again does **not** count: switching back to the tab, or the window
+regaining focus, only refreshes the JWT with a plain call that asks for no extension, exactly as
+before. On real input, the module calls `client.session.authenticate({ session_duration_minutes: 60
+})`, which both refreshes the JWT and pushes the session's expiry to 60 minutes from that moment - but
+at most once every 5 minutes per tab, with one trailing call at the end of a burst of activity so the
+last few minutes of work are not lost. Together this means a session ends 55 to 65 minutes after the
+member's last click, key press or scroll: the five-minute spread is the price of not asking Stytch on
+every single keystroke. One gap is inherent, not a bug: clicking or scrolling **inside the rendered
+email preview** does not count, because that preview renders in a sandboxed iframe
+(`sandbox=""`, `PreviewWorkspace.tsx`, `PreviewThumbnail.tsx`) and a sandboxed iframe's events never
+reach the parent document `stytchKeepAlive.ts` listens on. A member who only scrolls the preview for an
+hour, without clicking or typing anywhere else in the studio, is signed out on schedule.
+
+Two more calls close smaller gaps. Ten seconds after every successful extension, the module makes one
+more plain refresh with no duration. This exists because Stytch's own three-minute background refresh
+can be in flight from before the extension went out; if that older answer lands after the extension,
+it overwrites the cookies with the **old**, shorter expiry (`SubscriptionService.mjs` only guards on
+the session id matching, not on which answer is newer). The ten-second refresh asks again and puts the
+correct, extended expiry back. Separately, if an extension call fails - a network blip is the normal
+case - the module does not give up: it retries 60 seconds later without needing new input, and every
+one of these calls is wrapped so a rejected promise is turned into a plain `false` result rather than
+an unhandled rejection that could otherwise crash a test run or log a spurious browser error.
+
+There is deliberately no absolute cap on how long a single session can live. Stytch's documentation
+describes none beyond the 5-to-527,040-minute range accepted on any one call, and the user's decision
+above only asked for "ends about an hour after they stop," not "ends no matter what." A member who
+keeps working keeps the same session for as long as they keep working, even across days. If a hard
+ceiling is ever wanted, the lever is `started_at` on the session: skip the extension once
+`Date.now() - Date.parse(session.started_at)` passes some limit. Sign-in and every extension both ask
+Stytch for the same 60 minutes as before, so nothing about the Stytch dashboard needs to change for
+this revision - see `docs/STYTCH_LOG.md` decision 1 and `docs/DEPLOYMENT.md`.
+
 ## ADR-32 Workspaces: one flat table, and the store scopes every read and write by it
 
 **Context.** Until 2026-09-25 the studio was single-tenant: one library, one `templates.slug`

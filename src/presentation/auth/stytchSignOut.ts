@@ -8,12 +8,33 @@
  * be in the first download of every page, including builds with no Stytch at
  * all — the very thing `StytchSignIn.tsx` is lazily loaded to avoid.
  *
- * So the SDK is reached through a **dynamic `import()`**, evaluated only when
- * somebody actually clicks sign out. `scripts/check-worker-bundle.mjs` permits
- * this file to name the package for exactly that reason.
+ * So the SDK is reached through a **dynamic `import()`** - of `./stytchClient`,
+ * not `@stytch/react/b2b` directly, so this reuses the SAME client instance
+ * `stytchKeepAlive.ts` is keeping alive rather than building a second one.
+ * `scripts/check-worker-bundle.mjs` permits this file to name the SDK for
+ * exactly that reason, and evaluates it only when somebody actually clicks
+ * sign out.
  *
  * Two things here are easy to get wrong and both are deliberate.
  */
+
+/**
+ * True while a call to `signOutOfStytch` below is revoking the session.
+ *
+ * `stytchKeepAlive.ts`'s `session.onChange` listener checks this before
+ * calling its own `onEnded` callback: `revoke({ forceClear: true })` clears
+ * the LOCAL session - and so fires that listener with `null` - before this
+ * function's own `reload()` ever runs. Without this flag, that split second
+ * shows the sign-in screen (loading its whole lazy chunk) right before the
+ * page navigates away anyway - a flash of the wrong screen on the one path
+ * that was never actually going back to it.
+ */
+let signOutInProgress = false
+
+/** Whether a sign-out this module started is still revoking. */
+export function isStytchSignOutInProgress(): boolean {
+  return signOutInProgress
+}
 
 /**
  * Ends the Stytch session and reloads onto the sign-in screen.
@@ -32,8 +53,13 @@ export async function signOutOfStytch(
   }
 
   try {
-    const { createStytchB2BClient } = await import('@stytch/react/b2b')
-    const client = createStytchB2BClient(token)
+    const { stytchClient } = await import('./stytchClient')
+    if (!stytchClient) {
+      // Can't actually happen when `token` above is set - `stytchClient.ts`
+      // reads the same variable - but the import's return type is nullable,
+      // and this keeps that honest rather than asserting it away.
+      return 'This studio is not using Stytch, so there is no session to end.'
+    }
 
     // `forceClear` is the whole point of this function.
     //
@@ -43,13 +69,19 @@ export async function signOutOfStytch(
     // server-side session may outlive this call when Stytch is unreachable, but
     // the token expires within about five minutes regardless (ADR-31), and a
     // visibly-still-signed-in user is the worse of the two failures.
-    await client.session.revoke({ forceClear: true })
+    //
+    // Set right before the call that can trigger it, not earlier - see the
+    // comment on `signOutInProgress` above.
+    signOutInProgress = true
+    await stytchClient.session.revoke({ forceClear: true })
   } catch {
     // Reaching here means the revoke could not be delivered. The local session
     // is already cleared by `forceClear`, so carrying on to the reload is
     // correct: the browser will land on the sign-in screen either way.
     reload()
     return null
+  } finally {
+    signOutInProgress = false
   }
 
   reload()

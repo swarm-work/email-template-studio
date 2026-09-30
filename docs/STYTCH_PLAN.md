@@ -40,6 +40,15 @@ These are settled. They are recorded here so the work does not re-open them.
 
 The superseded spec proposed a second allow-list in the Worker, checked per request. It has been cut.
 
+**Update 2026-09-29 (ADR-31): the domain restriction below turned out not to hold on its own.** The
+Stytch project also has `create_organization_enabled` on, which lets a complete stranger mint their own
+organisation during sign-in with no domain restriction at all - so "natively restricts sign-in to
+swarm.work addresses" was never quite true while that setting is on. What actually keeps a stranger out
+today is `STYTCH_ALLOWED_ORGANIZATIONS`, a Worker-side allow-list of organisation **slugs** (not emails)
+checked in `server/auth.ts`. See ADR-31's 2026-09-29 update in `docs/DECISIONS.md` for the full story. The
+email-based allow-list this section explains the absence of is still cut - the paragraph below is otherwise
+unchanged.
+
 Stytch B2B already restricts sign-in to swarm.work addresses natively through `email_allowed_domains` plus
 `RESTRICTED` JIT provisioning, which is one of the reasons decision 1 chose B2B. The allow-list's only
 unique contribution was **revocation speed**: because the Worker verifies signatures locally against cached
@@ -144,12 +153,13 @@ Two further places know the mode list but will not fail the build:
 
 ## 4. Configuration
 
-| Value                      | Where it lives                                       | Secret? | Notes                                                              |
-| -------------------------- | ---------------------------------------------------- | ------- | ------------------------------------------------------------------ |
-| `STYTCH_PROJECT_ID` (Live) | `wrangler.jsonc`, in the `env.production` vars block | No      | Public; it appears in the JWKS URL                                 |
-| `STYTCH_PROJECT_ID` (Test) | `.dev.vars`, git-ignored                             | No      | Overrides the committed value locally                              |
-| `VITE_STYTCH_PUBLIC_TOKEN` | **The build environment, not a Worker var**          | No      | See the trap below                                                 |
-| Stytch project **secret**  | Nowhere in this repository                           | **Yes** | Only needed for revocation and GDPR deletion. Decide who holds it. |
+| Value                          | Where it lives                                              | Secret? | Notes                                                                                                                                                                  |
+| ------------------------------ | ----------------------------------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `STYTCH_PROJECT_ID` (Live)     | `wrangler.jsonc`, in the `env.production` vars block        | No      | Public; it appears in the JWKS URL                                                                                                                                     |
+| `STYTCH_PROJECT_ID` (Test)     | `.dev.vars`, git-ignored                                    | No      | Overrides the committed value locally                                                                                                                                  |
+| `STYTCH_ALLOWED_ORGANIZATIONS` | `wrangler.jsonc`, every `vars` block that sets a project id | No      | Comma-separated organisation **slugs** (e.g. `swarm`). Required whenever a project id is set: missing or blank fails CLOSED to mode `none` (ADR-31, update 2026-09-29) |
+| `VITE_STYTCH_PUBLIC_TOKEN`     | **The build environment, not a Worker var**                 | No      | See the trap below                                                                                                                                                     |
+| Stytch project **secret**      | Nowhere in this repository                                  | **Yes** | Only needed for revocation and GDPR deletion. Decide who holds it.                                                                                                     |
 
 **The public-token trap.** Vite inlines `VITE_`-prefixed values into the browser bundle **at build time**. A
 wrangler `var` cannot deliver one. The CI deploy job runs `npm run build` with no `VITE_` environment, so the
@@ -260,6 +270,17 @@ will have produced the right value.
    widen `CLOCK_SKEW_SECONDS` (`server/auth.ts:66`) to paper over it — sixty seconds was nothing against a
    long Access token but is twenty per cent of a Stytch JWT. Fix the browser-side refresh instead.
 
+   **Fixed 2026-09-29.** The browser-side refresh this risk asked for did not merely need fixing, it did
+   not exist once a member was past sign-in: `StytchSignIn.tsx`'s client lived only as long as that
+   component was mounted, and it is reached only through `React.lazy`, unmounted the moment the gate
+   opened. Nothing kept a Stytch client instance alive in an open studio, so the SDK's own three-minute
+   refresh loop (`SessionManager.mjs`) never ran there, and every member hit exactly the failed save this
+   risk predicted, three to six minutes after a reload, every time. `src/presentation/auth/stytchClient.ts`
+   now holds the one client instance at module scope, and `src/presentation/auth/stytchKeepAlive.ts`
+   (imported by `PasswordGate.tsx` only once the gate is open in Stytch mode) is what keeps it alive for as
+   long as the tab stays open. See `docs/STYTCH_LOG.md` section 2 and `docs/DECISIONS.md` ADR-31 (update
+   2026-09-29, third revision).
+
 4. **Existing D1 rows say `shared-password`** and there is no backfill story. T9 must decide whether to leave
    them, annotate them, or migrate them.
 
@@ -299,7 +320,8 @@ Do not treat these as settled.
 2. **The exact B2B JWKS path and the claim literals.** T1 settles both.
 3. **Whether the B2B login component completes the token exchange at the redirect URL.** Test it.
 4. **The dashboard's default `max_session_duration_minutes`**, which is a ceiling that silently truncates a
-   larger request. Check it before asking for 720 minutes.
+   larger request. Check it before asking for 720 minutes. Not in play for decision 1 as decided (60 minutes
+   at sign-in and on every extension); it matters only if a longer idle timeout is ever asked for.
 5. **Whether `vite/client`'s `ImportMetaEnv` still carries an index signature.** If it does, an untyped
    `import.meta.env.VITE_STYTCH_PUBLIC_TOKEN` still compiles as `any` and T3 cannot rely on the compiler
    alone. `node_modules` was not installed when this was written.

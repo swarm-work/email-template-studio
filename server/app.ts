@@ -219,9 +219,30 @@ export function createApp({
     const result = await authenticator.authenticate(c.req.raw.headers)
     if (!result.ok) {
       return c.json(
-        // `mode` lets the browser tell "show a password box" apart from
-        // "redirect to the identity provider". It names a mechanism, not a secret.
-        { status: 'error', code: 'unauthenticated', mode: authenticator.mode, message: result.reason },
+        {
+          status: 'error',
+          code: 'unauthenticated',
+          // `mode` lets the browser tell "show a password box" apart from
+          // "redirect to the identity provider". It names a mechanism, not a secret.
+          mode: authenticator.mode,
+          // Set only by the Stytch mode: 'absent' (no cookie yet, show the
+          // ordinary sign-in), 'stale' (a cookie the server said no to for a
+          // reason the browser's own refresh can fix - show the ordinary
+          // sign-in again) or 'refused' (a cookie the server said no to for a
+          // reason reloading will not fix - see PasswordGate.tsx). Undefined,
+          // and so dropped from the JSON, in every other mode.
+          session: result.session,
+          // Only meaningful alongside session 'refused' - see AuthResult in
+          // server/auth.ts. Picks the refusal panel's wording.
+          refusal: result.refusal,
+          // Only meaningful alongside session 'stale' - see AuthResult in
+          // server/auth.ts. Tells the browser whether this stale reading is
+          // worth a sentence ('keys': a JWKS outage or an unknown signing
+          // key) or is the ordinary five-minute timeout ('expired'), which
+          // is not (PasswordGate.tsx).
+          staleReason: result.staleReason,
+          message: result.reason,
+        },
         401,
       )
     }

@@ -611,7 +611,155 @@ describe('authentication', () => {
     })
     const response = await app.request('/api/send-test/status', { headers: { host: 'localhost:8787' } })
     expect(response.status).toBe(401)
-    expect(await response.json()).toMatchObject({ message: 'token was not signed by this team' })
+    // The wire value is "disabled" - `loadAuthConfig`'s own config-time name
+    // for this branch is "none" (docs/DEPLOYMENT.md), but that name never
+    // reaches the browser: `PasswordGate.tsx` switches on THIS field.
+    expect(await response.json()).toMatchObject({
+      mode: 'disabled',
+      message: 'token was not signed by this team',
+    })
+  })
+
+  // The `session` field lets the browser tell "no cookie yet" apart from "a
+  // cookie was refused" (server/auth.ts, ADR-31 update 2026-09-29). Only the
+  // Stytch authenticator sets it; a small stand-in here is enough to prove the
+  // middleware carries it through onto the 401 body, next to every field that
+  // was already there.
+  it("carries the authenticator's session field (absent) on the 401 body", async () => {
+    const app = createApp({
+      authenticator: {
+        mode: 'stytch',
+        async authenticate() {
+          return { ok: false, reason: 'No Stytch session cookie on the request.', session: 'absent' }
+        },
+      },
+      config: enabledConfig,
+      sender,
+    })
+    const response = await app.request('/api/send-test/status', { headers: { host: 'localhost:8787' } })
+    expect(response.status).toBe(401)
+    expect(await response.json()).toMatchObject({
+      status: 'error',
+      code: 'unauthenticated',
+      mode: 'stytch',
+      session: 'absent',
+      message: 'No Stytch session cookie on the request.',
+    })
+  })
+
+  it("carries the authenticator's session field (refused) on the 401 body", async () => {
+    const app = createApp({
+      authenticator: {
+        mode: 'stytch',
+        async authenticate() {
+          return {
+            ok: false,
+            reason:
+              "This studio is only for the swarm organisation. You signed in as x@y.com in organisation 'acme'.",
+            session: 'refused',
+          }
+        },
+      },
+      config: enabledConfig,
+      sender,
+    })
+    const response = await app.request('/api/send-test/status', { headers: { host: 'localhost:8787' } })
+    expect(response.status).toBe(401)
+    expect(await response.json()).toMatchObject({ mode: 'stytch', session: 'refused' })
+  })
+
+  it("carries the authenticator's session field (stale) AND refusal on the 401 body", async () => {
+    // 'stale' never carries a `refusal` in practice (server/auth.ts only sets
+    // one alongside 'refused'), but the middleware itself does not know that -
+    // it just forwards whatever the authenticator returns. This pins that it
+    // forwards BOTH fields unconditionally, rather than, say, only ever
+    // forwarding `refusal` when `session` is exactly 'refused'.
+    const app = createApp({
+      authenticator: {
+        mode: 'stytch',
+        async authenticate() {
+          return {
+            ok: false,
+            reason: 'Stytch session token has expired.',
+            session: 'stale',
+            refusal: 'organization',
+          }
+        },
+      },
+      config: enabledConfig,
+      sender,
+    })
+    const response = await app.request('/api/send-test/status', { headers: { host: 'localhost:8787' } })
+    expect(response.status).toBe(401)
+    expect(await response.json()).toMatchObject({
+      mode: 'stytch',
+      session: 'stale',
+      refusal: 'organization',
+      message: 'Stytch session token has expired.',
+    })
+  })
+
+  it('leaves the session field off the 401 body when the authenticator does not set one', async () => {
+    const app = createApp({
+      authenticator: createDisabledAuthenticator('nothing is configured'),
+      config: enabledConfig,
+      sender,
+    })
+    const response = await app.request('/api/send-test/status', { headers: { host: 'localhost:8787' } })
+    const body = (await response.json()) as Record<string, unknown>
+    expect('session' in body).toBe(false)
+    expect('staleReason' in body).toBe(false)
+  })
+
+  // `staleReason` is what lets PasswordGate.tsx show a sentence for a real
+  // operational hiccup ('keys': a JWKS outage or an unknown signing key) while
+  // staying silent for the ordinary five-minute JWT timeout ('expired') -
+  // which happens on every sleeping tab, every few minutes, and would read as
+  // an error if shown (server/auth.ts, ADR-31).
+  it("carries the authenticator's staleReason field on the 401 body", async () => {
+    const app = createApp({
+      authenticator: {
+        mode: 'stytch',
+        async authenticate() {
+          return {
+            ok: false,
+            reason: 'Could not load the Stytch signing keys: HTTP 500',
+            session: 'stale',
+            staleReason: 'keys',
+          }
+        },
+      },
+      config: enabledConfig,
+      sender,
+    })
+    const response = await app.request('/api/send-test/status', { headers: { host: 'localhost:8787' } })
+    expect(response.status).toBe(401)
+    expect(await response.json()).toMatchObject({
+      mode: 'stytch',
+      session: 'stale',
+      staleReason: 'keys',
+      message: 'Could not load the Stytch signing keys: HTTP 500',
+    })
+  })
+
+  it("carries staleReason 'expired' on the 401 body for the ordinary expired-JWT stale reading", async () => {
+    const app = createApp({
+      authenticator: {
+        mode: 'stytch',
+        async authenticate() {
+          return {
+            ok: false,
+            reason: 'Stytch session token has expired.',
+            session: 'stale',
+            staleReason: 'expired',
+          }
+        },
+      },
+      config: enabledConfig,
+      sender,
+    })
+    const response = await app.request('/api/send-test/status', { headers: { host: 'localhost:8787' } })
+    expect(await response.json()).toMatchObject({ session: 'stale', staleReason: 'expired' })
   })
 
   it('checks the origin before the identity, so a cross-site call is refused as such', async () => {

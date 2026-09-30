@@ -102,6 +102,12 @@
     "AWS_REGION": "ap-southeast-2",
     "SES_FROM_ADDRESS": "testing@swarm.camp",
     "SES_ALLOWED_RECIPIENTS": "echo@swarm.work",
+    // Read only when STYTCH_PROJECT_ID is also set (this top-level block has no
+    // such id today - `.dev.vars` supplies one locally). Present here anyway so
+    // `npm run dev` keeps working the moment a developer adds one: Stytch mode
+    // fails CLOSED without this variable (server/auth.ts, ADR-31 update
+    // 2026-09-29), and a forgotten setting must never mean "anyone may sign in".
+    "STYTCH_ALLOWED_ORGANIZATIONS": "swarm",
   },
   "env": {
     // The three deployed environment Workers. They are separate Worker scripts,
@@ -156,6 +162,7 @@
         "SES_FROM_ADDRESS": "testing@swarm.camp",
         "SES_ALLOWED_RECIPIENTS": "echo@swarm.work",
         "STYTCH_PROJECT_ID": "project-test-33c9013d-46a4-4fd3-bff3-cbeabe44ee87",
+        "STYTCH_ALLOWED_ORGANIZATIONS": "swarm",
       },
       "d1_databases": [
         {
@@ -177,6 +184,7 @@
         "SES_FROM_ADDRESS": "testing@swarm.camp",
         "SES_ALLOWED_RECIPIENTS": "echo@swarm.work",
         "STYTCH_PROJECT_ID": "project-test-33c9013d-46a4-4fd3-bff3-cbeabe44ee87",
+        "STYTCH_ALLOWED_ORGANIZATIONS": "swarm",
       },
       "d1_databases": [
         {
@@ -200,6 +208,7 @@
         "SES_FROM_ADDRESS": "testing@swarm.camp",
         "SES_ALLOWED_RECIPIENTS": "echo@swarm.work",
         "STYTCH_PROJECT_ID": "project-test-33c9013d-46a4-4fd3-bff3-cbeabe44ee87",
+        "STYTCH_ALLOWED_ORGANIZATIONS": "swarm",
       },
       "d1_databases": [
         {
@@ -221,6 +230,10 @@
         "SES_ALLOWED_RECIPIENTS": "qa@example.test,second@example.test",
         // No Access in front of the test build, so the API runs as this fixed identity.
         "STUDIO_DEV_IDENTITY": "playwright@example.test",
+        // Does nothing here - this env sets no STYTCH_PROJECT_ID, so auth stays
+        // `developer` mode above. Present only to silence wrangler's "exists at
+        // the top level, but not on env.e2e.vars" warning on every build and test run.
+        "STYTCH_ALLOWED_ORGANIZATIONS": "swarm",
       },
       // Bindings are NOT inherited by a named environment, so both are repeated
       // here. A separate database id keeps the Playwright run from touching the
