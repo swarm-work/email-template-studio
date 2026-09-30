@@ -476,9 +476,12 @@ a future edit.
 Instead, `stytchKeepAlive.ts` treats a `pointerdown`, `keydown` or `wheel` event on the document -
 each listened for in the capture phase and passively, so neither the rich-text editor nor a UI
 library underneath it can hide the event by calling `stopPropagation()` - as "the member is using the
-studio." The tab becoming visible again does **not** count: switching back to the tab, or the window
-regaining focus, only refreshes the JWT with a plain call that asks for no extension, exactly as
-before. On real input, the module calls `client.session.authenticate({ session_duration_minutes: 60
+studio." The tab becoming visible again does **not** count: switching back to the tab only refreshes
+the JWT with a plain call that asks for no extension, as the third revision did - still throttled the
+same way, skipped unless the tab was hidden for at least two minutes and the SDK's own
+`last_accessed_at` is at least two minutes old, so an ordinary quick alt-tab costs nothing beyond what
+the SDK's own three-minute refresh is already doing. On real input, the module calls
+`client.session.authenticate({ session_duration_minutes: 60
 })`, which both refreshes the JWT and pushes the session's expiry to 60 minutes from that moment - but
 at most once every 5 minutes per tab, with one trailing call at the end of a burst of activity so the
 last few minutes of work are not lost. Together this means a session ends 55 to 65 minutes after the

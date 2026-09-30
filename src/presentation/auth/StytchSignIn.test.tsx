@@ -36,6 +36,16 @@ vi.mock('./stytchClient', () => ({
   SESSION_IDLE_TIMEOUT_MINUTES: 60,
 }))
 
+const { getStytchB2BConfig, setStytchB2BConfig } = vi.hoisted(() => {
+  let config: unknown
+  return {
+    getStytchB2BConfig: (): unknown => config,
+    setStytchB2BConfig: (next: unknown) => {
+      config = next
+    },
+  }
+})
+
 vi.mock('@stytch/react/b2b', () => ({
   B2BProducts: { emailMagicLinks: 'emailMagicLinks', oauth: 'oauth' },
   // `SIGNED_IN_EVENTS` (module scope, StytchSignIn.tsx) reads several keys off
@@ -44,7 +54,14 @@ vi.mock('@stytch/react/b2b', () => ({
   StytchEventType: new Proxy({}, { get: () => 'stub-event' }),
   shadcnTheme: {},
   StytchB2BProvider: ({ children }: { children: ReactNode }) => children,
-  StytchB2B: () => <p>stytch form</p>,
+  // Records the `config` prop it was given, not just that it rendered - this
+  // is what proves sign-in actually asks Stytch for `SESSION_IDLE_TIMEOUT_MINUTES`
+  // and not some other, unrelated number that happens to also be "the session
+  // length" everywhere else.
+  StytchB2B: ({ config }: { config: unknown }) => {
+    setStytchB2BConfig(config)
+    return <p>stytch form</p>
+  },
 }))
 
 describe('StytchSignIn', () => {
@@ -111,6 +128,19 @@ describe('StytchSignIn', () => {
 
     expect(screen.getByText('stytch form')).toBeInTheDocument()
     expect(screen.queryByText('Restoring your session…')).not.toBeInTheDocument()
+  })
+
+  it('asks Stytch for the same session length as the keep-alive extends to', () => {
+    // Nothing else in this suite checks what sign-in actually SENDS: every
+    // auth test mocks `./stytchClient` with a hardcoded `SESSION_IDLE_TIMEOUT_MINUTES: 60`,
+    // so a sign-in that asked for a different number here - 720 minutes, say -
+    // would still pass every other test in this file, and an untouched,
+    // freshly signed-in tab would then live for hours instead of about one.
+    render(<StytchSignIn />)
+
+    expect(getStytchB2BConfig()).toMatchObject({
+      sessionOptions: { sessionDurationMinutes: 60 },
+    })
   })
 
   it('shows the form at once on /authenticate, even with a cached session, so the callback token is not discarded', () => {
