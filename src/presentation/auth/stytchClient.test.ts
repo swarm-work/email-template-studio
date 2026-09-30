@@ -23,3 +23,14 @@ import stytchClientSource from './stytchClient.ts?raw'
 it('never re-introduces the SDK option that auto-extends a session on every background refresh', () => {
   expect(stytchClientSource).not.toContain('keepSessionAlive')
 })
+
+/**
+ * Every test that touches Stytch mocks this whole module, so nothing would
+ * otherwise notice this constant quietly drifting from 60 - the one number
+ * `StytchSignIn.tsx` (sign-in) and `stytchKeepAlive.ts` (every extension) are
+ * both supposed to agree on. A plain text search back into the source is a
+ * cheap tripwire for that, same as the check above.
+ */
+it('still sets SESSION_IDLE_TIMEOUT_MINUTES to 60', () => {
+  expect(stytchClientSource).toContain('SESSION_IDLE_TIMEOUT_MINUTES = 60')
+})
