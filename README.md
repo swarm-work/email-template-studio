@@ -166,7 +166,7 @@ The dependency direction is one way: `presentation -> application -> domain`, an
 
 - No AWS keys exist in the codebase. They are read from the environment (`.env`, `.dev.vars`) or from Cloudflare Worker secrets, and are needed only for a live, non-dry-run send.
 - The browser never talks to SES; it only talks to the `/api` routes in `server/app.ts`.
-- Sending is off unless `STUDIO_SEND_ENABLED=true`. When on, `SES_ALLOWED_RECIPIENTS` decides who may receive (a list, or `*` for any typed address), at most 10 addresses go out per send, subjects are prefixed with `[TEST]`, and sends are rate limited. The Node adapter also binds to loopback only.
+- Sending is off unless `STUDIO_SEND_ENABLED=true`. When on, `SES_ALLOWED_RECIPIENTS` decides who may receive (a list, or `*` for any typed address), at most 10 addresses go out per send, subjects are prefixed with `[TEST]` unless `STUDIO_TEST_SUBJECT_PREFIX=false` (production only, ADR-41), and sends are rate limited. The Node adapter also binds to loopback only.
 - Nothing in the studio pretends. There is no simulated publish (it was deleted), the version
   history is read-only because restoring is not built, the diagnostics panel lists only checks it
   actually runs, and every control that cannot be used says why rather than being greyed out.
