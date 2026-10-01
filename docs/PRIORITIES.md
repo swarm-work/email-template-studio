@@ -1,5 +1,7 @@
 # Priorities: what to do next
 
+Re-ranked 2026-09-30 against main `8c84774` and the live AWS (swarm-main), Cloudflare (swarm-work-emailer) and GitHub state, read-only. The next work is sequenced in `docs/BUILD_LANES.md` section 8 (round 2). The rest of this paragraph is history.
+
 Verified 2026-09-15 against main at `76a766a`, the live Cloudflare account `swarm-work-emailer`, and the GitHub repository `swarm-work/email-template-studio`, then **re-checked against the code on 2026-09-19**, at the end of the visual-editor and persistence work. Every item below was checked on the current checkout or a live endpoint; where something could not be checked (anything on the AWS side, because the local AWS session had expired, and anything that needs a Cloudflare dashboard) section 9 says so.
 
 **What changed on 2026-09-19.** The studio was rebuilt: two template kinds, a visual canvas, merge
@@ -17,6 +19,14 @@ Read section 1 (state), then section 2 (decisions only you can make), then work 
 
 ## 1. Where things stand
 
+> **2026-09-30.** What changed today, in short:
+>
+> 1. Production (`env.production`) sends live since 2026-09-30. The first live send to `echo@swarm.work` passed SPF, DKIM and DMARC. The `[TEST]` prefix is on only for dev and staging (ADR-41, #32).
+> 2. All three env Workers run Stytch with the team lock (#30). Item 4.2 is done.
+> 3. With your approval, four things were removed: the legacy Worker `email-template-studio` was deleted, its empty D1 database `f270cbc3` was deleted, its IAM key `AKIAXTOJWDT75W2H53HC` was made inactive (delete it on or after 2026-10-07), and the redundant inline policy `ses-send-scoped` was deleted. Only `SendOnlyAsTheStudioIdentity` remains, and it matches `infra/ses-policy.json`.
+> 4. Still missing: SES events (no SNS topic, no event destination, no alarms), recorded sends, API keys and webhooks.
+> 5. Next: `docs/BUILD_LANES.md` section 8.
+
 > **2026-09-28.** Decision 1 is taken: **option A**, `env.production` is production. The three
 > named environments each got a real D1 database and Stytch sign-in, lost their R2 binding for now
 > (TECH_DEBT #48: R2 is not enabled on the account and a missing bucket blocks every deploy), and
@@ -25,7 +35,7 @@ Read section 1 (state), then section 2 (decisions only you can make), then work 
 > 3.5 are half done (the Workers are named right and the migrations have run remotely; the legacy
 > Worker still exists). See `docs/DEPLOYMENT.md`.
 
-The application is in better shape than the documentation says, and the operational setup is in worse shape. That gap got wider on 2026-09-19: the application grew a great deal and the operational setup did not move at all.
+(Written 2026-09-19; the 2026-09-28 and 2026-09-30 callouts above supersede its deployment facts.) The application is in better shape than the documentation says, and the operational setup is in worse shape. That gap got wider on 2026-09-19: the application grew a great deal and the operational setup did not move at all.
 
 The code is real, tested and deployed. Cloudflare Access JWT verification plus a shared-password gate enforce on every `/api/*` route, the SES sender was rewritten with `aws4fetch` so the Worker signs AWS requests at the edge, and the live Worker enforces this: `https://email-template-studio.swarm-work-emailer.workers.dev/api/send-test/status` answered `401 {"mode":"password"}` to an anonymous caller on 2026-09-15. On 2026-09-19 the branch runs **755 unit and component tests and 58 Playwright tests, all green**, and `npm run check` passes.
 
@@ -66,18 +76,26 @@ Two local problems remain, both verified on this checkout on 2026-09-19. `npm ru
 
 Answer these first; the first one gates the whole environments block, and the third one gates everything to do with the database.
 
-1. **Which Worker is production?** Option A (recommended): make `env.production` the real live sender, move the AWS keys and `STUDIO_PASSWORD` secrets onto it, and flip the top-level vars to dry-run so a bare `wrangler deploy` and `npm run dev` are both harmless. Option B: rename `env.production` back to `email-template-studio` per `docs/HANDOVER.md` and delete `email-template-studio-production`. **This now also decides where the database lives**: each named environment needs its own `d1_databases` block (bindings are not inherited), so the answer here is the answer to "which D1 is production" too.
+1. ~~**Which Worker is production?**~~ **Answered 2026-09-28: option A.** Option A (recommended): make `env.production` the real live sender, move the AWS keys and `STUDIO_PASSWORD` secrets onto it, and flip the top-level vars to dry-run so a bare `wrangler deploy` and `npm run dev` are both harmless. Option B: rename `env.production` back to `email-template-studio` per `docs/HANDOVER.md` and delete `email-template-studio-production`. **This now also decides where the database lives**: each named environment needs its own `d1_databases` block (bindings are not inherited), so the answer here is the answer to "which D1 is production" too.
 2. **Does the repository stay public?** It is public today; HANDOVER decided "private, or internal". Currently published: the previous owner's personal Cloudflare account id and Gmail-login wording, the personal `workers.dev` hostname (live and unauthenticated), and the full live-send configuration with its single allow-listed recipient. This gates pushing the audit branch and the documentation scrub.
 3. ~~**Whose account is `d0fa6b3d72170539438800a907ec5323`?**~~ **Answered 2026-09-22**: it is **`swarm-work-emailer`**, per `npx wrangler whoami`. Section 1 of this file was right and the two runbooks were wrong; both are corrected. Creating the remote database there is therefore the right next step, not a migration — and nothing has been created yet, so it is still free (`npx wrangler d1 list` returned nothing on 2026-09-22).
 4. **Can you still log in to the personal Cloudflare account `0f95923f…`?** The retired Worker there is online and unauthenticated. The current wrangler login cannot see that account. If it is unreachable, that is a bigger finding than the Worker and belongs in HANDOVER.
-5. **Three deployed environments, or two?** Each one you keep needs its own password or Access policy, its own sender configuration and a place in the rollback runbook. For one developer, dev plus production may be enough.
-6. **What is the production sender address?** Suggested: `no-reply@mail.swarm.camp` with a custom MAIL FROM subdomain, keeping `testing@swarm.camp` for staging. This needs DNS records and takes days to verify, so decide early.
-7. **Long-lived IAM user keys for the Worker, yes or no?** HANDOVER says "ask before creating a static key". The Worker cannot refresh temporary STS credentials, so the options are a long-lived key with 90-day rotation, or accepting that sending stops when a token expires. If yes, who owns and rotates it?
+5. ~~**Three deployed environments, or two?**~~ **Answered 2026-09-28: three.** Each one you keep needs its own password or Access policy, its own sender configuration and a place in the rollback runbook. For one developer, dev plus production may be enough.
+6. **What is the production sender address?** Suggested: `no-reply@mail.swarm.camp` with a custom MAIL FROM subdomain, keeping `testing@swarm.camp` for staging. This needs DNS records and takes days to verify, so decide early. Round 2 recommends `Swarm <no-reply@swarm.camp>` on the already-verified swarm.camp identity, with no DNS wait, and custom MAIL FROM later (BUILD_LANES 8.7 R6).
+7. **Long-lived IAM user keys for the Worker, yes or no?** HANDOVER says "ask before creating a static key". The Worker cannot refresh temporary STS credentials, so the options are a long-lived key with 90-day rotation, or accepting that sending stops when a token expires. If yes, who owns and rotates it? Round 2 recommends: you own it, rotate every 90 days with two keys overlapping, and the next rotation is due by 2026-12-29 for `AKIAXTOJWDT7VYPBK545`.
 8. **Is there a second repository admin?** Branch protection with "require 1 approval" deadlocks a solo maintainer. Without one, require the `check` status and block force pushes only.
 9. **Which swarm.camp email is the first real template?** Invitation, billing notice, contract, or engagement update. Start with the one sent most often.
-10. **Which mailbox receives bounce and complaint alarms and SNS confirmations?** It must be read promptly; these alerts protect the production access.
+10. **Which mailbox receives bounce and complaint alarms and SNS confirmations?** It must be read promptly; these alerts protect the production access. Blocks the round-2 alarms (S0.1, S0.2); not the SNS topic.
+
+The full round-2 decision list, with what each one blocks, is `docs/BUILD_LANES.md` 8.7.
 
 ## 3. Now: this week, in this order
+
+### 3.0 Round 2 order (2026-09-30)
+
+The one round-2 order is `docs/BUILD_LANES.md` section 8.5 (merge order) with the waves in 8.3. Follow that, not a list here. Two lists drifted apart once already (SND and ST sit before E2 and H there; CIH and HDR are lanes there).
+
+**The 2026-09-19 list, kept for history** (the notes on each row say what is done):
 
 Sizes: S is a day or less, M about a week, L two to three weeks, for one developer learning as they go.
 
@@ -85,17 +103,19 @@ Items 1 to 3 of the 2026-09-15 list (the ignore files, running Prettier, adding 
 `npm run check`) are **done** and have been removed. What is left is what was already the hard half,
 plus two items the persistence work created.
 
-| #   | Item                                                                                        | Size | Area         |
-| --- | ------------------------------------------------------------------------------------------- | ---- | ------------ |
-| 1   | Stop `npm run build` copying `.dev.vars` with live AWS credentials into `dist/`             | S    | security     |
-| 2   | Settle whose Cloudflare account this is, then create the real D1 database on it             | S    | environments |
-| 3   | Move live-sending settings off the top-level target and end the production naming inversion | M    | environments |
-| 4   | Commit the `wrangler.jsonc` dev/staging/production block that is already deployed           | S    | environments |
-| 5   | Prove `RETURNING` and a 500 KB bound parameter against **remote** D1 (TECH_DEBT #28)        | S    | data         |
-| 6   | Create an SES configuration set per environment and set `SES_CONFIGURATION_SET`             | M    | sending      |
-| 7   | Rehearse the D1 backup and restore once, before there is anything worth losing              | S    | ops          |
+| #   | Item                                                                                                                                                                                                         | Size | Area         |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---- | ------------ |
+| 1   | ~~Stop `npm run build` copying `.dev.vars` with live AWS credentials into `dist/`~~ — done (#29)                                                                                                             | S    | security     |
+| 2   | ~~Settle whose Cloudflare account this is, then create the real D1 database on it~~ — done: account settled 2026-09-22, per-environment D1 created 2026-09-28, the legacy database deleted 2026-09-30        | S    | environments |
+| 3   | ~~Move live-sending settings off the top-level target and end the production naming inversion~~ — done: option A 2026-09-28, legacy Worker deleted 2026-09-30                                                | M    | environments |
+| 4   | ~~Commit the `wrangler.jsonc` dev/staging/production block that is already deployed~~ — done (#13, #25)                                                                                                      | S    | environments |
+| 5   | Prove `RETURNING` and a 500 KB bound parameter against **remote** D1 (TECH_DEBT #28) → round 2 S.3                                                                                                           | S    | data         |
+| 6   | ~~Create an SES configuration set per environment and set `SES_CONFIGURATION_SET`~~ — superseded: production uses swarm.camp's default set my-first-configuration-set; the event destination is round 2 S0.4 | M    | sending      |
+| 7   | Rehearse the D1 backup and restore once, before there is anything worth losing → round 2 S.3                                                                                                                 | S    | ops          |
 
 ### 3.1 Keep credentials out of `dist/`
+
+**Done (#29).**
 
 **Why.** `dist/email_template_studio/.dev.vars` exists after every build and holds the real AWS access key, secret and session token. The directory is ignored by version control, but it is exactly what gets zipped, attached to a bug report or uploaded as an artifact. The plan is to replace today's expiring token with a long-lived key, at which point every build copies a permanent credential. `playwright.config.ts` already deletes the file in one place; `npm run deploy` does not. Still true on 2026-09-19.
 
@@ -103,11 +123,15 @@ plus two items the persistence work created.
 
 ### 3.2 Settle the account, then create the database
 
+**Done; database f270cbc3 deleted 2026-09-30.**
+
 **Why first among the environment items.** **Half done, 2026-09-22**: the account is settled and the production D1 database is created (`f270cbc3-4b5e-457b-af43-ea3130904e2b`) and wired into `wrangler.jsonc`. It is empty — no migrations applied — so the migration is still free. R2 is not enabled on the account, so that half has not started. Every week that a remote database exists on the wrong account, it is not. Section 2 item 3 is the blocker: three documents disagree about whose account `d0fa6b3d…` is.
 
 **How.** `npx wrangler whoami`, and read the account name against `docs/DEPLOYMENT.md` and `docs/HANDOVER.md`; correct whichever is wrong in the same change. Then `npx wrangler d1 create email-template-studio` and `npx wrangler r2 bucket create email-template-studio-assets`, paste the id over the placeholder, `npm run cf:types`, and run `npm run db:migrate:prod` once. If the answer is "this is the wrong account", stop and do B1 to B3 of `docs/HANDOVER.md` first; that is the whole point of doing this before there is data.
 
 ### 3.3 Name production correctly
+
+**Done 2026-09-30: the legacy Worker is deleted, its key inactive, ses-send-scoped deleted.**
 
 **Why.** Three consequences of one root cause: `npm run deploy` deploys the live sender with no `--env`; `npm run dev` inherits the same top-level vars, so a local server with credentials present is a live sender while the README says sending is off; a rollback or kill switch applied to "production" would hit the wrong Worker. You cannot safely operate a live sender you cannot name. Persistence adds a fourth: an environment with no `d1_databases` block of its own has **no database at all**, because bindings are not inherited by a named environment — the template routes would answer 503 on a Worker that otherwise looks healthy.
 
@@ -115,11 +139,15 @@ plus two items the persistence work created.
 
 ### 3.4 Commit the environments block
 
+**Done.**
+
 **Why.** Three Workers have served the internet since 2026-09-15 from configuration that exists only in one working tree. Nobody can review, reproduce or roll them back, and discarding local changes to `wrangler.jsonc` destroys the only record of what is live. This is also where the configuration set, the per-environment sender and the per-environment database go next.
 
 **How.** One small pull request: `wrangler.jsonc`, plus the `docs/DEPLOYMENT.md` environments table rewritten against the real Workers with their send posture, auth posture and D1 binding. Resolve `STUDIO_ENVIRONMENT` before committing: either read it in `server/config.ts` and surface it, or delete it, since no code reads it today. `infra/ses-policy.json` is tracked now, so the first half of item 4.9 is done.
 
 ### 3.5 Prove the two D1 assumptions against remote
+
+**Round 2 lane S, task S.3.**
 
 **Why.** `docs/TECH_DEBT.md` #28: `RETURNING` and a 500 KB bound parameter were both proven against workerd's **local** SQLite through the real binding, because no Cloudflare credentials were available in the phase that needed them. If remote D1 differs on the size question, a large template fails to save in production and in no test. The store never depends on `RETURNING`, so only the size question can actually bite — but a 500 KB `html` column is exactly what a long visual template produces.
 
@@ -127,11 +155,15 @@ plus two items the persistence work created.
 
 ### 3.6 Create SES configuration sets
 
+**Superseded; see round 2 lane S0.**
+
 **Why.** This is the one item whose damage is irreversible. Without a configuration set, SES emits no bounce, complaint, rejection or delivery events, and AWS revokes production access on rates you cannot see. Everything downstream (SNS, suppression, alarms, the delivery log) depends on this one setting. The code already forwards `SES_CONFIGURATION_SET`; nothing sets it.
 
 **How.** Step zero is a fresh AWS session for `swarm-main`. Confirm reality with `aws sesv2 get-account` and `aws sesv2 get-email-identity --email-identity swarm.camp` in `ap-southeast-2`. Create `studio-transactional-production` and `studio-transactional-staging` with reputation metrics enabled, add `SES_CONFIGURATION_SET` to the relevant vars blocks, redeploy, send one test and check the set's metrics. In the same session enable the account-level suppression list for BOUNCE and COMPLAINT (the no-code half of item 4.10).
 
 ### 3.7 Rehearse the backup once
+
+**Round 2 lane S, task S.3.**
 
 **Why.** `docs/DEPLOYMENT.md` documents `wrangler d1 export --remote` and D1 Time Travel, and neither has ever been run. A restore procedure nobody has performed is a paragraph, not a procedure — and the moment real templates exist, somebody's afternoon of work is in there. Doing it while the database holds four seeded starters costs nothing and tells you whether the commands are right.
 
@@ -139,25 +171,25 @@ plus two items the persistence work created.
 
 ## 4. Next: the following two to three weeks, in order
 
-| #    | Item                                                                                                | Size | Area     |
-| ---- | --------------------------------------------------------------------------------------------------- | ---- | -------- |
-| 4.1  | ~~Read the Playwright result that green CI now produces, and fix what broke~~ — done: 58 specs pass | S    | ci-cd    |
-| 4.2  | Give the deployed dev/staging/production Workers an auth mode, or take them down                    | S    | security |
-| 4.3  | Delete the retired personal-account Worker that still serves a public, unauthenticated build        | S    | security |
-| 4.4  | Decide and record whether the repository stays public, and scrub personal identifiers               | S    | security |
-| 4.5  | Push the audit branch and open a draft pull request                                                 | S    | process  |
-| 4.6  | Point `CLOUDFLARE_ACCOUNT_ID` at `swarm-work-emailer`, or delete the variable                       | S    | ci-cd    |
-| 4.7  | Rewrite README, DEPLOYMENT and HANDOVER against what is actually deployed                           | M    | docs     |
-| 4.8  | Write down the swarm.camp / swarm.work sending rules and the suppression requirement                | M    | docs     |
-| 4.9  | Replace the account id in `infra/ses-policy.json` and add a configuration-set condition             | S    | security |
-| 4.10 | Put one suppression check in front of every send path and enable the SES suppression list           | M    | sending  |
-| 4.11 | Add bounce and complaint rate alarms once the configuration set emits metrics                       | S    | ops      |
-| 4.12 | Give production a real transactional sender identity instead of `testing@swarm.camp`                | M    | sending  |
-| 4.13 | Enable Dependabot and secret scanning, and add `npm audit` to CI                                    | S    | security |
-| 4.14 | Create a GitHub Environment `production` with a required reviewer, before any deploy token exists   | S    | ci-cd    |
-| 4.15 | Protect main with a ruleset requiring a pull request and the `check` job                            | S    | ci-cd    |
-| 4.16 | Cherry-pick `docs/JS_LEARNING_PATH.md` from the audit branch, ahead of the rest of it               | S    | docs     |
-| 4.17 | Teach the converter the five block types it refuses, one at a time (TECH_DEBT #43)                  | M    | product  |
+| #    | Item                                                                                                                                                                                                                      | Size | Area     |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | -------- |
+| 4.1  | ~~Read the Playwright result that green CI now produces, and fix what broke~~ — done: 58 specs pass                                                                                                                       | S    | ci-cd    |
+| 4.2  | ~~Give the deployed dev/staging/production Workers an auth mode, or take them down~~ — done: Stytch on all three (#30)                                                                                                    | S    | security |
+| 4.3  | Delete the retired personal-account Worker that still serves a public, unauthenticated build → SEC.6, decision 4                                                                                                          | S    | security |
+| 4.4  | Decide and record whether the repository stays public, and scrub personal identifiers → SEC.5, decision 2                                                                                                                 | S    | security |
+| 4.5  | Push the audit branch and open a draft pull request                                                                                                                                                                       | S    | process  |
+| 4.6  | Point `CLOUDFLARE_ACCOUNT_ID` at `swarm-work-emailer`, or delete the variable → SEC.3                                                                                                                                     | S    | ci-cd    |
+| 4.7  | Rewrite README, DEPLOYMENT and HANDOVER against what is actually deployed → partly done by the round-2 docs PR (DEPLOYMENT table, HANDOVER, README status)                                                                | M    | docs     |
+| 4.8  | Write down the swarm.camp / swarm.work sending rules and the suppression requirement → SND.5                                                                                                                              | M    | docs     |
+| 4.9  | Replace the account id in `infra/ses-policy.json` and add a configuration-set condition → mostly done: the live policy matches infra/ses-policy.json, ses-send-scoped deleted 2026-09-30; left: widen FromAddress (SND.2) | S    | security |
+| 4.10 | Put one suppression check in front of every send path and enable the SES suppression list → B2 (the AWS account-level list is already on)                                                                                 | M    | sending  |
+| 4.11 | Add bounce and complaint rate alarms once the configuration set emits metrics → S0.1, S0.2                                                                                                                                | S    | ops      |
+| 4.12 | Give production a real transactional sender identity instead of `testing@swarm.camp` → SND                                                                                                                                | M    | sending  |
+| 4.13 | Enable Dependabot and secret scanning, and add `npm audit` to CI → SEC.1, CIH.1, CIH.2                                                                                                                                    | S    | security |
+| 4.14 | Create a GitHub Environment `production` with a required reviewer, before any deploy token exists → CI.1                                                                                                                  | S    | ci-cd    |
+| 4.15 | Protect main with a ruleset requiring a pull request and the `check` job → SEC.2                                                                                                                                          | S    | ci-cd    |
+| 4.16 | Cherry-pick `docs/JS_LEARNING_PATH.md` from the audit branch, ahead of the rest of it                                                                                                                                     | S    | docs     |
+| 4.17 | Teach the converter the five block types it refuses, one at a time (TECH_DEBT #43)                                                                                                                                        | M    | product  |
 
 Notes that change how you do them:
 
@@ -193,35 +225,35 @@ FEATURE_PLAN phase 0 — which is now written into `docs/FEATURE_PLAN.md` §1 an
 decision. The README half of "fix stale cross-references" is done too; the ARCHITECTURE and
 DEPLOYMENT half is not.
 
-| Item                                                                                       | Size | Area         | Why it waits                                                                                                                                                                                                |
-| ------------------------------------------------------------------------------------------ | ---- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Put Cloudflare Access on a real hostname in front of the live-sending Worker               | L    | security     | Access cannot protect `*.workers.dev`; do it with the DNS work in 4.12. Put `routes` inside each env block.                                                                                                 |
-| Share one wire contract between `server/app.ts` and the browser's `emailProvider.ts`       | M    | code-quality | Two hand-written schemas already drift (`user`, `rateLimitPerMinute` are dropped by the client). Good typed-boundary practice.                                                                              |
-| Show the real environment and signed-in user in the header instead of the literal "Local"  | M    | product      | Still `src/App.tsx`: `WORKSPACE` and `ENVIRONMENT` are constants and the avatar names the workspace, not the person. `STUDIO_ENVIRONMENT` exists for this and nothing reads it.                             |
-| Build `POST /api/webhooks/ses` and verify the SNS signature                                | L    | sending      | The largest new code; needs the configuration set and the contract refactor first. Exempt from the authenticator like the session route.                                                                    |
-| Decide and document the credential type and rotation for the Worker's AWS keys             | S    | security     | Answers HANDOVER's open question. One IAM user per sending environment, 90-day rotation, named owner.                                                                                                       |
-| Replace the in-memory send and login rate limiters with a Cloudflare rate-limiting binding | M    | sending      | Per-isolate counters reset on cold start; bounded today by low volume and a person in the loop. Access makes the login one moot.                                                                            |
-| Add a real transactional send path alongside the test-send dialog                          | M    | sending      | The smallest slice that does real work: recipient validated and suppression-checked, subject verbatim, type-to-confirm. No D1 needed.                                                                       |
-| Add the real swarm.camp transactional templates to the registry                            | M    | product      | The library holds three fictional samples. Code-only templates are enough at under 100 emails a month.                                                                                                      |
-| Write tests for `worker/index.ts` and `server/createSender.ts`                             | S    | code-quality | The sender factory is the no-send guarantee's enforcement point and has no test. Add `worker/**/*.test.ts` to the Vitest include.                                                                           |
-| Make the CI deploy job environment-aware via `CLOUDFLARE_ENV` at build time                | M    | ci-cd        | `--env` on deploy alone does not work with the Vite plugin. Nothing deploys automatically today, so this waits for the token.                                                                               |
-| Add a post-deploy smoke check to the deploy job                                            | S    | ci-cd        | Would have caught the three unauthenticated env Workers the day they shipped.                                                                                                                               |
-| Write and rehearse a per-environment rollback procedure                                    | S    | ops          | Documented commands carry no `--env`; rehearse once on staging and record the kill switch and its target Worker.                                                                                            |
-| Correct the audit-branch documents before merging them                                     | M    | docs         | Six claims in STATE_OF_THE_REPO are now false; add a "what changed since" section, fix section 4 rows plus 5.1 and 5.7 only.                                                                                |
-| Fix the stale AWS-SDK paragraphs in ARCHITECTURE.md and the contradiction in SENDING.md    | S    | docs         | ARCHITECTURE still describes credentials from a developer profile; SENDING says both "authenticated" and "not authenticated yet".                                                                           |
-| Document the API Keys page, navigation and sign-in screen in README and ARCHITECTURE       | S    | docs         | A shipped product surface is invisible in the entry documents, and nothing there says the keys are a mock.                                                                                                  |
-| Stop keying the session HMAC with the password itself, and give sessions an id             | M    | security     | One captured cookie allows offline brute force of the password that also unlocks live sending. Hardens a gate Access will replace.                                                                          |
-| Add a sign-out control (`DELETE /api/session` exists but nothing calls it)                 | S    | product      | A 12-hour session with no way to end it on a shared browser.                                                                                                                                                |
-| Harden the session cookie with the `__Host-` prefix                                        | S    | security     | Worth doing when a custom domain exists.                                                                                                                                                                    |
-| Introduce a message stream so the transactional-only rule is enforceable in code           | L    | product      | When `POST /api/v1/emails` is built, make `stream` a required field validated against a config map. Until then the `[TEST]` prefix is per environment (ADR-41): on for dev and staging, off for production. |
-| Add coverage reporting so untested modules surface automatically                           | S    | code-quality | `@vitest/coverage-v8`, no CI threshold yet.                                                                                                                                                                 |
-| Delete the stray ngrok tarball and prune the merged remote branches                        | S    | code-quality | Five merged branches sit on the public remote. Verify with `git branch -r --merged main` first.                                                                                                             |
-| Pin `wranglerVersion` in the wrangler-action step                                          | S    | ci-cd        | The deploy action installs its own unpinned wrangler.                                                                                                                                                       |
-| Stop `cancel-in-progress` from cancelling an in-flight deploy                              | S    | ci-cd        | Move `concurrency` to the check job only.                                                                                                                                                                   |
-| Pin the Node version with `.nvmrc` and align `engines` with CI                             | S    | code-quality | Three Node versions are in play (CI 24, engines >=22.18, this machine 26).                                                                                                                                  |
-| Fix the remaining stale cross-references                                                   | S    | docs         | FEATURE_PLAN cites PLAN as on a branch; `WEBHOOKS.md` and `OPERATIONS.md` are referenced but absent. The README half is done.                                                                               |
-| Correct or retire `.claude/agents/ui-overflow-fixer.md`                                    | S    | process      | Claims a send server on port 8790 that Playwright does not start; hard-codes commit trailers.                                                                                                               |
-| Remove the two dead `eslint-disable` comments                                              | S    | code-quality | The project lints with oxlint.                                                                                                                                                                              |
+| Item                                                                                                                                                                    | Size | Area         | Why it waits                                                                                                                                                                                                   |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Put Cloudflare Access on a real hostname in front of the live-sending Worker                                                                                            | L    | security     | Access cannot protect `*.workers.dev`; do it with the DNS work in 4.12. Put `routes` inside each env block.                                                                                                    |
+| Share one wire contract between `server/app.ts` and the browser's `emailProvider.ts` → partly B2.5                                                                      | M    | code-quality | Two hand-written schemas already drift (`user`, `rateLimitPerMinute` are dropped by the client). Good typed-boundary practice.                                                                                 |
+| Show the real environment and signed-in user in the header instead of the literal "Local" → HDR                                                                         | M    | product      | Still `src/App.tsx`: `WORKSPACE` and `ENVIRONMENT` are constants and the avatar names the workspace, not the person. `STUDIO_ENVIRONMENT` exists for this and nothing reads it.                                |
+| Build `POST /api/webhooks/ses` and verify the SNS signature → E1, E2                                                                                                    | L    | sending      | The largest new code; needs the configuration set and the contract refactor first. Exempt from the authenticator like the session route.                                                                       |
+| Decide and document the credential type and rotation for the Worker's AWS keys → decision 7, SEC.4                                                                      | S    | security     | Answers HANDOVER's open question. One IAM user per sending environment, 90-day rotation, named owner.                                                                                                          |
+| Replace the in-memory send and login rate limiters with a Cloudflare rate-limiting binding → H.5                                                                        | M    | sending      | Per-isolate counters reset on cold start; bounded today by low volume and a person in the loop. Access makes the login one moot.                                                                               |
+| Add a real transactional send path alongside the test-send dialog → absorbed by B2 and D-2                                                                              | M    | sending      | The smallest slice that does real work: recipient validated and suppression-checked, subject verbatim, type-to-confirm. No D1 needed.                                                                          |
+| Add the real swarm.camp transactional templates to the registry                                                                                                         | M    | product      | The library holds three fictional samples. Code-only templates are enough at under 100 emails a month.                                                                                                         |
+| Write tests for `worker/index.ts` and `server/createSender.ts` → CIH.3                                                                                                  | S    | code-quality | The sender factory is the no-send guarantee's enforcement point and has no test. Add `worker/**/*.test.ts` to the Vitest include.                                                                              |
+| Make the CI deploy job environment-aware via `CLOUDFLARE_ENV` at build time → partly done (it builds CLOUDFLARE_ENV=production); dev and staging steps and gates → CI.2 | M    | ci-cd        | `--env` on deploy alone does not work with the Vite plugin. Nothing deploys automatically today, so this waits for the token.                                                                                  |
+| Add a post-deploy smoke check to the deploy job → CI.3                                                                                                                  | S    | ci-cd        | Would have caught the three unauthenticated env Workers the day they shipped.                                                                                                                                  |
+| Write and rehearse a per-environment rollback procedure → S.3 and the S0.7 Stop-sending card                                                                            | S    | ops          | Documented commands carry no `--env`; rehearse once on staging and record the kill switch and its target Worker.                                                                                               |
+| Correct the audit-branch documents before merging them                                                                                                                  | M    | docs         | Six claims in STATE_OF_THE_REPO are now false; add a "what changed since" section, fix section 4 rows plus 5.1 and 5.7 only.                                                                                   |
+| Fix the stale AWS-SDK paragraphs in ARCHITECTURE.md and the contradiction in SENDING.md                                                                                 | S    | docs         | ARCHITECTURE still describes credentials from a developer profile; SENDING says both "authenticated" and "not authenticated yet".                                                                              |
+| Document the API Keys page, navigation and sign-in screen in README and ARCHITECTURE                                                                                    | S    | docs         | A shipped product surface is invisible in the entry documents, and nothing there says the keys are a mock.                                                                                                     |
+| Stop keying the session HMAC with the password itself, and give sessions an id                                                                                          | M    | security     | One captured cookie allows offline brute force of the password that also unlocks live sending. Hardens a gate Access will replace. Lower priority: no deployed Worker uses the password gate since 2026-09-30. |
+| ~~Add a sign-out control (`DELETE /api/session` exists but nothing calls it)~~ — done (#27)                                                                             | S    | product      | A 12-hour session with no way to end it on a shared browser.                                                                                                                                                   |
+| Harden the session cookie with the `__Host-` prefix                                                                                                                     | S    | security     | Worth doing when a custom domain exists.                                                                                                                                                                       |
+| Introduce a message stream so the transactional-only rule is enforceable in code                                                                                        | L    | product      | When `POST /api/v1/emails` is built, make `stream` a required field validated against a config map. Until then the `[TEST]` prefix is per environment (ADR-41): on for dev and staging, off for production.    |
+| Add coverage reporting so untested modules surface automatically                                                                                                        | S    | code-quality | `@vitest/coverage-v8`, no CI threshold yet.                                                                                                                                                                    |
+| Delete the stray ngrok tarball and prune the merged remote branches                                                                                                     | S    | code-quality | Five merged branches sit on the public remote. Verify with `git branch -r --merged main` first.                                                                                                                |
+| Pin `wranglerVersion` in the wrangler-action step → CIH                                                                                                                 | S    | ci-cd        | The deploy action installs its own unpinned wrangler.                                                                                                                                                          |
+| Stop `cancel-in-progress` from cancelling an in-flight deploy → CIH                                                                                                     | S    | ci-cd        | Move `concurrency` to the check job only.                                                                                                                                                                      |
+| Pin the Node version with `.nvmrc` and align `engines` with CI → CIH                                                                                                    | S    | code-quality | Three Node versions are in play (CI 24, engines >=22.18, this machine 26).                                                                                                                                     |
+| Fix the remaining stale cross-references                                                                                                                                | S    | docs         | FEATURE_PLAN cites PLAN as on a branch; `WEBHOOKS.md` and `OPERATIONS.md` are referenced but absent. The README half is done.                                                                                  |
+| Correct or retire `.claude/agents/ui-overflow-fixer.md` → CIH                                                                                                           | S    | process      | Claims a send server on port 8790 that Playwright does not start; hard-codes commit trailers.                                                                                                                  |
+| Remove the two dead `eslint-disable` comments → CIH                                                                                                                     | S    | code-quality | The project lints with oxlint.                                                                                                                                                                                 |
 
 ## 6. Dropped, and why
 
@@ -245,14 +277,16 @@ The branch `worktree-weekend-audit-plan` (four commits, about 3,238 lines) exist
 
 Re-checked on 2026-09-19: everything below is still unverified, minus one line and plus two.
 
-- Anything on the AWS side: whether production access is actually granted, which identities are verified, whether any configuration set or account-level suppression list exists, whether `ses-policy.json` is the policy attached to the sending user, and whether DKIM, SPF, DMARC or a custom MAIL FROM exist for swarm.camp. Cause: the `swarm-dev-internal-tools` session token had expired.
+Re-checked 2026-09-30 (read-only AWS, Cloudflare and GitHub): the struck-through bullets below are now settled.
+
+- ~~Anything on the AWS side: whether production access is actually granted, which identities are verified, whether any configuration set or account-level suppression list exists, whether `ses-policy.json` is the policy attached to the sending user, and whether DKIM, SPF, DMARC or a custom MAIL FROM exist for swarm.camp. Cause: the `swarm-dev-internal-tools` session token had expired.~~ **Verified 2026-09-30:** production access is granted; the identities are swarm.camp, `echo@swarm.work` and one personal address; the account suppression list is on for BOUNCE and COMPLAINT; the attached policy matches `infra/ses-policy.json`; DKIM was restored 2026-09-30 and DMARC is `p=none`.
 - Whether the personal Cloudflare account `0f95923f…` is still reachable to delete its Worker.
 - Whether `wrangler deploy` uploads `dist/email_template_studio/.dev.vars`. It should not; confirming needs a deploy. Rotate the credentials regardless.
 - The entropy of `STUDIO_PASSWORD` on the top-level Worker (names only are listable).
 - ~~Whether the Playwright suite passes today~~ — it does: 58 specs, green against the production build on 2026-09-19.
-- **Which account `d0fa6b3d72170539438800a907ec5323` actually belongs to.** `docs/DEPLOYMENT.md` and `docs/HANDOVER.md` say a personal one, section 1 here says `swarm-work-emailer`, and D1 and R2 are both bound to it. Needs `npx wrangler whoami` against a live login.
-- **Whether any remote D1 database or R2 bucket exists at all.** `wrangler.jsonc` still carries the placeholder `database_id`, so on the evidence in the repository: no.
-- Whether GitHub secret scanning and push protection are on (the API returned 404); check in Settings.
+- ~~**Which account `d0fa6b3d72170539438800a907ec5323` actually belongs to.** `docs/DEPLOYMENT.md` and `docs/HANDOVER.md` say a personal one, section 1 here says `swarm-work-emailer`, and D1 and R2 are both bound to it. Needs `npx wrangler whoami` against a live login.~~ Settled 2026-09-22: it is `swarm-work-emailer`.
+- ~~**Whether any remote D1 database or R2 bucket exists at all.** `wrangler.jsonc` still carries the placeholder `database_id`, so on the evidence in the repository: no.~~ Settled 2026-09-28: three D1 databases exist and hold migrations; R2 is not enabled (TECH_DEBT #48).
+- Whether GitHub secret scanning and push protection are on: confirmed disabled (`gh api`, 2026-09-30) → SEC.1.
 - Whether an organisation-level Actions secret supplies a Cloudflare token (only repository secrets were listed, and there are none).
 
 ## 10. Where the judges disagreed
