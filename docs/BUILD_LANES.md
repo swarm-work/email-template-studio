@@ -291,6 +291,8 @@ The plan batches everything that needs you into five moments. Between moments, C
 - R5. Only admins create webhook endpoints, like API keys.
 - R6. Production sender `Swarm <no-reply@swarm.camp>`, address and display name per workspace, swarm.camp only, admins may change it. This amends ADR-41 point 5.
 
+**Answered 2026-10-01: "yes to all".** R1 to R6 are decided as written above. For R1 that means the recommended alias `ses-alerts@swarm.work`. The alias must exist and be read by someone before S0 subscribes it, because SNS sends its confirmation emails there. The day-by-day record is in [docs/JOURNAL.md](JOURNAL.md).
+
 R7 to R18 can wait. R13 to R15 have safe defaults (the recommendations are used until you answer), so answer them by moment 2.
 
 1. **Moment 1: today, about 1 hour, plus reading this PR.**
